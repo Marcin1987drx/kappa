@@ -1,0 +1,169 @@
+{
+  "customers": [
+    { "id": "c1", "name": "Porsche", "createdAt": 1737972000000 },
+    { "id": "c2", "name": "Tesla", "createdAt": 1737972000000 },
+    { "id": "c3", "name": "VW", "createdAt": 1737972000000 },
+    { "id": "c4", "name": "Mercedes", "createdAt": 1737972000000 },
+    { "id": "c5", "name": "BMW", "createdAt": 1737972000000 }
+  ],
+  "types": [
+    { "id": "t1", "name": "G3", "createdAt": 1737972000000 },
+    { "id": "t2", "name": "Model Y", "createdAt": 1737972000000 },
+    { "id": "t3", "name": "310", "createdAt": 1737972000000 },
+    { "id": "t4", "name": "E-Class", "createdAt": 1737972000000 },
+    { "id": "t5", "name": "iX", "createdAt": 1737972000000 }
+  ],
+  "parts": [
+    { "id": "p1", "name": "Abdeckung HUD / non HUD", "createdAt": 1737972000000 },
+    { "id": "p2", "name": "Front Door", "createdAt": 1737972000000 },
+    { "id": "p3", "name": "Rear Door", "createdAt": 1737972000000 },
+    { "id": "p4", "name": "Z Blenda FS LL", "createdAt": 1737972000000 },
+    { "id": "p5", "name": "Z Blenda BFS LL", "createdAt": 1737972000000 },
+    { "id": "p6", "name": "Außenschale HSK", "createdAt": 1737972000000 },
+    { "id": "p7", "name": "Beflockung Innendeckel HSK", "createdAt": 1737972000000 },
+    { "id": "p8", "name": "Abdeckung ISK", "createdAt": 1737972000000 },
+    { "id": "p9", "name": "D-Träger", "createdAt": 1737972000000 },
+    { "id": "p10", "name": "Außenschale FS", "createdAt": 1737972000000 }
+  ],
+  "tests": [
+    { "id": "te1", "name": "Produkt Audit", "color": "#4CAF50", "createdAt": 1737972000000 },
+    { "id": "te2", "name": "Peel off machine test", "color": "#2196F3", "createdAt": 1737972000000 },
+    { "id": "te3", "name": "Messlehre", "color": "#FF9800", "createdAt": 1737972000000 },
+    { "id": "te4", "name": "Passeinlage", "color": "#9C27B0", "createdAt": 1737972000000 }
+  ],
+  "projects": [
+    {
+      "id": "pr1",
+      "customer_id": "c1",
+      "type_id": "t1",
+      "part_id": "p1",
+      "test_id": "te1",
+      "weeks": {
+        "KW01": { "ist": 20, "soll": 28 },
+        "KW02": { "ist": 25, "soll": 26 },
+        "KW03": { "ist": 32, "soll": 32 },
+        "KW04": { "ist": 18, "soll": 20 },
+        "KW05": { "ist": 15, "soll": 20 }
+      },
+      "timePerUnit": 15,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    },
+    {
+      "id": "pr2",
+      "customer_id": "c2",
+      "type_id": "t2",
+      "part_id": "p2",
+      "test_id": "te2",
+      "weeks": {
+        "KW01": { "ist": 10, "soll": 25 },
+        "KW02": { "ist": 22, "soll": 20 },
+        "KW03": { "ist": 25, "soll": 20 },
+        "KW04": { "ist": 4, "soll": 4 }
+      },
+      "timePerUnit": 20,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    },
+    {
+      "id": "pr3",
+      "customer_id": "c3",
+      "type_id": "t3",
+      "part_id": "p4",
+      "test_id": "te1",
+      "weeks": {
+        "KW01": { "ist": 1, "soll": 1 },
+        "KW02": { "ist": 1, "soll": 1 },
+        "KW03": { "ist": 2, "soll": 2 },
+        "KW04": { "ist": 2, "soll": 2 },
+        "KW05": { "ist": 2, "soll": 2 }
+      },
+      "timePerUnit": 30,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    },
+    {
+      "id": "pr4",
+      "customer_id": "c1",
+      "type_id": "t1",
+      "part_id": "p6",
+      "test_id": "te1",
+      "weeks": {
+        "KW01": { "ist": 32, "soll": 32 },
+        "KW02": { "ist": 0, "soll": 32 },
+        "KW03": { "ist": 28, "soll": 32 }
+      },
+      "timePerUnit": 10,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    },
+    {
+      "id": "pr5",
+      "customer_id": "c1",
+      "type_id": "t1",
+      "part_id": "p9",
+      "test_id": "te2",
+      "weeks": {
+        "KW01": { "ist": 2, "soll": 2 },
+        "KW02": { "ist": 2, "soll": 2 },
+        "KW03": { "ist": 2, "soll": 2 }
+      },
+      "timePerUnit": 25,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    },
+    {
+      "id": "pr6",
+      "customer_id": "c3",
+      "type_id": "t3",
+      "part_id": "p4",
+      "test_id": "te3",
+      "weeks": {
+        "KW01": { "ist": 28, "soll": 28 },
+        "KW02": { "ist": 29, "soll": 29 },
+        "KW03": { "ist": 25, "soll": 25 }
+      },
+      "timePerUnit": 12,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    },
+    {
+      "id": "pr7",
+      "customer_id": "c2",
+      "type_id": "t2",
+      "part_id": "p3",
+      "test_id": "te1",
+      "weeks": {
+        "KW01": { "ist": 25, "soll": 25 },
+        "KW02": { "ist": 26, "soll": 26 },
+        "KW03": { "ist": 20, "soll": 20 },
+        "KW04": { "ist": 10, "soll": 20 }
+      },
+      "timePerUnit": 18,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    },
+    {
+      "id": "pr8",
+      "customer_id": "c2",
+      "type_id": "t2",
+      "part_id": "p8",
+      "test_id": "te2",
+      "weeks": {
+        "KW01": { "ist": 12, "soll": 12 },
+        "KW02": { "ist": 12, "soll": 12 },
+        "KW03": { "ist": 0, "soll": 12 }
+      },
+      "timePerUnit": 22,
+      "created_at": 1737972000000,
+      "updated_at": 1737972000000
+    }
+  ],
+  "settings": {
+    "language": "pl",
+    "darkMode": true,
+    "animations": true,
+    "highlightMissing": true,
+    "blinkAlerts": true
+  }
+}

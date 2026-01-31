@@ -1,0 +1,1111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kappaplannung - DRÄXLMAIER Group</title>
+  <link rel="stylesheet" href="/src/styles/main.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Unified Top Bar -->
+    <header class="top-bar">
+      <div class="top-bar-left">
+        <div class="brand">
+          <span class="brand-logo">DRÄXLMAIER</span>
+          <span class="brand-divider"></span>
+          <span class="brand-product">Kappaplannung</span>
+        </div>
+      </div>
+      <div class="top-bar-center">
+        <nav class="main-nav">
+          <button class="nav-btn active" data-view="planning">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+            <span data-i18n="nav.planning">Planning</span>
+          </button>
+          <button class="nav-btn" data-view="projects">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+            <span data-i18n="nav.projects">Projects</span>
+          </button>
+          <button class="nav-btn" data-view="analytics">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="20" x2="18" y2="10"/>
+              <line x1="12" y1="20" x2="12" y2="4"/>
+              <line x1="6" y1="20" x2="6" y2="14"/>
+            </svg>
+            <span data-i18n="nav.analytics">Analytics</span>
+          </button>
+          <button class="nav-btn" data-view="schedule">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+              <circle cx="8" cy="14" r="1"/>
+              <circle cx="12" cy="14" r="1"/>
+              <circle cx="16" cy="14" r="1"/>
+              <circle cx="8" cy="18" r="1"/>
+              <circle cx="12" cy="18" r="1"/>
+            </svg>
+            <span data-i18n="nav.schedule">Schedule</span>
+          </button>
+          <button class="nav-btn" data-view="logs">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+            <span data-i18n="nav.logs">Logs</span>
+          </button>
+          <button class="nav-btn" data-view="settings">
+            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+            <span data-i18n="nav.settings">Settings</span>
+          </button>
+        </nav>
+      </div>
+      <div class="top-bar-right">
+        <div class="toolbar-group">
+          <select id="languageSelect" class="language-select" title="Language">
+            <option value="en">EN</option>
+            <option value="de">DE</option>
+            <option value="pl">PL</option>
+            <option value="ro">RO</option>
+          </select>
+          <button class="btn-toolbar" id="toggleTheme" title="Toggle Theme">
+            <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="5"/>
+              <line x1="12" y1="1" x2="12" y2="3"/>
+              <line x1="12" y1="21" x2="12" y2="23"/>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+              <line x1="1" y1="12" x2="3" y2="12"/>
+              <line x1="21" y1="12" x2="23" y2="12"/>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            </svg>
+            <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="app-main">
+      <!-- Planning View -->
+      <div id="planningView" class="view active">
+        <!-- Compact Collapsible Toolbar -->
+        <div class="planning-toolbar" id="planningToolbar">
+          <div class="toolbar-main">
+            <div class="toolbar-left">
+              <button class="btn-primary btn-compact" id="addProject">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                <span data-i18n="planning.addProject">Add Project</span>
+              </button>
+              <div class="toolbar-divider"></div>
+              <select id="filterYear" class="filter-select-compact" title="Year">
+              </select>
+              <select id="filterCustomer" class="filter-select-compact" title="Customer">
+                <option value="" data-i18n="common.all">All Customers</option>
+              </select>
+              <select id="filterType" class="filter-select-compact" title="Type">
+                <option value="" data-i18n="common.all">All Types</option>
+              </select>
+              <select id="filterTest" class="filter-select-compact" title="Test">
+                <option value="" data-i18n="common.all">All Tests</option>
+              </select>
+              <div class="search-compact">
+                <svg class="search-icon-compact" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="searchInput" class="search-input-compact" data-i18n-placeholder="common.search" placeholder="Search...">
+              </div>
+            </div>
+            <div class="toolbar-right">
+              <!-- Legend Dropdown -->
+              <div class="legend-dropdown">
+                <button class="btn-toolbar-compact" id="legendToggle" title="Legend">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="16" x2="12" y2="12"/>
+                    <line x1="12" y1="8" x2="12.01" y2="8"/>
+                  </svg>
+                </button>
+                <div class="legend-dropdown-content" id="legendDropdown">
+                  <div class="legend-dropdown-title" data-i18n="planning.legend">Legend</div>
+                  <div class="legend-dropdown-items">
+                    <div class="legend-dropdown-item">
+                      <span class="legend-box legend-not-started"></span>
+                      <span data-i18n="planning.legendNotStarted">Not Started</span>
+                    </div>
+                    <div class="legend-dropdown-item">
+                      <span class="legend-box legend-in-progress"></span>
+                      <span data-i18n="planning.legendInProgress">In Progress</span>
+                    </div>
+                    <div class="legend-dropdown-item">
+                      <span class="legend-box legend-completed"></span>
+                      <span data-i18n="planning.legendCompleted">Completed</span>
+                    </div>
+                    <div class="legend-dropdown-item">
+                      <span class="legend-box legend-comment"></span>
+                      <span data-i18n="planning.legendComment">Has Comment</span>
+                    </div>
+                    <div class="legend-dropdown-item">
+                      <span class="legend-box legend-stoppage"></span>
+                      <span data-i18n="planning.legendStoppage">Stoppage</span>
+                    </div>
+                    <div class="legend-dropdown-item">
+                      <span class="legend-box legend-lack"></span>
+                      <span data-i18n="planning.legendLack">Lack of Parts</span>
+                    </div>
+                    <div class="legend-dropdown-item">
+                      <span class="legend-box legend-current"></span>
+                      <span data-i18n="planning.legendCurrent">Current Week</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="toolbar-divider"></div>
+              <button class="btn-toolbar-compact" id="exportData" title="Export">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+              </button>
+              <button class="btn-toolbar-compact" id="importData" title="Import">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="planning-grid-wrapper">
+          <div class="planning-grid-container">
+            <div id="planningGridHeader" class="planning-grid-header">
+              <!-- Header will be generated dynamically -->
+            </div>
+            <div id="planningGrid" class="planning-grid">
+              <!-- Grid will be generated dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Projects View -->
+      <div id="projectsView" class="view">
+        <div class="view-header">
+          <div class="view-title">
+            <h2 data-i18n="projects.title">Project Management</h2>
+            <span class="subtitle" data-i18n="projects.subtitle">Manage customers, types, parts and tests</span>
+          </div>
+          <div class="view-actions projects-toolbar">
+            <div class="toolbar-left">
+              <div class="search-box">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                </svg>
+                <input type="text" id="projectsSearch" placeholder="Szukaj..." class="search-input">
+              </div>
+              <select id="projectsFilter" class="filter-select">
+                <option value="all">Wszystkie</option>
+                <option value="used">Używane</option>
+                <option value="unused">Nieużywane</option>
+              </select>
+            </div>
+            <div class="toolbar-right">
+              <button class="btn-secondary" id="bulkDeleteProjects" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+                <span>Usuń zaznaczone</span>
+              </button>
+              <button class="btn-secondary" id="exportProjectsCSV">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span>Eksport</span>
+              </button>
+              <button class="btn-secondary" id="importProjectsCSV">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>Import</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stats Dashboard -->
+        <div class="projects-stats-dashboard">
+          <div class="project-stat-card" data-category="customers">
+            <div class="stat-icon customers-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value" id="statCustomers">0</span>
+              <span class="stat-label">Klienci</span>
+              <div class="stat-bar"><div class="stat-bar-fill" id="statCustomersBar"></div></div>
+              <span class="stat-detail" id="statCustomersDetail">0 używanych</span>
+            </div>
+          </div>
+          <div class="project-stat-card" data-category="types">
+            <div class="stat-icon types-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value" id="statTypes">0</span>
+              <span class="stat-label">Typy</span>
+              <div class="stat-bar"><div class="stat-bar-fill" id="statTypesBar"></div></div>
+              <span class="stat-detail" id="statTypesDetail">0 używanych</span>
+            </div>
+          </div>
+          <div class="project-stat-card" data-category="parts">
+            <div class="stat-icon parts-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value" id="statParts">0</span>
+              <span class="stat-label">Części</span>
+              <div class="stat-bar"><div class="stat-bar-fill" id="statPartsBar"></div></div>
+              <span class="stat-detail" id="statPartsDetail">0 używanych</span>
+            </div>
+          </div>
+          <div class="project-stat-card" data-category="tests">
+            <div class="stat-icon tests-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <span class="stat-value" id="statTests">0</span>
+              <span class="stat-label">Testy</span>
+              <div class="stat-bar"><div class="stat-bar-fill" id="statTestsBar"></div></div>
+              <span class="stat-detail" id="statTestsDetail">0 używanych</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabs for different views -->
+        <div class="projects-tabs">
+          <button class="projects-tab active" data-tab="list">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+            Lista
+          </button>
+          <button class="projects-tab" data-tab="tree">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="12" x2="6" y2="16"/><line x1="12" y1="12" x2="18" y2="16"/><circle cx="6" cy="19" r="3"/><circle cx="18" cy="19" r="3"/>
+            </svg>
+            Drzewo połączeń
+          </button>
+        </div>
+
+        <!-- List View -->
+        <div id="projectsListView" class="projects-tab-content active">
+          <div class="projects-container">
+            <div class="project-section" data-section="customers">
+              <div class="section-header">
+                <div class="section-header-left">
+                  <input type="checkbox" class="section-checkbox" id="checkAllCustomers">
+                  <h3 data-i18n="projects.customers">Customers</h3>
+                  <span class="section-count" id="customersCount">0</span>
+                </div>
+                <div class="section-header-right">
+                  <button class="btn-icon-sm" id="exportCustomersCSV" title="Eksport CSV">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                  </button>
+                  <button class="btn-add" id="addCustomer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                </div>
+              </div>
+              <ul id="customersList" class="items-list" data-sortable="customers"></ul>
+            </div>
+
+            <div class="project-section" data-section="types">
+              <div class="section-header">
+                <div class="section-header-left">
+                  <input type="checkbox" class="section-checkbox" id="checkAllTypes">
+                  <h3 data-i18n="projects.types">Types</h3>
+                  <span class="section-count" id="typesCount">0</span>
+                </div>
+                <div class="section-header-right">
+                  <button class="btn-icon-sm" id="exportTypesCSV" title="Eksport CSV">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                  </button>
+                  <button class="btn-add" id="addType"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                </div>
+              </div>
+              <ul id="typesList" class="items-list" data-sortable="types"></ul>
+            </div>
+
+            <div class="project-section" data-section="parts">
+              <div class="section-header">
+                <div class="section-header-left">
+                  <input type="checkbox" class="section-checkbox" id="checkAllParts">
+                  <h3 data-i18n="projects.parts">Parts</h3>
+                  <span class="section-count" id="partsCount">0</span>
+                </div>
+                <div class="section-header-right">
+                  <button class="btn-icon-sm" id="exportPartsCSV" title="Eksport CSV">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                  </button>
+                  <button class="btn-add" id="addPart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                </div>
+              </div>
+              <ul id="partsList" class="items-list" data-sortable="parts"></ul>
+            </div>
+
+            <div class="project-section" data-section="tests">
+              <div class="section-header">
+                <div class="section-header-left">
+                  <input type="checkbox" class="section-checkbox" id="checkAllTests">
+                  <h3 data-i18n="projects.tests">Tests</h3>
+                  <span class="section-count" id="testsCount">0</span>
+                </div>
+                <div class="section-header-right">
+                  <button class="btn-icon-sm" id="exportTestsCSV" title="Eksport CSV">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                  </button>
+                  <button class="btn-add" id="addTest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                </div>
+              </div>
+              <ul id="testsList" class="items-list" data-sortable="tests"></ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tree View -->
+        <div id="projectsTreeView" class="projects-tab-content">
+          <div class="tree-container" id="projectsTree"></div>
+        </div>
+      </div>
+
+      <!-- Analytics View -->
+      <div id="analyticsView" class="view">
+        <div class="view-header">
+          <div class="view-title">
+            <h2 data-i18n="analytics.title">Analytics & Statistics</h2>
+            <span class="subtitle analytics-subtitle-info" id="analyticsYearInfo">View your planning insights</span>
+          </div>
+          <div class="view-actions">
+            <div class="date-filter-group">
+              <label for="analyticsFilterYear">Rok:</label>
+              <select id="analyticsFilterYear" class="filter-select year-filter">
+              </select>
+              <label for="analyticsWeekFrom" data-i18n="analytics.weekFrom">From Week:</label>
+              <select id="analyticsWeekFrom" class="filter-select week-filter">
+              </select>
+              <label for="analyticsWeekTo" data-i18n="analytics.weekTo">To Week:</label>
+              <select id="analyticsWeekTo" class="filter-select week-filter">
+              </select>
+              <button class="btn-icon" id="applyDateFilter" title="Apply filter">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </button>
+            </div>
+            <button class="btn-secondary" id="unlockAnalyticsOptions">
+              <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span data-i18n="analytics.unlockOptions">Unlock Options</span>
+            </button>
+            <button class="btn-secondary" id="exportAnalytics">
+              <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+              <span data-i18n="common.export">Export</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="analytics-grid">
+          <div class="stat-card stat-card-animated" data-stat="projects">
+            <div class="stat-icon-wrapper">
+              <svg class="stat-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value" id="totalProjects">0</div>
+              <div class="stat-label" data-i18n="analytics.totalProjects">Total Projects</div>
+              <div class="stat-trend" id="projectsTrend"></div>
+            </div>
+          </div>
+
+          <div class="stat-card stat-card-animated stat-card-success" data-stat="completed">
+            <div class="stat-icon-wrapper">
+              <svg class="stat-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value" id="completedTests">0</div>
+              <div class="stat-label" data-i18n="analytics.completed">Completed</div>
+              <div class="stat-progress">
+                <div class="stat-progress-bar" id="completedProgress"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stat-card stat-card-animated stat-card-warning" data-stat="pending">
+            <div class="stat-icon-wrapper">
+              <svg class="stat-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value" id="pendingTests">0</div>
+              <div class="stat-label" data-i18n="analytics.pending">Pending</div>
+              <div class="stat-progress">
+                <div class="stat-progress-bar stat-progress-warning" id="pendingProgress"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stat-card stat-card-animated stat-card-danger" data-stat="overdue">
+            <div class="stat-icon-wrapper">
+              <svg class="stat-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                <line x1="12" y1="9" x2="12" y2="13"/>
+                <line x1="12" y1="17" x2="12.01" y2="17"/>
+              </svg>
+            </div>
+            <div class="stat-content">
+              <div class="stat-value" id="overdueTests">0</div>
+              <div class="stat-label" data-i18n="analytics.overdue">Overdue</div>
+              <div class="stat-progress">
+                <div class="stat-progress-bar stat-progress-danger" id="overdueProgress"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- KPI Dashboard (przeniesione wyżej) -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 20V10"/>
+                <path d="M18 20V4"/>
+                <path d="M6 20v-4"/>
+              </svg>
+              <span data-i18n="analytics.kpiDashboard">KPI Dashboard</span>
+            </h3>
+          </div>
+          <div class="kpi-dashboard" id="kpiDashboardTop">
+            <div class="kpi-card kpi-gauge">
+              <div class="kpi-title" data-i18n="analytics.weeklyRealization">Weekly Realization</div>
+              <div class="kpi-gauge-container">
+                <canvas id="realizationGauge" width="200" height="120"></canvas>
+                <div class="kpi-gauge-value" id="realizationValue">0%</div>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title" data-i18n="analytics.avgTimePerTest">Avg Time/Test</div>
+              <div class="kpi-value" id="avgTimePerTest">0 min</div>
+              <div class="kpi-trend" id="avgTimeTrend"></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title" data-i18n="analytics.capacityUtilization">Capacity Utilization</div>
+              <div class="kpi-value" id="capacityUtilization">0%</div>
+              <div class="kpi-bar">
+                <div class="kpi-bar-fill" id="capacityBar"></div>
+              </div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-title" data-i18n="analytics.backlog">Backlog</div>
+              <div class="kpi-value" id="backlogValue">0</div>
+              <div class="kpi-subtitle" data-i18n="analytics.testsToComplete">tests to complete</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detailed Analytics Table -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="9" y1="21" x2="9" y2="9"/>
+              </svg>
+              <span data-i18n="analytics.detailedView">Detailed Project Status</span>
+            </h3>
+            <div class="section-filters">
+              <select id="analyticsFilterStatus" class="filter-select">
+                <option value="all" data-i18n="common.all">All</option>
+                <option value="completed" data-i18n="analytics.completed">Completed</option>
+                <option value="partial" data-i18n="analytics.partial">Partial</option>
+                <option value="zero" data-i18n="analytics.zero">Zero</option>
+                <option value="stoppage" data-i18n="analytics.stoppage">Stoppage</option>
+              </select>
+            </div>
+          </div>
+          <div class="analytics-table-container">
+            <table class="analytics-table" id="analyticsTable">
+              <thead>
+                <tr>
+                  <th class="th-sticky" data-i18n="projects.customer">Customer</th>
+                  <th data-i18n="projects.type">Type</th>
+                  <th data-i18n="projects.part">Part</th>
+                  <th data-i18n="projects.test">Test</th>
+                  <th class="th-status">Status</th>
+                  <th>IST</th>
+                  <th>SOLL</th>
+                  <th>%</th>
+                  <th class="th-options analytics-options-col hidden" data-i18n="common.options">Options</th>
+                </tr>
+              </thead>
+              <tbody id="analyticsTableBody">
+                <!-- Rendered dynamically -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-container">
+          <div class="chart-card chart-card-animated">
+            <div class="chart-header">
+              <h3>
+                <svg class="chart-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="18" y1="20" x2="18" y2="10"/>
+                  <line x1="12" y1="20" x2="12" y2="4"/>
+                  <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+                <span data-i18n="analytics.weeklyProgress">Weekly Progress</span>
+              </h3>
+              <div class="chart-legend">
+                <span class="legend-item legend-ist"><span class="legend-dot"></span> IST</span>
+                <span class="legend-item legend-soll"><span class="legend-dot"></span> SOLL</span>
+              </div>
+            </div>
+            <canvas id="weeklyChart"></canvas>
+          </div>
+          <div class="chart-card chart-card-animated">
+            <div class="chart-header">
+              <h3>
+                <svg class="chart-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21.21 15.89A10 10 0 1 1 8 2.83"/>
+                  <path d="M22 12A10 10 0 0 0 12 2v10z"/>
+                </svg>
+                <span data-i18n="analytics.testDistribution">Test Distribution</span>
+              </h3>
+            </div>
+            <canvas id="testChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Weekly Comparison Table -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+              <span data-i18n="analytics.weeklyComparison">Weekly Comparison (IST vs SOLL)</span>
+            </h3>
+          </div>
+          <div class="weekly-comparison-grid" id="weeklyComparisonGrid">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Heatmap Section -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"/>
+                <rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/>
+                <rect x="3" y="14" width="7" height="7"/>
+              </svg>
+              <span data-i18n="analytics.workloadHeatmap">Workload Heatmap</span>
+            </h3>
+          </div>
+          <div class="heatmap-container" id="workloadHeatmap">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Trend Chart -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+              </svg>
+              <span data-i18n="analytics.historicalTrend">Historical Trend</span>
+            </h3>
+          </div>
+          <div class="chart-card">
+            <canvas id="trendChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Customer Analysis -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+              <span data-i18n="analytics.customerAnalysis">Customer Analysis</span>
+            </h3>
+          </div>
+          <div class="customer-analysis-grid" id="customerAnalysisGrid">
+            <p style="padding: 20px; color: #666;">Loading customer data...</p>
+          </div>
+        </div>
+
+        <!-- Test Type Performance -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+              </svg>
+              <span data-i18n="analytics.testPerformance">Test Performance</span>
+            </h3>
+          </div>
+          <div class="test-performance-container">
+            <div class="test-bars" id="testPerformanceBars">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Top/Bottom Performers -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+              </svg>
+              <span data-i18n="analytics.topPerformers">Top & Bottom Performers</span>
+            </h3>
+          </div>
+          <div class="performers-grid">
+            <div class="performers-column performers-top">
+              <h4><svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2" width="16" height="16"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg> Top 5</h4>
+              <div id="topPerformers"></div>
+            </div>
+            <div class="performers-column performers-bottom">
+              <h4><svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2" width="16" height="16"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg> Bottom 5</h4>
+              <div id="bottomPerformers"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Stoppage Report -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
+              </svg>
+              <span data-i18n="analytics.stoppageReport">Stoppage & Issues Report</span>
+            </h3>
+          </div>
+          <div class="stoppage-report" id="stoppageReport">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Quarterly Summary -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+              </svg>
+              <span data-i18n="analytics.quarterlySummary">Quarterly Summary</span>
+            </h3>
+          </div>
+          <div class="yoy-comparison" id="yoyComparison">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+
+        <!-- Monthly Summary -->
+        <div class="analytics-section">
+          <div class="analytics-section-header">
+            <h3>
+              <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
+                <line x1="8" y1="14" x2="8" y2="14"/>
+                <line x1="12" y1="14" x2="12" y2="14"/>
+                <line x1="16" y1="14" x2="16" y2="14"/>
+              </svg>
+              <span data-i18n="analytics.monthlySummary">Monthly Summary</span>
+            </h3>
+          </div>
+          <div class="monthly-summary-grid" id="monthlySummaryGrid">
+            <!-- Rendered dynamically -->
+          </div>
+        </div>
+      </div>
+
+      <!-- Schedule View (Grafik) -->
+      <div id="scheduleView" class="view">
+        <!-- Compact Header with integrated nav -->
+        <div class="schedule-header">
+          <div class="schedule-header-left">
+            <h2>Grafik</h2>
+            <div class="week-nav-compact">
+              <button class="nav-arrow" id="schedulePrevWeek">‹</button>
+              <div class="week-display-compact">
+                <span class="week-num" id="scheduleWeekLabel">KW05</span>
+                <span class="week-dates" id="scheduleWeekDates">27.01 - 02.02</span>
+              </div>
+              <button class="nav-arrow" id="scheduleNextWeek">›</button>
+              <button class="today-btn" id="scheduleToday">Dziś</button>
+            </div>
+          </div>
+          <div class="schedule-header-right">
+            <div class="shift-pills">
+              <button class="shift-pill" data-shift="1">1</button>
+              <button class="shift-pill active" data-shift="2">2</button>
+              <button class="shift-pill" data-shift="3">3</button>
+            </div>
+            <button class="icon-btn" id="scheduleCopyPrev" title="Kopiuj z poprzedniego tygodnia">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <button class="icon-btn" id="manageEmployees" title="Zarządzaj pracownikami">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Clean Table Layout -->
+        <div class="schedule-table-wrapper">
+          <!-- Employee sidebar -->
+          <aside class="employee-sidebar">
+            <div class="sidebar-title">
+              <span>Pracownicy</span>
+              <button class="add-btn" id="addEmployeeQuick">+</button>
+            </div>
+            <div class="employee-list" id="employeeDragList">
+              <!-- Rendered dynamically -->
+            </div>
+          </aside>
+
+          <!-- Main schedule table -->
+          <div class="schedule-table">
+            <div class="table-header" id="scheduleShiftsHeader">
+              <!-- Shift headers rendered dynamically -->
+            </div>
+            <div class="table-body" id="scheduleProjectsList">
+              <!-- Projects rendered dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings View -->
+      <div id="settingsView" class="view">
+        <div class="view-header">
+          <div class="view-title">
+            <h2 data-i18n="settings.title">Settings</h2>
+            <span class="subtitle" data-i18n="settings.subtitle">Configure your application</span>
+          </div>
+        </div>
+
+        <div class="settings-container">
+          <div class="setting-group">
+            <h3 data-i18n="settings.appearance">Appearance</h3>
+            <div class="setting-item">
+              <label data-i18n="settings.darkMode">Dark Mode</label>
+              <input type="checkbox" id="darkModeToggle">
+            </div>
+            <div class="setting-item">
+              <label data-i18n="settings.animations">Animations</label>
+              <input type="checkbox" id="animationsToggle" checked>
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <h3 data-i18n="settings.notifications">Notifications</h3>
+            <div class="setting-item">
+              <label data-i18n="settings.highlightMissing">Highlight Missing Items</label>
+              <input type="checkbox" id="highlightMissingToggle" checked>
+            </div>
+            <div class="setting-item">
+              <label data-i18n="settings.blinkAlerts">Blink Alerts</label>
+              <input type="checkbox" id="blinkAlertsToggle" checked>
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <h3 data-i18n="settings.security">Security</h3>
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.deletePassword">Delete Password</label>
+                <p class="setting-hint" data-i18n="settings.passwordHint">Password protects against accidental deletion</p>
+              </div>
+              <button class="btn-secondary" id="setPasswordBtn" data-i18n="settings.setPassword">Set Password</button>
+            </div>
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.userName">User Name</label>
+                <p class="setting-hint" data-i18n="settings.userNameHint">Your name will appear in activity logs</p>
+              </div>
+              <input type="text" id="userNameInput" class="setting-input" placeholder="Your name">
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <h3 data-i18n="settings.data">Data Management</h3>
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.loadExampleData">Load Example Data</label>
+                <p class="setting-hint">Load sample projects to explore the application</p>
+              </div>
+              <button class="btn-secondary" id="loadExampleData">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                  <polyline points="17 8 12 3 7 8"/>
+                  <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span>Load Example Data</span>
+              </button>
+            </div>
+            <div class="setting-item">
+              <button class="btn-danger" id="clearAllData" data-i18n="settings.clearData">Clear All Data</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs View -->
+      <div id="logsView" class="view">
+        <div class="view-header">
+          <div class="view-title">
+            <h2 data-i18n="logs.title">Activity Logs</h2>
+            <span class="subtitle" data-i18n="logs.subtitle">Track all changes and actions</span>
+          </div>
+          <div class="view-actions">
+            <button class="btn-secondary" id="exportLogs">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span data-i18n="logs.exportLogs">Export Logs</span>
+            </button>
+            <button class="btn-danger" id="clearLogs">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <span data-i18n="logs.clearLogs">Clear Logs</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="logs-container">
+          <table class="logs-table">
+            <thead>
+              <tr>
+                <th data-i18n="logs.timestamp">Date & Time</th>
+                <th data-i18n="logs.user">User</th>
+                <th data-i18n="logs.action">Action</th>
+                <th data-i18n="logs.details">Details</th>
+              </tr>
+            </thead>
+            <tbody id="logsTableBody">
+              <!-- Logs will be rendered here -->
+            </tbody>
+          </table>
+          <div id="noLogsMessage" class="empty-state" data-i18n="logs.noLogs">No logs recorded yet</div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Modal -->
+    <div id="modal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="modalTitle">Modal Title</h3>
+          <button class="modal-close">&times;</button>
+        </div>
+        <div class="modal-body" id="modalBody">
+          <!-- Dynamic content -->
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary modal-cancel" data-i18n="common.cancel">Cancel</button>
+          <button class="btn-primary modal-confirm" data-i18n="common.save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Import Wizard Modal -->
+    <div id="importWizardModal" class="modal import-wizard-modal">
+      <div class="modal-content import-wizard-content">
+        <div class="modal-header">
+          <h3 id="importWizardTitle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Smart Import Wizard
+          </h3>
+          <button class="modal-close" id="closeImportWizard">&times;</button>
+        </div>
+        <div class="import-wizard-body">
+          <!-- Step indicator -->
+          <div class="wizard-steps">
+            <div class="wizard-step active" data-step="1">
+              <span class="step-number">1</span>
+              <span class="step-label">Upload File</span>
+            </div>
+            <div class="wizard-step" data-step="2">
+              <span class="step-number">2</span>
+              <span class="step-label">Map Columns</span>
+            </div>
+            <div class="wizard-step" data-step="3">
+              <span class="step-number">3</span>
+              <span class="step-label">Preview & Import</span>
+            </div>
+          </div>
+
+          <!-- Step 1: Upload -->
+          <div class="wizard-panel active" id="wizardStep1">
+            <div class="upload-zone" id="uploadZone">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="48" height="48">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                <polyline points="17 8 12 3 7 8"/>
+                <line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <h4>Drop Excel file here or click to browse</h4>
+              <p>Supported formats: .xlsx, .xls</p>
+              <input type="file" id="importFileInput" accept=".xlsx,.xls" hidden>
+            </div>
+            <div class="upload-info">
+              <h5>Expected columns (flexible naming):</h5>
+              <div class="expected-columns">
+                <span class="column-tag">Customer / Kunde / Client</span>
+                <span class="column-tag">Type / Typ / Model</span>
+                <span class="column-tag">Part / Teil / Component</span>
+                <span class="column-tag">Test / Prüfung / Check</span>
+                <span class="column-tag">KW01-KW52 (IST/SOLL)</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: Column Mapping -->
+          <div class="wizard-panel" id="wizardStep2">
+            <div class="mapping-header">
+              <h4>Map Your Columns</h4>
+              <p>We detected your columns. Please verify or adjust the mapping:</p>
+            </div>
+            <div class="mapping-grid" id="columnMappingGrid">
+              <!-- Generated dynamically -->
+            </div>
+            <div class="sheet-selector" id="sheetSelector">
+              <label>Select sheet:</label>
+              <select id="sheetSelect"></select>
+            </div>
+          </div>
+
+          <!-- Step 3: Preview -->
+          <div class="wizard-panel" id="wizardStep3">
+            <div class="preview-header">
+              <h4>Preview Import Data</h4>
+              <div class="preview-stats" id="previewStats"></div>
+            </div>
+            <div class="preview-options">
+              <label class="checkbox-label">
+                <input type="checkbox" id="importMergeData">
+                <span>Merge with existing data (don't replace)</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="importCreateMissing" checked>
+                <span>Auto-create missing Customers, Types, Parts, Tests</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="importUpdateExisting">
+                <span>Update existing projects if found</span>
+              </label>
+            </div>
+            <div class="preview-table-container">
+              <table class="preview-table" id="previewTable">
+                <thead id="previewTableHead"></thead>
+                <tbody id="previewTableBody"></tbody>
+              </table>
+            </div>
+            <div class="import-warnings" id="importWarnings"></div>
+          </div>
+        </div>
+        <div class="import-wizard-footer">
+          <button class="btn-secondary" id="wizardPrevBtn" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+            Back
+          </button>
+          <button class="btn-primary" id="wizardNextBtn" disabled>
+            Next
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <polyline points="9 18 15 12 9 6"/>
+            </svg>
+          </button>
+          <button class="btn-primary btn-import" id="wizardImportBtn" style="display:none;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            Import Data
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
