@@ -45,22 +45,35 @@ export interface Project {
 }
 
 // ==================== Employee (Pracownik) ====================
+export type EmployeeStatus = 'available' | 'vacation' | 'sick';
+
 export interface Employee {
   id: string;
   firstName: string;
   lastName: string;
   color: string;
+  status?: EmployeeStatus;        // Domyślnie 'available'
+  suggestedShift?: 1 | 2 | 3;     // Sugerowana zmiana
   createdAt: number;
 }
 
 // ==================== Schedule Assignment (Przypisanie w grafiku) ====================
+export type AssignmentScope = 
+  | 'project'           // Cały projekt
+  | 'audit'             // Tylko audyty
+  | 'adhesion'          // Tylko przyczepność
+  | 'specific';         // Konkretna część/test
+
 export interface ScheduleAssignment {
   id: string;
   projectId: string;
-  testId?: string;        // Jeśli null - przypisanie do całego projektu, jeśli set - tylko do tego testu
+  scope: AssignmentScope;           // Zakres przypisania
+  testId?: string;                  // Jeśli scope='specific' - ID testu
+  partId?: string;                  // Jeśli scope='specific' - ID części (opcjonalnie)
   employeeId: string;
-  week: string;           // np. "2026-KW05"
-  shift: 1 | 2 | 3;       // Zmiana
+  week: string;                     // np. "2026-KW05"
+  shift: 1 | 2 | 3;                 // Zmiana
+  note?: string;                    // Komentarz co pracownik ma robić
   createdAt: number;
   updatedAt: number;
 }

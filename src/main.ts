@@ -1,5 +1,5 @@
 import { i18n } from './i18n';
-import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment } from './types';
+import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus } from './types';
 import { Chart, registerables } from 'chart.js';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -5558,24 +5558,55 @@ class KappaApp {
   private scheduleCurrentWeek: number = this.getCurrentWeek();
   private scheduleCurrentYear: number = new Date().getFullYear();
   private scheduleShiftSystem: 1 | 2 | 3 = 2;
+  private scheduleViewMode: 'week' | 'multi' | 'year' | 'compact' = 'week';
+  private scheduleFilterEmployee: string = '';
   private draggedEmployeeId: string | null = null;
+  private draggedEmployeeScope: 'project' | 'audit' | 'adhesion' | 'specific' = 'project';
   
   private renderScheduleView(): void {
     this.setupScheduleEventListeners();
     this.renderScheduleWeekNav();
     this.renderScheduleEmployeePanel();
-    this.renderScheduleProjectsPanel();
+    this.renderScheduleAlerts();
+    this.renderScheduleContent();
+  }
+  
+  private renderScheduleContent(): void {
+    switch (this.scheduleViewMode) {
+      case 'multi':
+        this.renderMultiWeekView();
+        break;
+      case 'year':
+        this.renderYearView();
+        break;
+      case 'compact':
+        this.renderCompactView();
+        break;
+      default:
+        this.renderScheduleProjectsPanel();
+    }
   }
   
   private setupScheduleEventListeners(): void {
+    // View toggle (1T/3T)
+    document.querySelectorAll('.sched-view-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = (btn as HTMLElement).dataset.view;
+        this.scheduleViewMode = view === '3week' ? 'multi' : 'week';
+        document.querySelectorAll('.sched-view-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.renderScheduleContent();
+      });
+    });
+    
     // Shift toggle buttons
-    document.querySelectorAll('.shift-pill').forEach(btn => {
+    document.querySelectorAll('.sched-shift-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const shift = parseInt((btn as HTMLElement).dataset.shift || '2') as 1 | 2 | 3;
         this.scheduleShiftSystem = shift;
-        document.querySelectorAll('.shift-pill').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.sched-shift-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        this.renderScheduleProjectsPanel();
+        this.renderScheduleContent();
       });
     });
     
@@ -5587,7 +5618,9 @@ class KappaApp {
         this.scheduleCurrentYear--;
       }
       this.renderScheduleWeekNav();
-      this.renderScheduleProjectsPanel();
+      this.renderScheduleAlerts();
+      this.renderScheduleContent();
+      this.renderScheduleEmployeePanel();
     });
     
     document.getElementById('scheduleNextWeek')?.addEventListener('click', () => {
@@ -5597,34 +5630,474 @@ class KappaApp {
         this.scheduleCurrentYear++;
       }
       this.renderScheduleWeekNav();
-      this.renderScheduleProjectsPanel();
+      this.renderScheduleAlerts();
+      this.renderScheduleContent();
+      this.renderScheduleEmployeePanel();
     });
     
     document.getElementById('scheduleToday')?.addEventListener('click', () => {
       this.scheduleCurrentWeek = this.getCurrentWeek();
       this.scheduleCurrentYear = new Date().getFullYear();
       this.renderScheduleWeekNav();
-      this.renderScheduleProjectsPanel();
+      this.renderScheduleAlerts();
+      this.renderScheduleContent();
+      this.renderScheduleEmployeePanel();
     });
     
-    document.getElementById('scheduleCopyPrev')?.addEventListener('click', () => this.copyFromPreviousWeek());
     document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
-    document.getElementById('manageEmployees')?.addEventListener('click', () => this.showManageEmployeesModal());
+    
+    // Mini kalendarz
+    document.getElementById('toggleMiniCalendar')?.addEventListener('click', () => this.toggleMiniCalendar());
+    
+    // Historia zmian
+    document.getElementById('toggleHistory')?.addEventListener('click', () => this.showHistoryPanel());
+    
+    // Eksport
+    document.getElementById('exportSchedule')?.addEventListener('click', () => this.showExportModal());
+    
+    // Kopiuj tydzień
+    document.getElementById('copyWeekBtn')?.addEventListener('click', () => this.showCopyWeekModal());
+    
+    // Szablony
+    document.getElementById('templatesBtn')?.addEventListener('click', () => this.showTemplatesModal());
+    
+    // Powiadomienia
+    document.getElementById('notificationsBtn')?.addEventListener('click', () => this.showNotificationsModal());
+    
+    // Widok Gantt
+    document.getElementById('ganttViewBtn')?.addEventListener('click', () => this.showGanttView());
+    
+    // Statystyki pracownika
+    document.getElementById('employeeStatsBtn')?.addEventListener('click', () => this.showEmployeeStatsModal());
   }
   
+  // Mini kalendarz miesięczny
+  private toggleMiniCalendar(): void {
+    const dropdown = document.getElementById('miniCalendarDropdown');
+    if (!dropdown) return;
+    
+    if (dropdown.style.display === 'none') {
+      this.renderMiniCalendar();
+      dropdown.style.display = 'block';
+      
+      // Zamknij przy kliknięciu poza
+      const closeHandler = (e: MouseEvent) => {
+        if (!(e.target as HTMLElement).closest('.sched-mini-calendar')) {
+          dropdown.style.display = 'none';
+          document.removeEventListener('click', closeHandler);
+        }
+      };
+      setTimeout(() => document.addEventListener('click', closeHandler), 10);
+    } else {
+      dropdown.style.display = 'none';
+    }
+  }
+  
+  private renderMiniCalendar(): void {
+    const dropdown = document.getElementById('miniCalendarDropdown');
+    const monthLabel = document.getElementById('miniCalendarMonth');
+    if (!dropdown) return;
+    
+    const months = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
+    const monthsFull = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
+    const weekdays = ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So', 'Nd'];
+    
+    // Określ miesiąc na podstawie obecnego tygodnia
+    const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+    const [, monthStr] = weekDates.start.split('.');
+    const currentMonth = parseInt(monthStr) - 1;
+    
+    if (monthLabel) {
+      monthLabel.textContent = months[currentMonth];
+    }
+    
+    // Generuj dni miesiąca
+    const firstDay = new Date(this.scheduleCurrentYear, currentMonth, 1);
+    const lastDay = new Date(this.scheduleCurrentYear, currentMonth + 1, 0);
+    const startPadding = (firstDay.getDay() + 6) % 7; // Poniedziałek = 0
+    
+    // Pobierz pokrycie dla każdego tygodnia
+    const getCoverageForDay = (date: Date): 'low' | 'medium' | 'high' | null => {
+      const weekNum = this.getWeekNumber(date);
+      const weekKey = `${date.getFullYear()}-KW${weekNum.toString().padStart(2, '0')}`;
+      
+      const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+      const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+      const assignedIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
+      const percent = availableEmployees.length > 0 
+        ? (availableEmployees.filter(e => assignedIds.has(e.id)).length / availableEmployees.length) * 100 
+        : 0;
+      
+      if (percent === 0) return null;
+      return percent < 50 ? 'low' : percent < 80 ? 'medium' : 'high';
+    };
+    
+    let daysHtml = weekdays.map(d => `<div class="sched-mini-cal-weekday">${d}</div>`).join('');
+    
+    // Puste dni przed początkiem miesiąca
+    for (let i = 0; i < startPadding; i++) {
+      daysHtml += '<div class="sched-mini-cal-day other-month"></div>';
+    }
+    
+    // Dni miesiąca
+    const today = new Date();
+    
+    for (let d = 1; d <= lastDay.getDate(); d++) {
+      const date = new Date(this.scheduleCurrentYear, currentMonth, d);
+      const isToday = date.toDateString() === today.toDateString();
+      const dayWeek = this.getWeekNumber(date);
+      const isSelectedWeek = dayWeek === this.scheduleCurrentWeek && date.getFullYear() === this.scheduleCurrentYear;
+      const coverage = getCoverageForDay(date);
+      
+      daysHtml += `
+        <div class="sched-mini-cal-day ${isToday ? 'today' : ''} ${isSelectedWeek ? 'selected-week' : ''}" 
+             data-date="${date.toISOString()}" data-week="${dayWeek}">
+          ${d}
+          ${coverage ? `<span class="coverage-dot ${coverage}"></span>` : ''}
+        </div>
+      `;
+    }
+    
+    dropdown.innerHTML = `
+      <div class="sched-mini-cal-header">
+        <span class="sched-mini-cal-title">${monthsFull[currentMonth]} ${this.scheduleCurrentYear}</span>
+        <div class="sched-mini-cal-nav">
+          <button data-dir="-1">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button data-dir="1">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="sched-mini-cal-grid">${daysHtml}</div>
+    `;
+    
+    // Event listeners
+    dropdown.querySelectorAll('.sched-mini-cal-day:not(.other-month)').forEach(day => {
+      day.addEventListener('click', () => {
+        const week = parseInt((day as HTMLElement).dataset.week || '1');
+        this.scheduleCurrentWeek = week;
+        this.renderScheduleWeekNav();
+        this.renderScheduleAlerts();
+        this.renderScheduleContent();
+        this.renderScheduleEmployeePanel();
+        dropdown.style.display = 'none';
+      });
+    });
+    
+    dropdown.querySelectorAll('.sched-mini-cal-nav button').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // TODO: nawigacja po miesiącach
+      });
+    });
+  }
+  
+  private getWeekNumber(date: Date): number {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  }
+  
+  private getWeekStartDate(year: number, week: number): Date {
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const startDate = new Date(jan4);
+    startDate.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+    return startDate;
+  }
+  
+  // Panel historii zmian
+  private showHistoryPanel(): void {
+    // Pobierz historię z localStorage (jeśli jest)
+    const historyJson = localStorage.getItem('kappa_schedule_history') || '[]';
+    let logs: Array<{action: string; type: string; details: string; timestamp: number}> = [];
+    try {
+      logs = JSON.parse(historyJson);
+    } catch (e) {
+      logs = [];
+    }
+    
+    logs = logs.slice(-20).reverse();
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal" style="max-width: 500px;">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📋 Historia zmian</h2>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="employee-modal-body">
+          <div class="sched-history-list">
+            ${logs.length > 0 ? logs.map((log: any) => {
+              const isAdded = log.action === 'added' || log.action === 'created';
+              const isRemoved = log.action === 'deleted' || log.action === 'removed';
+              const iconClass = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
+              const iconSvg = isAdded 
+                ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+                : isRemoved
+                ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+                : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+              
+              const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
+                day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
+              });
+              
+              return `
+                <div class="sched-history-item">
+                  <div class="sched-history-icon ${iconClass}">${iconSvg}</div>
+                  <div class="sched-history-content">
+                    <div class="sched-history-text">${log.details || `${log.action} ${log.type}`}</div>
+                    <div class="sched-history-time">${time}</div>
+                  </div>
+                </div>
+              `;
+            }).join('') : '<p style="padding: 20px; text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>'}
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  // Modal eksportu
+  private showExportModal(): void {
+    const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal" style="max-width: 450px;">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📥 Eksportuj grafik</h2>
+            <div class="employee-modal-stats">
+              <span class="employee-modal-stat">KW${this.scheduleCurrentWeek} (${weekDates.start.slice(0, 5)} - ${weekDates.end.slice(0, 5)})</span>
+            </div>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="employee-modal-body">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button class="sched-export-btn" data-format="csv">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              <div>
+                <strong>Excel / CSV</strong>
+                <span>Arkusz kalkulacyjny</span>
+              </div>
+            </button>
+            <button class="sched-export-btn" data-format="pdf">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2v2z"/></svg>
+              <div>
+                <strong>PDF</strong>
+                <span>Dokument do wydruku</span>
+              </div>
+            </button>
+            <button class="sched-export-btn" data-format="json">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+              <div>
+                <strong>JSON</strong>
+                <span>Dane strukturalne</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    
+    // Eksport handlers
+    overlay.querySelectorAll('.sched-export-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const format = (btn as HTMLElement).dataset.format;
+        this.exportSchedule(format as 'csv' | 'pdf' | 'json');
+        overlay.remove();
+      });
+    });
+  }
+  
+  private exportSchedule(format: 'csv' | 'pdf' | 'json'): void {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const assignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    // Przygotuj dane
+    const exportData = assignments.map((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+      const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+      
+      let scope = 'Cały projekt';
+      if (a.scope === 'adhesion') scope = 'Przyczepność';
+      else if (a.scope === 'audit') scope = 'Audyt';
+      else if (a.testId) {
+        const test = this.state.tests.find(t => t.id === a.testId);
+        scope = test?.name || 'Test';
+      } else if (a.partId) {
+        const part = this.state.parts.find(p => p.id === a.partId);
+        scope = part?.name || 'Część';
+      }
+      
+      return {
+        pracownik: emp ? `${emp.firstName} ${emp.lastName}` : '?',
+        klient: customer?.name || '?',
+        typ: type?.name || '?',
+        zmiana: a.shift,
+        zakres: scope,
+        tydzien: weekKey
+      };
+    });
+    
+    if (format === 'csv') {
+      const headers = ['Pracownik', 'Klient', 'Typ', 'Zmiana', 'Zakres', 'Tydzień'];
+      const rows = exportData.map(d => [d.pracownik, d.klient, d.typ, d.zmiana, d.zakres, d.tydzien].join(';'));
+      const csv = [headers.join(';'), ...rows].join('\n');
+      
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grafik_${weekKey}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      this.showToast('Wyeksportowano do CSV', 'success');
+    } else if (format === 'json') {
+      const json = JSON.stringify(exportData, null, 2);
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grafik_${weekKey}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      this.showToast('Wyeksportowano do JSON', 'success');
+    } else if (format === 'pdf') {
+      // Prosty eksport HTML do druku
+      const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      
+      const printWindow = window.open('', '_blank');
+      if (printWindow) {
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Grafik ${weekKey}</title>
+            <style>
+              body { font-family: Arial, sans-serif; padding: 20px; }
+              h1 { font-size: 18px; margin-bottom: 5px; }
+              h2 { font-size: 14px; color: #666; margin-bottom: 20px; }
+              table { width: 100%; border-collapse: collapse; }
+              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
+              th { background: #f5f5f5; font-weight: 600; }
+              .shift-1 { background: rgba(37, 99, 235, 0.1); }
+              .shift-2 { background: rgba(124, 58, 237, 0.1); }
+              .shift-3 { background: rgba(234, 88, 12, 0.1); }
+            </style>
+          </head>
+          <body>
+            <h1>Grafik pracy - ${weekKey}</h1>
+            <h2>${weekDates.start} - ${weekDates.end}</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Pracownik</th>
+                  <th>Klient</th>
+                  <th>Typ</th>
+                  <th>Zmiana</th>
+                  <th>Zakres</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${exportData.map(d => `
+                  <tr>
+                    <td>${d.pracownik}</td>
+                    <td>${d.klient}</td>
+                    <td>${d.typ}</td>
+                    <td class="shift-${d.zmiana}">Zmiana ${d.zmiana}</td>
+                    <td>${d.zakres}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </body>
+          </html>
+        `);
+        printWindow.document.close();
+        printWindow.print();
+      }
+      
+      this.showToast('Otwarto okno drukowania', 'success');
+    }
+  }
+
   private renderScheduleWeekNav(): void {
     const weekLabel = document.getElementById('scheduleWeekLabel');
     const weekDates = document.getElementById('scheduleWeekDates');
+    const weekYear = document.getElementById('scheduleWeekYear');
     
     if (weekLabel) {
       weekLabel.textContent = `KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     }
     
+    if (weekYear) {
+      weekYear.textContent = this.scheduleCurrentYear.toString();
+    }
+    
     if (weekDates) {
       const dates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      // Shorter format for compact display
-      weekDates.textContent = `${dates.start.slice(0, 5)} - ${dates.end.slice(0, 5)}`;
+      weekDates.textContent = `${dates.start.slice(0, 5)} – ${dates.end.slice(0, 5)}`;
     }
+    
+    // Aktualizuj pasek pokrycia
+    this.updateCoverageBar();
+  }
+  
+  private updateCoverageBar(): void {
+    const fill = document.getElementById('scheduleCoverageFill');
+    const text = document.getElementById('scheduleCoverageText');
+    if (!fill || !text) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Policz dostępnych pracowników
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const total = availableEmployees.length;
+    
+    // Policz przypisanych
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
+    const assignedCount = availableEmployees.filter(e => assignedIds.has(e.id)).length;
+    
+    // Procent pokrycia
+    const percent = total > 0 ? Math.round((assignedCount / total) * 100) : 0;
+    
+    fill.style.width = `${percent}%`;
+    fill.className = 'sched-coverage-fill ' + (percent < 50 ? 'low' : percent < 80 ? 'medium' : 'high');
+    text.textContent = `${assignedCount}/${total}`;
   }
   
   private getWeekDateRange(year: number, week: number): { start: string; end: string } {
@@ -5639,32 +6112,752 @@ class KappaApp {
     return { start: format(startDate), end: format(endDate) };
   }
   
+  // ==================== Schedule Alerts & Suggestions ====================
+  
+  private renderScheduleAlerts(): void {
+    const container = document.getElementById('scheduleAlerts');
+    if (!container) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const alerts: Array<{ type: 'warning' | 'info' | 'success' | 'suggestion'; icon: string; message: string; action?: string }> = [];
+    
+    // Get projects with SOLL in this week
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+    
+    // Get all assignments for this week
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    // Check for unassigned employees
+    const assignedEmployeeIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
+    const unassignedEmployees = this.state.employees.filter(e => !assignedEmployeeIds.has(e.id));
+    
+    if (unassignedEmployees.length > 0) {
+      alerts.push({
+        type: 'warning',
+        icon: '👤',
+        message: `${unassignedEmployees.length} pracownik${unassignedEmployees.length > 1 ? 'ów' : ''} bez przydziału: ${unassignedEmployees.map(e => e.firstName).join(', ')}`,
+        action: 'assign'
+      });
+    }
+    
+    // Check for unassigned projects (projects with no assignments at all)
+    const assignedProjectIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.projectId));
+    const projectGroups = new Map<string, { name: string; hasAssignment: boolean }>();
+    
+    weekProjects.forEach(p => {
+      const customer = this.state.customers.find(c => c.id === p.customer_id);
+      const type = this.state.types.find(t => t.id === p.type_id);
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      
+      if (!projectGroups.has(groupKey)) {
+        const hasAssignment = assignedProjectIds.has(groupKey) || 
+          weekProjects.filter(proj => proj.customer_id === p.customer_id && proj.type_id === p.type_id)
+            .some(proj => assignedProjectIds.has(proj.id));
+        
+        projectGroups.set(groupKey, {
+          name: `${customer?.name || '?'} – ${type?.name || '?'}`,
+          hasAssignment
+        });
+      }
+    });
+    
+    const unassignedProjects = Array.from(projectGroups.entries())
+      .filter(([_, data]) => !data.hasAssignment)
+      .map(([_, data]) => data.name);
+    
+    if (unassignedProjects.length > 0) {
+      alerts.push({
+        type: 'warning',
+        icon: '📋',
+        message: `${unassignedProjects.length} projekt${unassignedProjects.length > 1 ? 'ów' : ''} bez obsady: ${unassignedProjects.slice(0, 3).join(', ')}${unassignedProjects.length > 3 ? '...' : ''}`
+      });
+    }
+    
+    // Sprawdź nieobsadzone procesy (testy/części)
+    const processWarnings: string[] = [];
+    
+    weekProjects.forEach(p => {
+      const customer = this.state.customers.find(c => c.id === p.customer_id);
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      
+      // Pobierz przypisania dla tego projektu
+      const projectAssignments = weekAssignments.filter((a: ScheduleAssignment) => 
+        a.projectId === p.id || a.projectId === groupKey
+      );
+      
+      // Sprawdź czy są przypisania z zakresem przyczepność
+      const hasAdhesion = projectAssignments.some((a: ScheduleAssignment) => a.scope === 'adhesion');
+      const hasAudit = projectAssignments.some((a: ScheduleAssignment) => a.scope === 'audit');
+      
+      // Jeśli projekt wymaga przyczepności a jej nie ma
+      const type = this.state.types.find(t => t.id === p.type_id);
+      if (type?.name?.toLowerCase().includes('przyczepm') || type?.name?.toLowerCase().includes('adhesion')) {
+        if (!hasAdhesion) {
+          processWarnings.push(`${customer?.name}: Brak obsady przyczepności`);
+        }
+      }
+      
+      // Jeśli brak jakichkolwiek przypisań
+      if (projectAssignments.length === 0) {
+        // Już obsługiwane w unassignedProjects
+      }
+    });
+    
+    if (processWarnings.length > 0) {
+      alerts.push({
+        type: 'warning',
+        icon: '⚠️',
+        message: `Nieobsadzone procesy: ${processWarnings.slice(0, 2).join(', ')}${processWarnings.length > 2 ? ` (+${processWarnings.length - 2} więcej)` : ''}`
+      });
+    }
+
+    // Shift rotation suggestions
+    const prevWeekKey = this.getPreviousWeekKey(weekKey);
+    const prevAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === prevWeekKey);
+    
+    const rotationSuggestions: string[] = [];
+    this.state.employees.forEach(emp => {
+      const prevShifts = prevAssignments.filter((a: ScheduleAssignment) => a.employeeId === emp.id);
+      const currentShifts = weekAssignments.filter((a: ScheduleAssignment) => a.employeeId === emp.id);
+      
+      if (prevShifts.length > 0 && currentShifts.length > 0) {
+        const prevMainShift = this.getMostCommonShift(prevShifts);
+        const currentMainShift = this.getMostCommonShift(currentShifts);
+        
+        if (prevMainShift === currentMainShift) {
+          const suggestedShift = prevMainShift === 1 ? 2 : 1;
+          rotationSuggestions.push(`${emp.firstName}: zmiana ${prevMainShift}→${suggestedShift}`);
+        }
+      }
+    });
+    
+    if (rotationSuggestions.length > 0) {
+      alerts.push({
+        type: 'suggestion',
+        icon: '🔄',
+        message: `Sugestia rotacji: ${rotationSuggestions.slice(0, 2).join(', ')}${rotationSuggestions.length > 2 ? '...' : ''}`
+      });
+    }
+    
+    // Success message if all good
+    if (alerts.length === 0 && weekProjects.length > 0) {
+      alerts.push({
+        type: 'success',
+        icon: '✓',
+        message: 'Wszystkie projekty mają przypisanych pracowników'
+      });
+    }
+    
+    // Render alerts with new classes
+    if (alerts.length === 0) {
+      container.innerHTML = '';
+      container.style.display = 'none';
+      return;
+    }
+    
+    container.style.display = 'flex';
+    container.innerHTML = alerts.map(alert => `
+      <div class="sched-alert sched-alert-${alert.type}">
+        <span class="sched-alert-icon">${alert.icon}</span>
+        <span class="sched-alert-text">${alert.message}</span>
+        ${alert.action ? `<button class="sched-alert-action" data-action="${alert.action}">Przypisz</button>` : ''}
+      </div>
+    `).join('');
+    
+    // Dodaj konflikty urlopowe
+    this.renderVacationConflicts();
+  }
+  
+  private getPreviousWeekKey(weekKey: string): string {
+    const [year, weekPart] = weekKey.split('-KW');
+    let prevWeek = parseInt(weekPart) - 1;
+    let prevYear = parseInt(year);
+    
+    if (prevWeek < 1) {
+      prevWeek = 52;
+      prevYear--;
+    }
+    
+    return `${prevYear}-KW${prevWeek.toString().padStart(2, '0')}`;
+  }
+  
+  private getMostCommonShift(assignments: ScheduleAssignment[]): number {
+    const shiftCounts = { 1: 0, 2: 0, 3: 0 };
+    assignments.forEach(a => shiftCounts[a.shift]++);
+    return Object.entries(shiftCounts).sort((a, b) => b[1] - a[1])[0][0] as unknown as number;
+  }
+  
+  // ==================== Multi-Week View ====================
+  
+  private renderMultiWeekView(): void {
+    const container = document.getElementById('scheduleProjectsList');
+    if (!container) return;
+    
+    const weeks = [
+      { week: this.scheduleCurrentWeek - 1 < 1 ? 52 : this.scheduleCurrentWeek - 1, year: this.scheduleCurrentWeek - 1 < 1 ? this.scheduleCurrentYear - 1 : this.scheduleCurrentYear, label: 'Poprz.' },
+      { week: this.scheduleCurrentWeek, year: this.scheduleCurrentYear, label: 'Obecny' },
+      { week: this.scheduleCurrentWeek + 1 > 52 ? 1 : this.scheduleCurrentWeek + 1, year: this.scheduleCurrentWeek + 1 > 52 ? this.scheduleCurrentYear + 1 : this.scheduleCurrentYear, label: 'Następny' }
+    ];
+    
+    // Update header for multi-week
+    const headerContainer = document.getElementById('scheduleShiftsHeader');
+    if (headerContainer) {
+      headerContainer.className = 'sched-table-header sched-multiweek';
+      headerContainer.innerHTML = `
+        <div class="sched-col-project">Projekt</div>
+        ${weeks.map(w => `
+          <div class="sched-col-week ${w.label === 'Obecny' ? 'current' : ''}">
+            <span class="sched-week-num">KW${w.week.toString().padStart(2, '0')}</span>
+            <span class="sched-week-label">${w.label}</span>
+          </div>
+        `).join('')}
+      `;
+    }
+    
+    // Get all projects with SOLL in any of the 3 weeks
+    const allProjectGroups = new Map<string, { customerName: string; typeName: string; weekData: Map<string, number>; projectIds: string[] }>();
+    
+    weeks.forEach(({ week, year }) => {
+      const weekKey = `${year}-KW${week.toString().padStart(2, '0')}`;
+      
+      this.state.projects.filter(p => !p.hidden).forEach(p => {
+        const weekData = p.weeks[weekKey];
+        if (weekData && weekData.soll > 0) {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          const type = this.state.types.find(t => t.id === p.type_id);
+          const groupKey = `${p.customer_id}-${p.type_id}`;
+          
+          if (!allProjectGroups.has(groupKey)) {
+            allProjectGroups.set(groupKey, {
+              customerName: customer?.name || '?',
+              typeName: type?.name || '?',
+              weekData: new Map(),
+              projectIds: []
+            });
+          }
+          
+          const group = allProjectGroups.get(groupKey)!;
+          if (!group.projectIds.includes(p.id)) {
+            group.projectIds.push(p.id);
+          }
+          const currentSoll = group.weekData.get(weekKey) || 0;
+          group.weekData.set(weekKey, currentSoll + weekData.soll);
+        }
+      });
+    });
+    
+    if (allProjectGroups.size === 0) {
+      container.innerHTML = `
+        <div class="sched-empty">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
+            <rect x="3" y="4" width="18" height="18" rx="2"/>
+            <line x1="3" y1="10" x2="21" y2="10"/>
+          </svg>
+          <span>Brak projektów w wybranym okresie</span>
+        </div>
+      `;
+      return;
+    }
+    
+    container.innerHTML = Array.from(allProjectGroups.entries()).map(([groupKey, group]) => {
+      return `
+        <div class="sched-row sched-multiweek">
+          <div class="sched-project-cell">
+            <span class="sched-customer">${group.customerName}</span>
+            <span class="sched-type">${group.typeName}</span>
+          </div>
+          ${weeks.map(({ week, year, label }) => {
+            const weekKey = `${year}-KW${week.toString().padStart(2, '0')}`;
+            const soll = group.weekData.get(weekKey) || 0;
+            const assignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => 
+              group.projectIds.includes(a.projectId) && a.week === weekKey
+            );
+            
+            const hasAssignment = assignments.length > 0;
+            const status = soll === 0 ? 'empty' : hasAssignment ? 'assigned' : 'unassigned';
+            
+            return `
+              <div class="sched-week-cell ${label === 'Obecny' ? 'current' : ''} ${status}">
+                ${soll > 0 ? `
+                  <span class="sched-soll">${soll}</span>
+                  <div class="sched-mini-team">
+                    ${assignments.slice(0, 4).map((a: ScheduleAssignment) => {
+                      const emp = this.state.employees.find(e => e.id === a.employeeId);
+                      return emp ? `<span class="sched-mini-avatar" style="background:${emp.color}" title="${emp.firstName} ${emp.lastName}">${emp.firstName.charAt(0)}</span>` : '';
+                    }).join('')}
+                    ${assignments.length > 4 ? `<span class="sched-mini-more">+${assignments.length - 4}</span>` : ''}
+                  </div>
+                ` : '<span class="sched-no-data">—</span>'}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }).join('');
+  }
+  
+  // ==================== Year View ====================
+  
+  private renderYearView(): void {
+    const container = document.getElementById('scheduleProjectsList');
+    const headerContainer = document.getElementById('scheduleShiftsHeader');
+    if (!container || !headerContainer) return;
+    
+    // Generate all weeks of the year
+    const weeks = Array.from({ length: 52 }, (_, i) => i + 1);
+    const currentWeek = this.getCurrentWeek();
+    
+    // Header with months
+    headerContainer.className = 'grid-header year-view';
+    headerContainer.innerHTML = `
+      <div class="header-cell project-col">Projekt</div>
+      <div class="header-cell months-row">
+        ${['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'].map((m, i) => 
+          `<span class="month-label" style="left: ${(i / 12) * 100}%">${m}</span>`
+        ).join('')}
+      </div>
+    `;
+    
+    // Get all unique project groups for the year
+    const projectGroups = new Map<string, { customerName: string; typeName: string }>();
+    
+    this.state.projects.filter(p => !p.hidden).forEach(p => {
+      const customer = this.state.customers.find(c => c.id === p.customer_id);
+      const type = this.state.types.find(t => t.id === p.type_id);
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      
+      if (!projectGroups.has(groupKey)) {
+        projectGroups.set(groupKey, {
+          customerName: customer?.name || '?',
+          typeName: type?.name || '?'
+        });
+      }
+    });
+    
+    container.innerHTML = Array.from(projectGroups.entries()).map(([groupKey, group]) => {
+      const weekCells = weeks.map(week => {
+        const weekKey = `${this.scheduleCurrentYear}-KW${week.toString().padStart(2, '0')}`;
+        
+        // Check if any project in this group has SOLL
+        const hasSoll = this.state.projects.some(p => {
+          if (`${p.customer_id}-${p.type_id}` !== groupKey) return false;
+          const weekData = p.weeks[weekKey];
+          return weekData && weekData.soll > 0;
+        });
+        
+        // Check if has assignments
+        const hasAssignment = this.state.scheduleAssignments.some((a: ScheduleAssignment) => 
+          a.week === weekKey && (a.projectId === groupKey || a.projectId.includes(groupKey.split('-')[0]))
+        );
+        
+        const isCurrent = week === currentWeek;
+        
+        return `<div class="year-cell ${hasSoll ? 'has-soll' : ''} ${hasAssignment ? 'assigned' : ''} ${isCurrent ? 'current' : ''}" 
+                     data-week="${week}" title="KW${week}${hasSoll ? ' • Ma SOLL' : ''}${hasAssignment ? ' • Obsadzony' : ''}"></div>`;
+      }).join('');
+      
+      return `
+        <div class="year-row">
+          <div class="project-name-cell">
+            <div class="project-title">${group.customerName}</div>
+            <div class="project-subtitle">${group.typeName}</div>
+          </div>
+          <div class="weeks-strip">${weekCells}</div>
+        </div>
+      `;
+    }).join('');
+    
+    // Add click handlers to go to specific week
+    container.querySelectorAll('.year-cell').forEach(cell => {
+      cell.addEventListener('click', () => {
+        const week = parseInt((cell as HTMLElement).dataset.week || '1');
+        this.scheduleCurrentWeek = week;
+        this.scheduleViewMode = 'week';
+        document.querySelectorAll('.view-mode-btn').forEach(b => b.classList.remove('active'));
+        document.querySelector('.view-mode-btn[data-mode="week"]')?.classList.add('active');
+        this.renderScheduleWeekNav();
+        this.renderScheduleAlerts();
+        this.renderScheduleContent();
+      });
+    });
+  }
+  
+  // ==================== Compact View ====================
+  
+  private renderCompactView(): void {
+    const container = document.getElementById('scheduleProjectsList');
+    const headerContainer = document.getElementById('scheduleShiftsHeader');
+    if (!container || !headerContainer) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Compact header
+    headerContainer.className = 'grid-header compact-view';
+    let headerHtml = '<div class="header-cell project-col compact">Projekt</div>';
+    headerHtml += '<div class="header-cell compact">Części</div>';
+    headerHtml += '<div class="header-cell compact">SOLL</div>';
+    for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+      headerHtml += `<div class="header-cell shift-col compact shift-${s}">Z${s}</div>`;
+    }
+    headerHtml += '<div class="header-cell compact">Status</div>';
+    headerContainer.innerHTML = headerHtml;
+    
+    // Get projects grouped
+    const projectGroups = new Map<string, {
+      customerName: string;
+      typeName: string;
+      partsCount: number;
+      totalSoll: number;
+      assignments: ScheduleAssignment[];
+    }>();
+    
+    this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    }).forEach(p => {
+      const customer = this.state.customers.find(c => c.id === p.customer_id);
+      const type = this.state.types.find(t => t.id === p.type_id);
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      const weekData = p.weeks[weekKey] || { soll: 0 };
+      
+      if (!projectGroups.has(groupKey)) {
+        projectGroups.set(groupKey, {
+          customerName: customer?.name || '?',
+          typeName: type?.name || '?',
+          partsCount: 0,
+          totalSoll: 0,
+          assignments: []
+        });
+      }
+      
+      const group = projectGroups.get(groupKey)!;
+      group.partsCount++;
+      group.totalSoll += weekData.soll;
+    });
+    
+    // Get assignments for each group
+    projectGroups.forEach((group, groupKey) => {
+      group.assignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+        a.week === weekKey && (a.projectId === groupKey || a.projectId.includes(groupKey.split('-')[0]))
+      );
+    });
+    
+    if (projectGroups.size === 0) {
+      container.innerHTML = `<div class="grid-empty"><h3>Brak projektów</h3></div>`;
+      return;
+    }
+    
+    container.innerHTML = Array.from(projectGroups.entries()).map(([groupKey, group]) => {
+      const shiftAssignments: { [key: number]: ScheduleAssignment[] } = { 1: [], 2: [], 3: [] };
+      group.assignments.forEach((a: ScheduleAssignment) => {
+        shiftAssignments[a.shift].push(a);
+      });
+      
+      const totalAssigned = group.assignments.length;
+      const status = totalAssigned === 0 ? 'unassigned' : totalAssigned >= group.partsCount ? 'full' : 'partial';
+      const statusLabel = status === 'unassigned' ? '⚠️ Brak' : status === 'full' ? '✓ OK' : '⚡ Częściowo';
+      
+      return `
+        <div class="compact-row ${status}">
+          <div class="compact-cell project">
+            <strong>${group.customerName}</strong>
+            <small>${group.typeName}</small>
+          </div>
+          <div class="compact-cell center">${group.partsCount}</div>
+          <div class="compact-cell center soll">${group.totalSoll}</div>
+          ${Array.from({ length: this.scheduleShiftSystem }, (_, i) => i + 1).map(s => {
+            const assigns = shiftAssignments[s];
+            return `
+              <div class="compact-cell shift shift-${s}">
+                ${assigns.map((a: ScheduleAssignment) => {
+                  const emp = this.state.employees.find(e => e.id === a.employeeId);
+                  if (!emp) return '';
+                  const scopeIcon = a.scope === 'project' ? 'P' : a.scope === 'audit' ? 'A' : a.scope === 'adhesion' ? 'H' : 'S';
+                  return `<span class="compact-chip" style="--c:${emp.color}" title="${emp.firstName} ${emp.lastName} - ${this.getScopeLabel(a.scope)}">${scopeIcon}</span>`;
+                }).join('')}
+              </div>
+            `;
+          }).join('')}
+          <div class="compact-cell status ${status}">${statusLabel}</div>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  private getScopeLabel(scope?: string): string {
+    switch(scope) {
+      case 'audit': return 'Audyty';
+      case 'adhesion': return 'Przyczepność';
+      case 'specific': return 'Konkretna część';
+      default: return 'Cały projekt';
+    }
+  }
+  
+  // ==================== Auto-Assign Modal ====================
+  
+  private showAutoAssignModal(): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Get unassigned projects
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+    
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedProjectIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.projectId));
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
+      </svg>
+      Auto-planner
+    `;
+    
+    modalBody.innerHTML = `
+      <div class="auto-assign-modal">
+        <div class="info-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>Auto-planner rozdzieli pracowników równomiernie na projekty bez obsady.</span>
+        </div>
+        
+        <div class="auto-stats">
+          <div class="stat">
+            <span class="stat-value">${weekProjects.length}</span>
+            <span class="stat-label">Projektów</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">${this.state.employees.length}</span>
+            <span class="stat-label">Pracowników</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">${weekProjects.length - assignedProjectIds.size}</span>
+            <span class="stat-label">Bez obsady</span>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Strategia:</label>
+          <select id="autoStrategy" class="form-control">
+            <option value="rotate">Rotacja zmian (1→2→3→1...)</option>
+            <option value="balance">Równomierne obciążenie</option>
+            <option value="copy">Kopiuj z poprzedniego tygodnia</option>
+          </select>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Domyślny zakres:</label>
+          <select id="autoScope" class="form-control">
+            <option value="project">Cały projekt</option>
+            <option value="audit">Tylko audyty</option>
+            <option value="adhesion">Tylko przyczepność</option>
+          </select>
+        </div>
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = '';
+    confirmBtn.textContent = 'Uruchom auto-planner';
+    confirmBtn.onclick = async () => {
+      const strategy = (document.getElementById('autoStrategy') as HTMLSelectElement).value;
+      const scope = (document.getElementById('autoScope') as HTMLSelectElement).value as 'project' | 'audit' | 'adhesion';
+      
+      await this.runAutoAssign(strategy, scope);
+      this.hideModal();
+    };
+    
+    modal.classList.add('active');
+  }
+  
+  private async runAutoAssign(strategy: string, defaultScope: 'project' | 'audit' | 'adhesion'): Promise<void> {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    if (strategy === 'copy') {
+      await this.copyFromPreviousWeek();
+      return;
+    }
+    
+    // Get unassigned project groups
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+    
+    const projectGroups = new Map<string, string[]>();
+    weekProjects.forEach(p => {
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      if (!projectGroups.has(groupKey)) {
+        projectGroups.set(groupKey, []);
+      }
+      projectGroups.get(groupKey)!.push(p.id);
+    });
+    
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedGroupIds = new Set<string>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      assignedGroupIds.add(a.projectId);
+    });
+    
+    const unassignedGroups = Array.from(projectGroups.keys()).filter(g => !assignedGroupIds.has(g));
+    
+    if (unassignedGroups.length === 0 || this.state.employees.length === 0) {
+      this.showToast('Wszystkie projekty już obsadzone lub brak pracowników', 'warning');
+      return;
+    }
+    
+    // Assign employees to unassigned projects
+    let employeeIndex = 0;
+    let shift = 1;
+    
+    for (const groupKey of unassignedGroups) {
+      const employee = this.state.employees[employeeIndex % this.state.employees.length];
+      
+      if (strategy === 'rotate') {
+        // Get previous week's shift for this employee
+        const prevWeekKey = this.getPreviousWeekKey(weekKey);
+        const prevAssignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => 
+          a.employeeId === employee.id && a.week === prevWeekKey
+        );
+        
+        if (prevAssignment) {
+          shift = (prevAssignment.shift % this.scheduleShiftSystem) + 1;
+        }
+      }
+      
+      await this.addAssignmentWithScope(
+        groupKey,
+        undefined,
+        undefined,
+        employee.id,
+        weekKey,
+        shift as 1 | 2 | 3,
+        defaultScope
+      );
+      
+      employeeIndex++;
+      if (strategy === 'balance') {
+        shift = (shift % this.scheduleShiftSystem) + 1;
+      }
+    }
+    
+    this.showToast(`Przypisano ${unassignedGroups.length} projektów`, 'success');
+    this.renderScheduleAlerts();
+    this.renderScheduleContent();
+  }
+  
   private renderScheduleEmployeePanel(): void {
     const container = document.getElementById('employeeDragList');
+    const absenceList = document.getElementById('absenceList');
     if (!container) return;
     
     if (this.state.employees.length === 0) {
       container.innerHTML = `
-        <div class="schedule-empty" style="padding: 20px;">
-          <p style="font-size: 0.85rem;">Brak pracowników</p>
-          <button class="btn-secondary btn-sm" onclick="window.kappaApp.showAddEmployeeModal()">+ Dodaj</button>
+        <div class="sched-empty-state">
+          <p>${i18n.t('schedule.noEmployees')}</p>
+          <button class="sched-add-btn" onclick="window.kappaApp.showAddEmployeeModal()">${i18n.t('schedule.addEmployee')}</button>
         </div>
       `;
       (window as any).kappaApp = this;
       return;
     }
     
-    container.innerHTML = this.state.employees.map(emp => `
-      <div class="employee-drag-item" draggable="true" data-employee-id="${emp.id}">
-        <span class="emp-color" style="background-color: ${emp.color}"></span>
-        <span class="emp-name">${emp.firstName} ${emp.lastName}</span>
-      </div>
-    `).join('');
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedEmployeeIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
     
-    // Add drag events
-    container.querySelectorAll('.employee-drag-item').forEach(item => {
+    // Podziel pracowników
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
+    
+    // Przypisani i nieprzypisani
+    const assignedAvailable = availableEmployees.filter(e => assignedEmployeeIds.has(e.id));
+    const unassignedAvailable = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id));
+    
+    // Helper: pobierz zadania pracownika
+    const getEmployeeTasks = (empId: string): string[] => {
+      const tasks = weekAssignments
+        .filter((a: ScheduleAssignment) => a.employeeId === empId)
+        .map((a: ScheduleAssignment) => {
+          const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+          if (project) {
+            const customer = this.state.customers.find(c => c.id === project.customer_id);
+            return customer?.name || '?';
+          }
+          return '?';
+        });
+      return [...new Set(tasks)];
+    };
+    
+    // Renderuj nieprzypisanych (do drag & drop)
+    let html = '';
+    if (unassignedAvailable.length > 0) {
+      html += `<div class="sched-section-label">⚠️ Nieprzypisani (${unassignedAvailable.length})</div>`;
+      html += unassignedAvailable.map(emp => `
+        <div class="sched-team-card unassigned" draggable="true" data-employee-id="${emp.id}">
+          <div class="sched-team-avatar" style="background-color: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
+          <span class="sched-team-name">${emp.firstName} ${emp.lastName}</span>
+        </div>
+      `).join('');
+    }
+    
+    // Renderuj przypisanych z zadaniami
+    if (assignedAvailable.length > 0) {
+      html += `<div class="sched-section-label">✓ Przypisani (${assignedAvailable.length})</div>`;
+      html += assignedAvailable.map(emp => {
+        const tasks = getEmployeeTasks(emp.id);
+        return `
+          <div class="sched-team-card assigned" draggable="true" data-employee-id="${emp.id}">
+            <div class="sched-team-avatar" style="background-color: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
+            <div class="sched-team-info">
+              <span class="sched-team-name">${emp.firstName} ${emp.lastName}</span>
+              ${tasks.length > 0 ? `<span class="sched-team-tasks">${tasks.slice(0, 2).join(', ')}${tasks.length > 2 ? '...' : ''}</span>` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+    
+    container.innerHTML = html || `<p class="sched-empty-hint">Brak dostępnych pracowników</p>`;
+    
+    // Renderuj nieobecnych z ikonami SVG
+    if (absenceList) {
+      if (absentEmployees.length === 0) {
+        absenceList.innerHTML = `<p class="sched-empty-hint">${i18n.t('schedule.noAbsences')}</p>`;
+      } else {
+        absenceList.innerHTML = absentEmployees.map(emp => {
+          const isVacation = emp.status === 'vacation';
+          const statusText = isVacation ? i18n.t('schedule.vacation') : i18n.t('schedule.sickLeave');
+          const statusClass = isVacation ? 'vacation' : 'sick';
+          const icon = isVacation 
+            ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`
+            : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`;
+          
+          return `
+            <div class="sched-absence-item ${statusClass}">
+              <span class="sched-absence-icon">${icon}</span>
+              <span class="sched-absence-name">${emp.firstName} ${emp.lastName}</span>
+              <span class="sched-absence-type ${statusClass}">${statusText}</span>
+            </div>
+          `;
+        }).join('');
+      }
+    }
+    
+    // Drag events
+    container.querySelectorAll('.sched-team-card').forEach(item => {
       item.addEventListener('dragstart', (e) => {
         this.draggedEmployeeId = (item as HTMLElement).dataset.employeeId || null;
+        this.draggedEmployeeScope = 'project';
         (item as HTMLElement).classList.add('dragging');
         (e as DragEvent).dataTransfer?.setData('text/plain', this.draggedEmployeeId || '');
       });
@@ -5672,11 +6865,1002 @@ class KappaApp {
         (item as HTMLElement).classList.remove('dragging');
         this.draggedEmployeeId = null;
       });
+      
+      // Hover - podświetlanie przypisań + popup
+      item.addEventListener('mouseenter', (e) => {
+        const empId = (item as HTMLElement).dataset.employeeId;
+        if (empId) {
+          this.highlightEmployeeAssignments(empId, true);
+          this.showEmployeeHoverPopup(e as MouseEvent, empId);
+        }
+      });
+      item.addEventListener('mouseleave', () => {
+        const empId = (item as HTMLElement).dataset.employeeId;
+        if (empId) {
+          this.highlightEmployeeAssignments(empId, false);
+          this.hideEmployeeHoverPopup();
+        }
+      });
+    });
+    
+    // Quick add & edit
+    document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
+    
+    container.querySelectorAll('.sched-team-edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const empId = (btn as HTMLElement).dataset.empId;
+        if (empId) this.editEmployee(empId);
+      });
     });
     
     (window as any).kappaApp = this;
   }
   
+  // Podświetlanie przypisań pracownika w tabeli
+  private highlightEmployeeAssignments(employeeId: string, highlight: boolean): void {
+    // Znajdź wszystkie chipy tego pracownika
+    document.querySelectorAll(`.sched-chip[data-employee-id="${employeeId}"]`).forEach(chip => {
+      if (highlight) {
+        chip.classList.add('highlighted');
+        // Podświetl też komórkę nadrzędną
+        const cell = chip.closest('.sched-shift-cell');
+        cell?.classList.add('employee-highlight');
+      } else {
+        chip.classList.remove('highlighted');
+        const cell = chip.closest('.sched-shift-cell');
+        cell?.classList.remove('employee-highlight');
+      }
+    });
+    
+    // Podświetl też w widoku multi-week
+    document.querySelectorAll(`.sched-mini-avatar`).forEach(avatar => {
+      const title = avatar.getAttribute('title') || '';
+      const emp = this.state.employees.find(e => e.id === employeeId);
+      if (emp && title.includes(emp.firstName)) {
+        if (highlight) {
+          avatar.classList.add('highlighted');
+          avatar.closest('.sched-week-cell')?.classList.add('employee-highlight');
+        } else {
+          avatar.classList.remove('highlighted');
+          avatar.closest('.sched-week-cell')?.classList.remove('employee-highlight');
+        }
+      }
+    });
+  }
+  
+  // Popup z detalami przypisań pracownika
+  private showEmployeeHoverPopup(event: MouseEvent, employeeId: string): void {
+    this.hideEmployeeHoverPopup();
+    
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const assignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
+    );
+    
+    if (assignments.length === 0) return;
+    
+    // Grupuj po projekcie i zmianie
+    const grouped = new Map<string, { customer: string; type: string; shifts: number[]; scopes: string[] }>();
+    
+    assignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      if (project) {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const type = this.state.types.find(t => t.id === project.type_id);
+        const key = a.projectId;
+        
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            customer: customer?.name || '?',
+            type: type?.name || '?',
+            shifts: [],
+            scopes: []
+          });
+        }
+        const g = grouped.get(key)!;
+        if (!g.shifts.includes(a.shift)) g.shifts.push(a.shift);
+        if (a.scope && !g.scopes.includes(a.scope)) g.scopes.push(a.scope);
+      }
+    });
+    
+    const popup = document.createElement('div');
+    popup.className = 'sched-employee-popup';
+    popup.innerHTML = `
+      <div class="sched-popup-header" style="background: ${emp.color}">
+        <span class="sched-popup-avatar">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
+        <span class="sched-popup-name">${emp.firstName} ${emp.lastName}</span>
+      </div>
+      <div class="sched-popup-content">
+        <div class="sched-popup-week">KW${this.scheduleCurrentWeek} • ${assignments.length} przypisań</div>
+        ${Array.from(grouped.entries()).map(([_, g]) => `
+          <div class="sched-popup-assignment">
+            <div class="sched-popup-project">${g.customer}</div>
+            <div class="sched-popup-details">
+              <span class="sched-popup-type">${g.type}</span>
+              <span class="sched-popup-shifts">${g.shifts.sort().map(s => `Z${s}`).join(', ')}</span>
+              ${g.scopes.length > 0 ? `<span class="sched-popup-scopes">${g.scopes.join(', ')}</span>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+    document.body.appendChild(popup);
+    
+    // Pozycjonowanie
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    
+    let left = rect.right + 8;
+    let top = rect.top;
+    
+    // Sprawdź czy mieści się na ekranie
+    if (left + popupRect.width > window.innerWidth) {
+      left = rect.left - popupRect.width - 8;
+    }
+    if (top + popupRect.height > window.innerHeight) {
+      top = window.innerHeight - popupRect.height - 8;
+    }
+    
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+  }
+  
+  private hideEmployeeHoverPopup(): void {
+    document.querySelector('.sched-employee-popup')?.remove();
+  }
+  
+  // Modal pracownika z pełnym grafikiem
+  private showEmployeeModal(employeeId: string): void {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    // Zamknij hover popup
+    this.hideEmployeeHoverPopup();
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+    
+    // Pobierz wszystkie przypisania pracownika w tym tygodniu
+    const assignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
+    );
+    
+    // Grupuj po projekcie
+    const projectTasks = new Map<string, {
+      customer: string;
+      type: string;
+      shifts: number[];
+      scope: string;
+      scopeClass: string;
+      details: string[];
+    }>();
+    
+    assignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => 
+        p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId
+      );
+      if (!project) return;
+      
+      const customer = this.state.customers.find(c => c.id === project.customer_id);
+      const type = this.state.types.find(t => t.id === project.type_id);
+      const key = a.projectId;
+      
+      // Określ zakres pracy
+      let scope = 'Cały projekt';
+      let scopeClass = '';
+      const details: string[] = [];
+      
+      if (a.scope === 'adhesion') {
+        scope = 'Przyczepność';
+        scopeClass = 'scope-adhesion';
+      } else if (a.scope === 'audit') {
+        scope = 'Audyt';
+        scopeClass = 'scope-audit';
+      } else if (a.testId) {
+        const test = this.state.tests.find(t => t.id === a.testId);
+        scope = test?.name || 'Test';
+        scopeClass = 'scope-test';
+      } else if (a.partId) {
+        const part = this.state.parts.find(p => p.id === a.partId);
+        scope = part?.name || 'Część';
+        scopeClass = 'scope-part';
+      }
+      
+      if (!projectTasks.has(key)) {
+        projectTasks.set(key, {
+          customer: customer?.name || '?',
+          type: type?.name || '?',
+          shifts: [],
+          scope,
+          scopeClass,
+          details
+        });
+      }
+      
+      const task = projectTasks.get(key)!;
+      if (!task.shifts.includes(a.shift)) {
+        task.shifts.push(a.shift);
+      }
+    });
+    
+    // Oblicz statystyki
+    const totalShifts = assignments.length;
+    const uniqueProjects = projectTasks.size;
+    
+    // Dni tygodnia
+    const days = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nie'];
+    const shiftNames = ['Rano', 'Pop.', 'Noc'];
+    
+    // Utwórz overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal">
+        <div class="employee-modal-header">
+          <div class="employee-modal-avatar" style="background: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
+          <div class="employee-modal-info">
+            <h2>${emp.firstName} ${emp.lastName}</h2>
+            <div class="employee-modal-stats">
+              <span class="employee-modal-stat">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                KW${this.scheduleCurrentWeek} (${weekDates.start.slice(0, 5)} - ${weekDates.end.slice(0, 5)})
+              </span>
+              <span class="employee-modal-stat">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                ${uniqueProjects} ${uniqueProjects === 1 ? 'projekt' : 'projekty'}
+              </span>
+              <span class="employee-modal-stat">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                ${totalShifts} ${totalShifts === 1 ? 'zmiana' : 'zmiany'}
+              </span>
+            </div>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="employee-modal-body">
+          ${projectTasks.size > 0 ? `
+            <div class="employee-modal-section">
+              <h3>📋 Zadania w tym tygodniu</h3>
+              <div class="employee-tasks-list">
+                ${Array.from(projectTasks.entries()).map(([_, task]) => `
+                  <div class="employee-task-item">
+                    <div class="employee-task-icon">${task.customer.charAt(0)}</div>
+                    <div class="employee-task-content">
+                      <div class="employee-task-project">${task.customer} – ${task.type}</div>
+                      <div class="employee-task-details">
+                        <span class="employee-task-tag ${task.scopeClass}">${task.scope}</span>
+                        ${task.shifts.sort().map(s => `<span class="employee-task-tag shift">Z${s} ${shiftNames[s-1]}</span>`).join('')}
+                        ${task.details.slice(0, 3).map(d => `<span class="employee-task-tag">${d}</span>`).join('')}
+                        ${task.details.length > 3 ? `<span class="employee-task-tag">+${task.details.length - 3} więcej</span>` : ''}
+                      </div>
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : `
+            <div class="employee-modal-section">
+              <h3>📋 Zadania w tym tygodniu</h3>
+              <p style="color: var(--color-text-muted); font-size: 0.85rem;">Brak przypisanych zadań w tym tygodniu.</p>
+            </div>
+          `}
+          
+          <div class="employee-modal-section">
+            <h3>📅 Grafik tygodniowy</h3>
+            <div class="employee-schedule-grid">
+              ${days.map((day) => {
+                return `
+                  <div class="employee-schedule-day">
+                    <div class="employee-schedule-day-header">
+                      <span class="employee-schedule-day-name">${day}</span>
+                    </div>
+                    <div class="employee-schedule-shifts">
+                      ${[1, 2, 3].slice(0, this.scheduleShiftSystem).map(s => {
+                        const hasShift = assignments.some((a: ScheduleAssignment) => a.shift === s);
+                        const shiftAssignment = assignments.find((a: ScheduleAssignment) => a.shift === s);
+                        let projectName = '';
+                        if (shiftAssignment) {
+                          const proj = this.state.projects.find(p => 
+                            p.id === shiftAssignment.projectId || `${p.customer_id}-${p.type_id}` === shiftAssignment.projectId
+                          );
+                          if (proj) {
+                            const cust = this.state.customers.find(c => c.id === proj.customer_id);
+                            projectName = cust?.name || '?';
+                          }
+                        }
+                        return `
+                          <div class="employee-schedule-shift shift-${s} ${hasShift ? 'assigned' : ''}">
+                            <span class="employee-schedule-shift-label">Z${s}</span>
+                            ${hasShift ? `<span class="employee-schedule-shift-project">${projectName}</span>` : ''}
+                          </div>
+                        `;
+                      }).join('')}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Zamykanie
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    
+    // Escape
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+  }
+
+  // ==================== KOPIOWANIE TYGODNIA ====================
+  private showCopyWeekModal(): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    const weeks: { year: number; week: number; label: string }[] = [];
+    for (let i = 1; i <= 10; i++) {
+      let week = this.scheduleCurrentWeek - i;
+      let year = this.scheduleCurrentYear;
+      if (week < 1) { week += 52; year--; }
+      const weekKey = `${year}-KW${week.toString().padStart(2, '0')}`;
+      const count = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey).length;
+      if (count > 0) {
+        weeks.push({ year, week, label: `KW${week.toString().padStart(2, '0')} ${year} (${count} przypisań)` });
+      }
+    }
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+      </svg>
+      Kopiuj tydzień
+    `;
+    
+    modalBody.innerHTML = `
+      <div class="copy-week-modal">
+        <div class="info-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>Skopiuj przypisania z poprzedniego tygodnia do KW${this.scheduleCurrentWeek}.</span>
+        </div>
+        
+        ${weeks.length > 0 ? `
+          <div class="form-group">
+            <label class="form-label">Kopiuj z:</label>
+            <select id="copySourceWeek" class="form-control">
+              ${weeks.map(w => `<option value="${w.year}-${w.week}">${w.label}</option>`).join('')}
+            </select>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-checkbox">
+              <input type="checkbox" id="copyOverwrite" checked>
+              <span>Zastąp istniejące przypisania</span>
+            </label>
+          </div>
+        ` : `
+          <p class="form-hint">Brak tygodni z przypisaniami do skopiowania.</p>
+        `}
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    if (weeks.length > 0) {
+      confirmBtn.style.display = '';
+      confirmBtn.textContent = 'Kopiuj';
+      confirmBtn.onclick = async () => {
+        const sourceVal = (document.getElementById('copySourceWeek') as HTMLSelectElement).value;
+        const overwrite = (document.getElementById('copyOverwrite') as HTMLInputElement).checked;
+        const [year, week] = sourceVal.split('-').map(Number);
+        await this.copyWeekAssignments(year, week, overwrite);
+        this.hideModal();
+      };
+    } else {
+      confirmBtn.style.display = 'none';
+    }
+    
+    modal.classList.add('active');
+  }
+  
+  private async copyWeekAssignments(sourceYear: number, sourceWeek: number, overwrite: boolean): Promise<void> {
+    const sourceWeekKey = `${sourceYear}-KW${sourceWeek.toString().padStart(2, '0')}`;
+    const targetWeekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    const sourceAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === sourceWeekKey);
+    
+    if (overwrite) {
+      // Usuń istniejące
+      const existing = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === targetWeekKey);
+      for (const a of existing) {
+        const idx = this.state.scheduleAssignments.indexOf(a);
+        if (idx !== -1) {
+          this.state.scheduleAssignments.splice(idx, 1);
+          await db.delete('scheduleAssignments', a.id);
+        }
+      }
+    }
+    
+    let copied = 0;
+    for (const src of sourceAssignments) {
+      const exists = !overwrite && this.state.scheduleAssignments.find((a: ScheduleAssignment) =>
+        a.projectId === src.projectId && a.employeeId === src.employeeId && 
+        a.week === targetWeekKey && a.shift === src.shift
+      );
+      
+      if (!exists) {
+        const newAssign: ScheduleAssignment = {
+          ...src,
+          id: crypto.randomUUID(),
+          week: targetWeekKey,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        this.state.scheduleAssignments.push(newAssign);
+        await db.put('scheduleAssignments', newAssign);
+        copied++;
+      }
+    }
+    
+    this.logScheduleChange('added', `${copied} przypisań`, `skopiowano z ${sourceWeekKey}`);
+    this.showToast(`Skopiowano ${copied} przypisań z ${sourceWeekKey}`, 'success');
+    this.renderScheduleContent();
+    this.renderScheduleEmployeePanel();
+    this.updateCoverageBar();
+  }
+
+  // ==================== SZABLONY GRAFIKÓW ====================
+  private showTemplatesModal(): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    // Pobierz zapisane szablony
+    const templatesJson = localStorage.getItem('kappa_schedule_templates') || '[]';
+    let templates: Array<{id: string; name: string; assignments: ScheduleAssignment[]; createdAt: number}> = [];
+    try { templates = JSON.parse(templatesJson); } catch { templates = []; }
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+      </svg>
+      Szablony grafiku
+    `;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const currentCount = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey).length;
+    
+    modalBody.innerHTML = `
+      <div class="templates-modal">
+        <div class="templates-section">
+          <h4>💾 Zapisz obecny tydzień jako szablon</h4>
+          <div class="templates-save-form">
+            <input type="text" id="templateName" class="form-control" placeholder="Nazwa szablonu...">
+            <button class="btn-primary" id="saveTemplateBtn" ${currentCount === 0 ? 'disabled' : ''}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Zapisz
+            </button>
+          </div>
+          ${currentCount === 0 ? '<p class="form-hint">Brak przypisań do zapisania.</p>' : `<p class="form-hint">${currentCount} przypisań do zapisania.</p>`}
+        </div>
+        
+        <div class="templates-section">
+          <h4>📂 Dostępne szablony</h4>
+          ${templates.length === 0 ? `
+            <p class="templates-empty">Brak zapisanych szablonów.</p>
+          ` : `
+            <div class="templates-list">
+              ${templates.map(t => `
+                <div class="template-item" data-id="${t.id}">
+                  <div class="template-info">
+                    <span class="template-name">${t.name}</span>
+                    <span class="template-meta">${t.assignments.length} przypisań • ${new Date(t.createdAt).toLocaleDateString('pl')}</span>
+                  </div>
+                  <div class="template-actions">
+                    <button class="template-apply" data-id="${t.id}" title="Zastosuj">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
+                    </button>
+                    <button class="template-delete" data-id="${t.id}" title="Usuń">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                    </button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `}
+        </div>
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = 'none';
+    
+    // Save template
+    modalBody.querySelector('#saveTemplateBtn')?.addEventListener('click', () => {
+      const name = (document.getElementById('templateName') as HTMLInputElement).value.trim();
+      if (!name) { this.showToast('Podaj nazwę szablonu', 'warning'); return; }
+      
+      const assignments = this.state.scheduleAssignments
+        .filter((a: ScheduleAssignment) => a.week === weekKey)
+        .map((a: ScheduleAssignment) => ({ ...a, week: 'TEMPLATE' }));
+      
+      const template = { id: crypto.randomUUID(), name, assignments, createdAt: Date.now() };
+      templates.push(template);
+      localStorage.setItem('kappa_schedule_templates', JSON.stringify(templates));
+      
+      this.showToast(`Szablon "${name}" zapisany`, 'success');
+      this.hideModal();
+    });
+    
+    // Apply template
+    modalBody.querySelectorAll('.template-apply').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = (btn as HTMLElement).dataset.id;
+        const template = templates.find(t => t.id === id);
+        if (!template) return;
+        
+        for (const ta of template.assignments) {
+          const newAssign: ScheduleAssignment = {
+            ...ta,
+            id: crypto.randomUUID(),
+            week: weekKey,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+          };
+          this.state.scheduleAssignments.push(newAssign);
+          await db.put('scheduleAssignments', newAssign);
+        }
+        
+        this.showToast(`Szablon "${template.name}" zastosowany`, 'success');
+        this.hideModal();
+        this.renderScheduleContent();
+        this.renderScheduleEmployeePanel();
+        this.updateCoverageBar();
+      });
+    });
+    
+    // Delete template
+    modalBody.querySelectorAll('.template-delete').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = (btn as HTMLElement).dataset.id;
+        const idx = templates.findIndex(t => t.id === id);
+        if (idx !== -1) {
+          const name = templates[idx].name;
+          templates.splice(idx, 1);
+          localStorage.setItem('kappa_schedule_templates', JSON.stringify(templates));
+          this.showToast(`Szablon "${name}" usunięty`, 'success');
+          this.showTemplatesModal(); // Refresh
+        }
+      });
+    });
+    
+    modal.classList.add('active');
+  }
+
+  // ==================== POWIADOMIENIA ====================
+  private showNotificationsModal(): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    // Pobierz ustawienia powiadomień
+    const settingsJson = localStorage.getItem('kappa_notification_settings') || '{}';
+    let settings: {email?: string; enabled?: boolean; onAssign?: boolean; onUnassign?: boolean; dailyDigest?: boolean} = {};
+    try { settings = JSON.parse(settingsJson); } catch { settings = {}; }
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
+      </svg>
+      Powiadomienia
+    `;
+    
+    modalBody.innerHTML = `
+      <div class="notifications-modal">
+        <div class="info-box info-box-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>Konfiguruj powiadomienia email dla grafiku.</span>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Email:</label>
+          <input type="email" id="notifyEmail" class="form-control" placeholder="twoj@email.pl" value="${settings.email || ''}">
+        </div>
+        
+        <div class="form-group">
+          <label class="form-checkbox">
+            <input type="checkbox" id="notifyEnabled" ${settings.enabled ? 'checked' : ''}>
+            <span>Włącz powiadomienia email</span>
+          </label>
+        </div>
+        
+        <div class="form-group" style="margin-left: 24px;">
+          <label class="form-checkbox">
+            <input type="checkbox" id="notifyOnAssign" ${settings.onAssign !== false ? 'checked' : ''}>
+            <span>Powiadom gdy zostanę przypisany</span>
+          </label>
+          <label class="form-checkbox">
+            <input type="checkbox" id="notifyOnUnassign" ${settings.onUnassign !== false ? 'checked' : ''}>
+            <span>Powiadom gdy zostanę usunięty</span>
+          </label>
+          <label class="form-checkbox">
+            <input type="checkbox" id="notifyDailyDigest" ${settings.dailyDigest ? 'checked' : ''}>
+            <span>Codzienne podsumowanie (8:00)</span>
+          </label>
+        </div>
+        
+        <div class="notification-preview">
+          <h4>📧 Podgląd wiadomości</h4>
+          <div class="email-preview">
+            <div class="email-preview-header">
+              <strong>Od:</strong> grafik@kappa-system.pl<br>
+              <strong>Do:</strong> <span id="previewEmail">${settings.email || 'twoj@email.pl'}</span><br>
+              <strong>Temat:</strong> Nowe przypisanie w grafiku - KW${this.scheduleCurrentWeek}
+            </div>
+            <div class="email-preview-body">
+              Zostałeś przypisany do projektu:<br><br>
+              <strong>Klient:</strong> BMW<br>
+              <strong>Typ:</strong> Interior<br>
+              <strong>Zmiana:</strong> Z1 (6:00-14:00)<br>
+              <strong>Tydzień:</strong> KW${this.scheduleCurrentWeek}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = '';
+    confirmBtn.textContent = 'Zapisz ustawienia';
+    confirmBtn.onclick = () => {
+      const newSettings = {
+        email: (document.getElementById('notifyEmail') as HTMLInputElement).value,
+        enabled: (document.getElementById('notifyEnabled') as HTMLInputElement).checked,
+        onAssign: (document.getElementById('notifyOnAssign') as HTMLInputElement).checked,
+        onUnassign: (document.getElementById('notifyOnUnassign') as HTMLInputElement).checked,
+        dailyDigest: (document.getElementById('notifyDailyDigest') as HTMLInputElement).checked
+      };
+      localStorage.setItem('kappa_notification_settings', JSON.stringify(newSettings));
+      this.showToast('Ustawienia powiadomień zapisane', 'success');
+      this.hideModal();
+    };
+    
+    // Update preview email
+    document.getElementById('notifyEmail')?.addEventListener('input', (e) => {
+      const email = (e.target as HTMLInputElement).value || 'twoj@email.pl';
+      const preview = document.getElementById('previewEmail');
+      if (preview) preview.textContent = email;
+    });
+    
+    modal.classList.add('active');
+  }
+
+  // ==================== WIDOK GANTT OBCIĄŻENIA ====================
+  private showGanttView(): void {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Zbierz dane obciążenia pracowników
+    const employeeWorkload = new Map<string, { emp: Employee; shifts: number[]; total: number }>();
+    
+    this.state.employees.forEach(emp => {
+      if (emp.status && emp.status !== 'available') return;
+      employeeWorkload.set(emp.id, { emp, shifts: [0, 0, 0], total: 0 });
+    });
+    
+    // Policz przypisania na każdą zmianę
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const data = employeeWorkload.get(a.employeeId);
+      if (data) {
+        data.shifts[a.shift - 1]++;
+        data.total++;
+      }
+    });
+    
+    // Sortuj po obciążeniu
+    const sorted = Array.from(employeeWorkload.values()).sort((a, b) => b.total - a.total);
+    const maxLoad = Math.max(...sorted.map(s => s.total), 1);
+    
+    // Utwórz overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="gantt-modal">
+        <div class="gantt-modal-header">
+          <h2>📊 Obciążenie pracowników - KW${this.scheduleCurrentWeek}</h2>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="gantt-modal-body">
+          <div class="gantt-legend">
+            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-1"></span> Z1 (Rano)</span>
+            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-2"></span> Z2 (Popołudnie)</span>
+            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-3"></span> Z3 (Noc)</span>
+          </div>
+          
+          <div class="gantt-chart">
+            ${sorted.map(data => {
+              const percent = (data.total / maxLoad) * 100;
+              const isOverloaded = data.total > 5;
+              
+              return `
+                <div class="gantt-row ${isOverloaded ? 'overloaded' : ''}">
+                  <div class="gantt-employee">
+                    <div class="gantt-avatar" style="background: ${data.emp.color}">${data.emp.firstName.charAt(0)}</div>
+                    <span class="gantt-name">${data.emp.firstName} ${data.emp.lastName}</span>
+                  </div>
+                  <div class="gantt-bar-container">
+                    <div class="gantt-bar" style="width: ${percent}%">
+                      ${data.shifts[0] > 0 ? `<div class="gantt-bar-segment shift-1" style="flex: ${data.shifts[0]}">${data.shifts[0]}</div>` : ''}
+                      ${data.shifts[1] > 0 ? `<div class="gantt-bar-segment shift-2" style="flex: ${data.shifts[1]}">${data.shifts[1]}</div>` : ''}
+                      ${data.shifts[2] > 0 ? `<div class="gantt-bar-segment shift-3" style="flex: ${data.shifts[2]}">${data.shifts[2]}</div>` : ''}
+                    </div>
+                    <span class="gantt-total ${isOverloaded ? 'overloaded' : ''}">${data.total}</span>
+                    ${isOverloaded ? '<span class="gantt-warning">⚠️</span>' : ''}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+          
+          <div class="gantt-summary">
+            <div class="gantt-stat">
+              <span class="gantt-stat-value">${sorted.filter(s => s.total > 0).length}</span>
+              <span class="gantt-stat-label">Przypisanych</span>
+            </div>
+            <div class="gantt-stat">
+              <span class="gantt-stat-value">${sorted.filter(s => s.total === 0).length}</span>
+              <span class="gantt-stat-label">Wolnych</span>
+            </div>
+            <div class="gantt-stat">
+              <span class="gantt-stat-value">${sorted.filter(s => s.total > 5).length}</span>
+              <span class="gantt-stat-label">Przeciążonych</span>
+            </div>
+            <div class="gantt-stat">
+              <span class="gantt-stat-value">${weekAssignments.length}</span>
+              <span class="gantt-stat-label">Łącznie zmian</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    document.addEventListener('keydown', function handler(e) {
+      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', handler); }
+    });
+  }
+
+  // ==================== KONFLIKTY URLOPOWE ====================
+  private checkVacationConflicts(): Array<{employee: Employee; conflict: string}> {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const conflicts: Array<{employee: Employee; conflict: string}> = [];
+    
+    // Sprawdź pracowników na urlopie
+    this.state.employees.forEach(emp => {
+      if (emp.status === 'vacation' || emp.status === 'sick') {
+        // Sprawdź czy są przypisani
+        const assignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+          a.employeeId === emp.id && a.week === weekKey
+        );
+        
+        if (assignments.length > 0) {
+          const statusLabel = emp.status === 'vacation' ? 'urlopie' : 'zwolnieniu';
+          conflicts.push({
+            employee: emp,
+            conflict: `${emp.firstName} ${emp.lastName} jest na ${statusLabel}, ale ma ${assignments.length} przypisań`
+          });
+        }
+      }
+    });
+    
+    return conflicts;
+  }
+  
+  private renderVacationConflicts(): void {
+    const conflicts = this.checkVacationConflicts();
+    const alertsContainer = document.getElementById('scheduleAlerts');
+    if (!alertsContainer) return;
+    
+    // Usuń stare konflikty
+    alertsContainer.querySelectorAll('.sched-alert.vacation-conflict').forEach(el => el.remove());
+    
+    conflicts.forEach(c => {
+      const alert = document.createElement('div');
+      alert.className = 'sched-alert vacation-conflict';
+      alert.innerHTML = `
+        <span class="sched-alert-icon">🏖️</span>
+        <span class="sched-alert-text">${c.conflict}</span>
+        <button class="sched-alert-action" data-employee="${c.employee.id}">Usuń przypisania</button>
+      `;
+      
+      alert.querySelector('.sched-alert-action')?.addEventListener('click', async () => {
+        const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+        const toRemove = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+          a.employeeId === c.employee.id && a.week === weekKey
+        );
+        
+        for (const a of toRemove) {
+          await this.removeAssignment(a.id);
+        }
+        
+        this.showToast(`Usunięto ${toRemove.length} przypisań dla ${c.employee.firstName}`, 'success');
+        this.renderVacationConflicts();
+      });
+      
+      alertsContainer.appendChild(alert);
+    });
+  }
+
+  // ==================== STATYSTYKI PRACOWNIKA ====================
+  private showEmployeeStatsModal(): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    // Zbierz statystyki dla wszystkich pracowników
+    const stats = this.state.employees.map(emp => {
+      const allAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.employeeId === emp.id);
+      const thisMonthAssignments = allAssignments.filter((a: ScheduleAssignment) => {
+        const [year] = a.week.split('-KW');
+        return parseInt(year) === this.scheduleCurrentYear;
+      });
+      
+      // Policz zmiany
+      const shiftCounts = { 1: 0, 2: 0, 3: 0 };
+      thisMonthAssignments.forEach((a: ScheduleAssignment) => {
+        shiftCounts[a.shift as 1|2|3]++;
+      });
+      
+      // Policz zakresy
+      const scopeCounts = { project: 0, adhesion: 0, audit: 0, specific: 0 };
+      thisMonthAssignments.forEach((a: ScheduleAssignment) => {
+        const scope = a.scope || 'project';
+        scopeCounts[scope as keyof typeof scopeCounts]++;
+      });
+      
+      return {
+        employee: emp,
+        total: thisMonthAssignments.length,
+        shifts: shiftCounts,
+        scopes: scopeCounts,
+        weeks: new Set(thisMonthAssignments.map((a: ScheduleAssignment) => a.week)).size
+      };
+    }).sort((a, b) => b.total - a.total);
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
+      </svg>
+      Statystyki pracowników (${this.scheduleCurrentYear})
+    `;
+    
+    const totalAssignments = stats.reduce((sum, s) => sum + s.total, 0);
+    const avgPerEmployee = stats.length > 0 ? (totalAssignments / stats.length).toFixed(1) : '0';
+    
+    modalBody.innerHTML = `
+      <div class="employee-stats-modal">
+        <div class="stats-summary">
+          <div class="stats-summary-item">
+            <span class="stats-summary-value">${totalAssignments}</span>
+            <span class="stats-summary-label">Łącznie przypisań</span>
+          </div>
+          <div class="stats-summary-item">
+            <span class="stats-summary-value">${avgPerEmployee}</span>
+            <span class="stats-summary-label">Średnia na pracownika</span>
+          </div>
+          <div class="stats-summary-item">
+            <span class="stats-summary-value">${stats.filter(s => s.total > 0).length}</span>
+            <span class="stats-summary-label">Aktywnych pracowników</span>
+          </div>
+        </div>
+        
+        <div class="stats-table-container">
+          <table class="stats-table">
+            <thead>
+              <tr>
+                <th>Pracownik</th>
+                <th>Łącznie</th>
+                <th>Z1</th>
+                <th>Z2</th>
+                <th>Z3</th>
+                <th>Projekty</th>
+                <th>Przyczepność</th>
+                <th>Audyty</th>
+                <th>Tygodnie</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${stats.map(s => `
+                <tr>
+                  <td>
+                    <div class="stats-employee">
+                      <span class="stats-avatar" style="background: ${s.employee.color}">${s.employee.firstName.charAt(0)}</span>
+                      <span>${s.employee.firstName} ${s.employee.lastName}</span>
+                    </div>
+                  </td>
+                  <td><strong>${s.total}</strong></td>
+                  <td>${s.shifts[1]}</td>
+                  <td>${s.shifts[2]}</td>
+                  <td>${s.shifts[3]}</td>
+                  <td>${s.scopes.project}</td>
+                  <td>${s.scopes.adhesion}</td>
+                  <td>${s.scopes.audit}</td>
+                  <td>${s.weeks}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = 'none';
+    
+    modal.classList.add('active');
+  }
+
+  // ==================== DRAG & DROP MIĘDZY ZMIANAMI ====================
+  private enableChipDragDrop(): void {
+    // Ta funkcja jest wywoływana przy renderowaniu chipów
+    document.querySelectorAll('.sched-chip[data-id]').forEach(chip => {
+      (chip as HTMLElement).draggable = true;
+      
+      chip.addEventListener('dragstart', (e) => {
+        const assignmentId = (chip as HTMLElement).dataset.id;
+        (e as DragEvent).dataTransfer?.setData('assignmentId', assignmentId || '');
+        (chip as HTMLElement).classList.add('dragging');
+      });
+      
+      chip.addEventListener('dragend', () => {
+        (chip as HTMLElement).classList.remove('dragging');
+      });
+    });
+  }
+  
+  private async moveAssignmentToShift(assignmentId: string, newShift: 1 | 2 | 3): Promise<void> {
+    const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
+    if (!assignment || assignment.shift === newShift) return;
+    
+    const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+    const oldShift = assignment.shift;
+    
+    assignment.shift = newShift;
+    assignment.updatedAt = Date.now();
+    await db.put('scheduleAssignments', assignment);
+    
+    this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono Z${oldShift} → Z${newShift}`);
+    this.showToast(`Przeniesiono na zmianę ${newShift}`, 'success');
+    this.renderScheduleContent();
+    this.renderScheduleEmployeePanel();
+  }
+
   private renderScheduleProjectsPanel(): void {
     const headerContainer = document.getElementById('scheduleShiftsHeader');
     const projectsContainer = document.getElementById('scheduleProjectsList');
@@ -5685,27 +7869,515 @@ class KappaApp {
     
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     
-    // Render clean header
-    headerContainer.className = `table-header shifts-${this.scheduleShiftSystem}`;
-    let headerHtml = '<div class="col-header">Projekt</div>';
+    // Header z nowymi klasami
+    const shiftNames = [i18n.t('schedule.morning'), i18n.t('schedule.afternoon'), i18n.t('schedule.night')];
+    const shiftHours = ['6:00-14:00', '14:00-22:00', '22:00-6:00'];
+    
+    headerContainer.className = `sched-table-header shifts-${this.scheduleShiftSystem}`;
+    headerContainer.innerHTML = `
+      <div class="sched-header-cell sched-project-col">${i18n.t('schedule.project')}</div>
+      ${Array.from({ length: this.scheduleShiftSystem }, (_, i) => `
+        <div class="sched-header-cell sched-shift-col shift-${i + 1}">
+          <span class="sched-shift-num">${i + 1}</span>
+          <span class="sched-shift-name">${shiftNames[i]}</span>
+          <span class="sched-shift-hours">${shiftHours[i]}</span>
+        </div>
+      `).join('')}
+    `;
+    
+    // Pobierz projekty z SOLL > 0
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+    
+    if (weekProjects.length === 0) {
+      projectsContainer.innerHTML = `
+        <div class="sched-empty-table">
+          <span class="sched-empty-icon">📋</span>
+          <p>${i18n.t('schedule.noProjectsThisWeek')}</p>
+          <span class="sched-empty-hint">${i18n.t('schedule.projectsWithSollAppear')}</span>
+        </div>
+      `;
+      return;
+    }
+    
+    // Grupuj projekty wg Customer + Type
+    const projectGroups = new Map<string, {
+      customerName: string;
+      typeName: string;
+      items: typeof weekProjects;
+    }>();
+    
+    weekProjects.forEach(p => {
+      const customer = this.state.customers.find(c => c.id === p.customer_id);
+      const type = this.state.types.find(t => t.id === p.type_id);
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      
+      if (!projectGroups.has(groupKey)) {
+        projectGroups.set(groupKey, {
+          customerName: customer?.name || '?',
+          typeName: type?.name || '?',
+          items: []
+        });
+      }
+      projectGroups.get(groupKey)!.items.push(p);
+    });
+    
+    projectsContainer.innerHTML = '';
+    
+    projectGroups.forEach((group, groupKey) => {
+      const groupAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+        (a.projectId === groupKey || group.items.some(item => item.id === a.projectId)) &&
+        a.week === weekKey
+      );
+      
+      // Wiersz projektu z nowymi klasami
+      const projectRow = document.createElement('div');
+      projectRow.className = `sched-row shifts-${this.scheduleShiftSystem}`;
+      projectRow.dataset.groupKey = groupKey;
+      
+      // Komórka projektu
+      const projectCell = document.createElement('div');
+      projectCell.className = 'sched-project-cell';
+      projectCell.innerHTML = `
+        <span class="sched-project-customer">${group.customerName}</span>
+        <span class="sched-project-type">${group.typeName}</span>
+      `;
+      projectRow.appendChild(projectCell);
+      
+      // Kolumny zmian
+      for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+        const shiftCell = document.createElement('div');
+        shiftCell.className = `sched-shift-cell shift-${s}`;
+        
+        const shiftAssignments = groupAssignments.filter((a: ScheduleAssignment) => a.shift === s);
+        
+        // Renderuj chipy pracowników - większe, z zakresem pracy
+        const chipsHtml = shiftAssignments.map((a: ScheduleAssignment) => {
+          const emp = this.state.employees.find(e => e.id === a.employeeId);
+          if (!emp) return '';
+          
+          // Pobierz szczegóły zakresu pracy
+          let scopeLabel = '';
+          let scopeClass = '';
+          let taskDetails: string[] = [];
+          
+          if (a.scope === 'project') {
+            scopeLabel = 'Cały projekt';
+            scopeClass = 'scope-project';
+          } else if (a.scope === 'adhesion') {
+            scopeLabel = 'Przyczepność';
+            scopeClass = 'scope-adhesion';
+          } else if (a.scope === 'audit') {
+            scopeLabel = 'Audyt';
+            scopeClass = 'scope-audit';
+          } else if (a.testId) {
+            const test = this.state.tests.find(t => t.id === a.testId);
+            scopeLabel = test?.name || 'Test';
+            scopeClass = 'scope-test';
+          } else if (a.partId) {
+            const part = this.state.parts.find(p => p.id === a.partId);
+            scopeLabel = part?.name || 'Część';
+            scopeClass = 'scope-part';
+          }
+          
+          const hasDetails = taskDetails.length > 0 || (scopeLabel && scopeLabel !== 'Cały projekt');
+          
+          return `
+            <div class="sched-chip ${hasDetails ? 'has-scope' : ''}" 
+                 style="--chip-color: ${emp.color}" 
+                 data-id="${a.id}" 
+                 data-employee-id="${emp.id}"
+                 data-assignment='${JSON.stringify({ id: a.id, scope: a.scope, testId: a.testId, partId: a.partId })}'>
+              <div class="sched-chip-main">
+                <span class="sched-chip-avatar">${emp.firstName.charAt(0)}</span>
+                <span class="sched-chip-name">${emp.firstName}</span>
+                <button class="sched-chip-remove" data-aid="${a.id}">×</button>
+              </div>
+              ${scopeLabel && scopeLabel !== 'Cały projekt' ? `
+                <div class="sched-chip-tasks">
+                  <span class="sched-chip-task ${scopeClass}">${scopeLabel}</span>
+                  ${taskDetails.map(t => `<span class="sched-chip-task">${t}</span>`).join('')}
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }).join('');
+        
+        shiftCell.innerHTML = chipsHtml || '<span class="sched-cell-add">+</span>';
+        
+        // Kliknięcie na chip = otwórz modal pracownika
+        shiftCell.querySelectorAll('.sched-chip').forEach(chip => {
+          chip.addEventListener('click', (e) => {
+            if ((e.target as HTMLElement).classList.contains('sched-chip-remove')) return;
+            const empId = (chip as HTMLElement).dataset.employeeId;
+            if (empId) this.showEmployeeModal(empId);
+          });
+          
+          // Drag chip to move between shifts
+          (chip as HTMLElement).draggable = true;
+          chip.addEventListener('dragstart', (e) => {
+            const assignmentId = (chip as HTMLElement).dataset.id;
+            if (assignmentId) {
+              (e as DragEvent).dataTransfer?.setData('assignmentId', assignmentId);
+              (e as DragEvent).dataTransfer?.setData('sourceShift', String(s));
+            }
+            (chip as HTMLElement).classList.add('dragging');
+          });
+          chip.addEventListener('dragend', () => {
+            (chip as HTMLElement).classList.remove('dragging');
+          });
+        });
+        
+        // Drag & Drop
+        shiftCell.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          shiftCell.classList.add('drag-over');
+        });
+        shiftCell.addEventListener('dragleave', () => shiftCell.classList.remove('drag-over'));
+        shiftCell.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          shiftCell.classList.remove('drag-over');
+          
+          // Sprawdź czy to przenoszenie istniejącego chipa
+          const assignmentId = (e as DragEvent).dataTransfer?.getData('assignmentId');
+          if (assignmentId) {
+            await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3);
+            return;
+          }
+          
+          // Inaczej to przeciąganie nowego pracownika
+          if (this.draggedEmployeeId) {
+            this.showScopePicker(groupKey, group.items, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3, shiftCell);
+          }
+        });
+        
+        // Click to add (tylko gdy nie klikamy na chip)
+        shiftCell.addEventListener('click', (e) => {
+          const target = e.target as HTMLElement;
+          if (target.closest('.sched-chip')) return;
+          this.showSimpleEmployeePicker(groupKey, group.items, weekKey, s as 1 | 2 | 3, shiftCell);
+        });
+        
+        projectRow.appendChild(shiftCell);
+      }
+      
+      projectsContainer.appendChild(projectRow);
+      
+      // Remove buttons
+      projectRow.querySelectorAll('.sched-chip-remove').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const aid = (btn as HTMLElement).dataset.aid;
+          if (aid) await this.removeAssignment(aid);
+        });
+      });
+    });
+  }
+  
+  // Dodawanie przypisania z zakresem
+  private async addScopedAssignment(
+    projectId: string, 
+    employeeId: string, 
+    week: string, 
+    shift: 1 | 2 | 3,
+    scope: AssignmentScope,
+    testId?: string,
+    partId?: string
+  ): Promise<void> {
+    const assignment: ScheduleAssignment = {
+      id: crypto.randomUUID(),
+      projectId,
+      employeeId,
+      week,
+      shift,
+      scope,
+      testId,
+      partId,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    
+    this.state.scheduleAssignments.push(assignment);
+    await db.put('scheduleAssignments', assignment);
+    
+    // Loguj do historii
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
+    const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${shift}`);
+    
+    this.renderScheduleProjectsPanel();
+    this.renderScheduleAlerts();
+    this.renderScheduleEmployeePanel();
+    this.updateCoverageBar();
+    
+    const scopeText = scope === 'project' ? i18n.t('schedule.wholeProject') : (testId ? 'test' : 'część');
+    this.showToast(`${i18n.t('schedule.assignedTo')} ${shift} (${scopeText})`, 'success');
+  }
+  
+  private logScheduleChange(action: 'added' | 'removed' | 'modified', employee: string, details: string): void {
+    const historyJson = localStorage.getItem('kappa_schedule_history') || '[]';
+    let history: Array<{action: string; type: string; details: string; timestamp: number}> = [];
+    try {
+      history = JSON.parse(historyJson);
+    } catch (e) {
+      history = [];
+    }
+    
+    history.push({
+      action,
+      type: 'Assignment',
+      details: `${action === 'added' ? 'Przypisano' : action === 'removed' ? 'Usunięto' : 'Zmieniono'} <strong>${employee}</strong> → ${details}`,
+      timestamp: Date.now()
+    });
+    
+    // Zachowaj tylko ostatnie 100 wpisów
+    if (history.length > 100) {
+      history = history.slice(-100);
+    }
+    
+    localStorage.setItem('kappa_schedule_history', JSON.stringify(history));
+  }
+
+  // Picker pracownika - krok 1
+  private showSimpleEmployeePicker(
+    groupKey: string, 
+    groupItems: Project[], 
+    week: string, 
+    shift: 1 | 2 | 3, 
+    targetCell: HTMLElement
+  ): void {
+    document.querySelectorAll('.sched-picker').forEach(p => p.remove());
+    document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
+    
+    const picker = document.createElement('div');
+    picker.className = 'sched-picker';
+    
+    const currentAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+      (a.projectId === groupKey || groupItems.some(item => item.id === a.projectId)) && 
+      a.week === week && a.shift === shift
+    );
+    const assignedIds = new Set(currentAssignments.map((a: ScheduleAssignment) => a.employeeId));
+    const availableEmployees = this.state.employees.filter(e => !assignedIds.has(e.id) && (!e.status || e.status === 'available'));
+    
+    if (availableEmployees.length === 0) {
+      picker.innerHTML = `<div class="sched-picker-empty">${i18n.t('schedule.noEmployees')}</div>`;
+    } else {
+      picker.innerHTML = `
+        <div class="sched-picker-header">
+          <span class="sched-picker-title">${i18n.t('schedule.selectEmployee')}</span>
+        </div>
+        <div class="sched-picker-list">
+          ${availableEmployees.map(emp => `
+            <button class="sched-picker-item" data-emp="${emp.id}">
+              <span class="sched-picker-avatar" style="background:${emp.color}">${emp.firstName.charAt(0)}</span>
+              <span class="sched-picker-name">${emp.firstName} ${emp.lastName}</span>
+            </button>
+          `).join('')}
+        </div>
+      `;
+    }
+    
+    // Pozycjonowanie
+    const rect = targetCell.getBoundingClientRect();
+    picker.style.position = 'fixed';
+    picker.style.zIndex = '1000';
+    
+    document.body.appendChild(picker);
+    
+    const pickerRect = picker.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    
+    if (rect.bottom + pickerRect.height + 10 > viewportHeight) {
+      picker.style.top = `${rect.top - pickerRect.height - 4}px`;
+    } else {
+      picker.style.top = `${rect.bottom + 4}px`;
+    }
+    
+    if (rect.left + pickerRect.width > viewportWidth - 10) {
+      picker.style.left = `${viewportWidth - pickerRect.width - 10}px`;
+    } else {
+      picker.style.left = `${rect.left}px`;
+    }
+    
+    picker.querySelectorAll('.sched-picker-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const empId = (btn as HTMLElement).dataset.emp;
+        if (empId) {
+          picker.remove();
+          this.showScopePicker(groupKey, groupItems, empId, week, shift, targetCell);
+        }
+      });
+    });
+    
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!picker.contains(e.target as Node)) {
+          picker.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 10);
+  }
+  
+  // Picker zakresu - krok 2
+  private showScopePicker(
+    groupKey: string,
+    groupItems: Project[],
+    employeeId: string,
+    week: string,
+    shift: 1 | 2 | 3,
+    targetCell: HTMLElement
+  ): void {
+    document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
+    document.querySelectorAll('.sched-picker').forEach(p => p.remove());
+    
+    const picker = document.createElement('div');
+    picker.className = 'sched-scope-picker';
+    
+    const employee = this.state.employees.find(e => e.id === employeeId);
+    
+    // Zbierz wszystkie unikalne testy i części
+    const uniqueTests = new Map<string, Test>();
+    const uniqueParts = new Map<string, Part>();
+    
+    groupItems.forEach(p => {
+      if (p.test_id) {
+        const test = this.state.tests.find(t => t.id === p.test_id);
+        if (test) uniqueTests.set(test.id, test);
+      }
+      if (p.part_id) {
+        const part = this.state.parts.find(pt => pt.id === p.part_id);
+        if (part) uniqueParts.set(part.id, part);
+      }
+    });
+    
+    const tests = Array.from(uniqueTests.values());
+    const parts = Array.from(uniqueParts.values());
+    
+    picker.innerHTML = `
+      <div class="sched-scope-header">
+        <span class="sched-scope-emp" style="--emp-color: ${employee?.color || '#888'}">${employee?.firstName || '?'}</span>
+        <span class="sched-scope-title">${i18n.t('schedule.selectScope')}</span>
+      </div>
+      <div class="sched-scope-options">
+        <button class="sched-scope-option primary" data-scope="project">
+          <span class="sched-scope-icon">📦</span>
+          <div class="sched-scope-text">
+            <span class="sched-scope-label">${i18n.t('schedule.wholeProject')}</span>
+            <span class="sched-scope-desc">${i18n.t('schedule.allTestsAndParts')}</span>
+          </div>
+        </button>
+        
+        ${tests.length > 0 ? `
+          <div class="sched-scope-divider">${i18n.t('messages.test')}</div>
+          ${tests.map(t => `
+            <button class="sched-scope-option" data-scope="specific" data-test="${t.id}">
+              <span class="sched-scope-icon">🧪</span>
+              <span class="sched-scope-label">${t.name}</span>
+            </button>
+          `).join('')}
+        ` : ''}
+        
+        ${parts.length > 1 ? `
+          <div class="sched-scope-divider">${i18n.t('messages.part')}</div>
+          ${parts.map(p => `
+            <button class="sched-scope-option" data-scope="specific" data-part="${p.id}">
+              <span class="sched-scope-icon">🔧</span>
+              <span class="sched-scope-label">${p.name}</span>
+            </button>
+          `).join('')}
+        ` : ''}
+      </div>
+    `;
+    
+    // Pozycjonowanie
+    const rect = targetCell.getBoundingClientRect();
+    picker.style.position = 'fixed';
+    picker.style.zIndex = '1001';
+    
+    document.body.appendChild(picker);
+    
+    const pickerRect = picker.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    
+    if (rect.bottom + pickerRect.height + 10 > viewportHeight) {
+      picker.style.top = `${rect.top - pickerRect.height - 4}px`;
+    } else {
+      picker.style.top = `${rect.bottom + 4}px`;
+    }
+    
+    if (rect.left + pickerRect.width > viewportWidth - 10) {
+      picker.style.left = `${viewportWidth - pickerRect.width - 10}px`;
+    } else {
+      picker.style.left = `${rect.left}px`;
+    }
+    
+    // Event listeners
+    picker.querySelectorAll('.sched-scope-option').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const scope = (btn as HTMLElement).dataset.scope as AssignmentScope;
+        const testId = (btn as HTMLElement).dataset.test;
+        const partId = (btn as HTMLElement).dataset.part;
+        
+        await this.addScopedAssignment(groupKey, employeeId, week, shift, scope, testId, partId);
+        picker.remove();
+      });
+    });
+    
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!picker.contains(e.target as Node)) {
+          picker.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 10);
+  }
+  
+  private renderOldScheduleProjectsPanel(): void {
+    const headerContainer = document.getElementById('scheduleShiftsHeader');
+    const projectsContainer = document.getElementById('scheduleProjectsList');
+    
+    if (!headerContainer || !projectsContainer) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Render modern header
+    headerContainer.className = `grid-header shifts-${this.scheduleShiftSystem}`;
+    let headerHtml = '<div class="header-cell project-col">Projekt / Test</div>';
     for (let s = 1; s <= this.scheduleShiftSystem; s++) {
-      headerHtml += `<div class="col-header shift-col shift-${s}">Zmiana ${s}</div>`;
+      const shiftLabels = ['Poranek', 'Popołudnie', 'Noc'];
+      headerHtml += `<div class="header-cell shift-col shift-${s}">
+        <span class="shift-number">${s}</span>
+        <span class="shift-name">${shiftLabels[s-1] || `Zmiana ${s}`}</span>
+      </div>`;
     }
     headerContainer.innerHTML = headerHtml;
     
     // Get projects with SOLL > 0 in current week
     const weekProjects = this.state.projects.filter(p => {
       const weekData = p.weeks[weekKey];
-      return weekData && weekData.soll > 0;
+      return weekData && weekData.soll > 0 && !p.hidden;
     });
     
     if (weekProjects.length === 0) {
       projectsContainer.innerHTML = `
-        <div class="schedule-empty">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
-            <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-          </svg>
-          <p>Brak projektów z SOLL w tym tygodniu</p>
+        <div class="grid-empty">
+          <div class="empty-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48">
+              <rect x="3" y="4" width="18" height="18" rx="2"/>
+              <line x1="16" y1="2" x2="16" y2="6"/>
+              <line x1="8" y1="2" x2="8" y2="6"/>
+              <line x1="3" y1="10" x2="21" y2="10"/>
+            </svg>
+          </div>
+          <h3>Brak projektów w tym tygodniu</h3>
+          <p>Projekty z wartością SOLL > 0 pojawią się tutaj automatycznie</p>
         </div>
       `;
       return;
@@ -5715,6 +8387,8 @@ class KappaApp {
     const projectGroups = new Map<string, {
       customerName: string;
       typeName: string;
+      customerId: string;
+      typeId: string;
       items: typeof weekProjects;
       totalSoll: number;
     }>();
@@ -5728,6 +8402,8 @@ class KappaApp {
         projectGroups.set(groupKey, {
           customerName: customer?.name || '?',
           typeName: type?.name || '?',
+          customerId: p.customer_id,
+          typeId: p.type_id,
           items: [],
           totalSoll: 0
         });
@@ -5745,58 +8421,162 @@ class KappaApp {
       const comment = this.getProjectComment(groupKey, weekKey);
       const partsCount = projectGroup.items.length;
       
-      // Main row
-      const row = document.createElement('div');
-      row.className = `project-row shifts-${this.scheduleShiftSystem}`;
+      // Get all assignments for this project group (any scope)
+      const groupAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+        (a.projectId === groupKey || projectGroup.items.some(item => item.id === a.projectId)) &&
+        a.week === weekKey
+      );
       
-      // Project cell
-      const projectCell = document.createElement('div');
-      projectCell.className = 'project-cell';
-      projectCell.innerHTML = `
-        <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-          <polyline points="9 18 15 12 9 6"/>
-        </svg>
-        <div class="project-info">
-          <div class="project-name">${projectGroup.customerName} – ${projectGroup.typeName}</div>
-          <div class="project-meta">
-            <span>${partsCount} część${partsCount > 4 ? 'i' : partsCount > 1 ? 'i' : ''}</span>
-            <span class="soll">SOLL ${projectGroup.totalSoll}</span>
-          </div>
+      // Get specific assignments (not project-level) to show in summary
+      const specificAssignments = groupAssignments.filter((a: ScheduleAssignment) => 
+        a.scope === 'audit' || a.scope === 'adhesion' || a.scope === 'specific'
+      );
+      
+      // Create project card
+      const projectCard = document.createElement('div');
+      projectCard.className = 'project-card';
+      
+      // Project header row
+      const projectHeader = document.createElement('div');
+      projectHeader.className = `project-header shifts-${this.scheduleShiftSystem}`;
+      
+      // Project info cell
+      const projectInfo = document.createElement('div');
+      projectInfo.className = 'project-info-cell';
+      projectInfo.innerHTML = `
+        <button class="expand-btn">
+          <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </button>
+        <div class="project-details">
+          <div class="project-title">${projectGroup.customerName}</div>
+          <div class="project-subtitle">${projectGroup.typeName}</div>
         </div>
-        <button class="project-comment-btn ${comment ? 'has-comment' : ''}" title="${comment || 'Komentarz'}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+        <div class="project-badges">
+          <span class="badge badge-parts">${partsCount} ${partsCount === 1 ? 'część' : partsCount < 5 ? 'części' : 'części'}</span>
+          <span class="badge badge-soll">SOLL: ${projectGroup.totalSoll}</span>
+          ${comment ? `<span class="badge badge-comment" title="${comment}">📝</span>` : ''}
+        </div>
+        <button class="btn-comment ${comment ? 'has-comment' : ''}" title="Dodaj komentarz">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
         </button>
       `;
       
-      projectCell.querySelector('.project-comment-btn')?.addEventListener('click', (e) => {
+      // Toggle expansion
+      const expandBtn = projectInfo.querySelector('.expand-btn');
+      expandBtn?.addEventListener('click', () => {
+        projectCard.classList.toggle('expanded');
+      });
+      
+      // Comment button
+      projectInfo.querySelector('.btn-comment')?.addEventListener('click', (e) => {
         e.stopPropagation();
         this.showProjectCommentModal(groupKey, weekKey, comment);
       });
       
-      projectCell.addEventListener('click', () => {
-        projectCell.classList.toggle('expanded');
-        const details = row.nextElementSibling;
-        details?.classList.toggle('expanded');
-      });
+      projectHeader.appendChild(projectInfo);
       
-      row.appendChild(projectCell);
-      
-      // Drop zones for each shift
+      // Shift drop zones for project-level assignments
       for (let s = 1; s <= this.scheduleShiftSystem; s++) {
-        const dropZone = this.createDropZone(groupKey, undefined, weekKey, s as 1 | 2 | 3, true);
-        row.appendChild(dropZone);
+        const shiftCell = document.createElement('div');
+        shiftCell.className = `shift-cell shift-${s}`;
+        
+        // Get project-level assignments for this shift (including legacy without scope)
+        const shiftAssignments = groupAssignments.filter((a: ScheduleAssignment) =>
+          a.shift === s && (!a.scope || a.scope === 'project')
+        );
+        
+        // Render assigned employees
+        shiftAssignments.forEach((assignment: ScheduleAssignment) => {
+          const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+          if (!emp) return;
+          
+          const chip = document.createElement('div');
+          chip.className = 'assignment-chip scope-project';
+          chip.style.setProperty('--emp-color', emp.color);
+          chip.innerHTML = `
+            <span class="chip-badge">P</span>
+            <span class="chip-name">${emp.firstName}</span>
+            <button class="chip-remove" data-id="${assignment.id}">×</button>
+          `;
+          chip.setAttribute('data-tooltip', `${emp.firstName} ${emp.lastName}\n🎯 Cały projekt (${partsCount} części)\n📊 SOLL: ${projectGroup.totalSoll}`);
+          chip.title = `${emp.firstName} ${emp.lastName} - Cały projekt`;
+          
+          chip.querySelector('.chip-remove')?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await this.removeAssignment(assignment.id);
+          });
+          
+          shiftCell.appendChild(chip);
+        });
+        
+        // Show specific assignments summary in project row
+        const specificShiftAssignments = specificAssignments.filter((a: ScheduleAssignment) => a.shift === s);
+        specificShiftAssignments.forEach((assignment: ScheduleAssignment) => {
+          const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+          if (!emp) return;
+          
+          const scopeLabel = assignment.scope === 'audit' ? 'A' : assignment.scope === 'adhesion' ? 'H' : 'S';
+          const scopeTitle = assignment.scope === 'audit' ? 'Audyty' : assignment.scope === 'adhesion' ? 'Przyczepność' : (assignment.note || 'Specyficzne');
+          const scopeIcon = assignment.scope === 'audit' ? '🔍' : assignment.scope === 'adhesion' ? '🔗' : '📌';
+          
+          const chip = document.createElement('div');
+          chip.className = `assignment-chip scope-${assignment.scope}`;
+          chip.style.setProperty('--emp-color', emp.color);
+          chip.innerHTML = `
+            <span class="chip-badge">${scopeLabel}</span>
+            <span class="chip-name">${emp.firstName}</span>
+            ${assignment.note ? `<span class="chip-note" title="${assignment.note}">ℹ</span>` : ''}
+            <button class="chip-remove" data-id="${assignment.id}">×</button>
+          `;
+          chip.setAttribute('data-tooltip', `${emp.firstName} ${emp.lastName}\n${scopeIcon} ${scopeTitle}${assignment.note ? '\n📝 ' + assignment.note : ''}`);
+          chip.title = `${emp.firstName} ${emp.lastName} - ${scopeTitle}${assignment.note ? ': ' + assignment.note : ''}`;
+          
+          chip.querySelector('.chip-remove')?.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await this.removeAssignment(assignment.id);
+          });
+          
+          shiftCell.appendChild(chip);
+        });
+        
+        // Drop zone for new assignments
+        const dropIndicator = document.createElement('div');
+        dropIndicator.className = 'drop-indicator';
+        dropIndicator.innerHTML = `<span>+</span>`;
+        shiftCell.appendChild(dropIndicator);
+        
+        // Drop events
+        shiftCell.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          shiftCell.classList.add('drag-over');
+        });
+        shiftCell.addEventListener('dragleave', () => shiftCell.classList.remove('drag-over'));
+        shiftCell.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          shiftCell.classList.remove('drag-over');
+          if (this.draggedEmployeeId) {
+            // Show assignment type modal
+            this.showAssignmentTypeModal(groupKey, undefined, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3);
+          }
+        });
+        
+        // Click to add via modal
+        dropIndicator.addEventListener('click', () => {
+          this.showSelectEmployeeModal(groupKey, undefined, weekKey, s as 1 | 2 | 3);
+        });
+        
+        projectHeader.appendChild(shiftCell);
       }
       
-      projectsContainer.appendChild(row);
+      projectCard.appendChild(projectHeader);
       
-      // Details row (expandable) - simpler structure
-      const detailsRow = document.createElement('div');
-      detailsRow.className = 'project-details-row';
-      
-      const detailsContent = document.createElement('div');
-      detailsContent.className = 'details-content';
+      // Expandable details (tests/parts)
+      const detailsSection = document.createElement('div');
+      detailsSection.className = 'project-details-section';
       
       // Group items by test
       const testMap = new Map<string, { test: Test; parts: Array<{ part: Part; projectId: string; soll: number }> }>();
@@ -5815,44 +8595,381 @@ class KappaApp {
       });
       
       testMap.forEach(({ test, parts }) => {
-        const testGroup = document.createElement('div');
-        testGroup.className = 'test-group';
+        const testSection = document.createElement('div');
+        testSection.className = 'test-section';
         
-        testGroup.innerHTML = `
-          <div class="test-label">
-            <span class="test-dot" style="background:${test.color || '#0097AC'}"></span>
-            ${test.name}
+        // Test header
+        const testHeader = document.createElement('div');
+        testHeader.className = `test-header shifts-${this.scheduleShiftSystem}`;
+        testHeader.innerHTML = `
+          <div class="test-info">
+            <span class="test-indicator" style="background-color: ${test.color || '#0097AC'}"></span>
+            <span class="test-name">${test.name}</span>
+            <span class="test-count">${parts.length} ${parts.length === 1 ? 'część' : 'części'}</span>
           </div>
         `;
         
-        const partGrid = document.createElement('div');
-        partGrid.className = `part-grid shifts-${this.scheduleShiftSystem}`;
+        // Shift cells for test-level - allow audit/adhesion assignments
+        for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+          const testShiftCell = document.createElement('div');
+          testShiftCell.className = `test-shift-cell shift-${s}`;
+          testShiftCell.innerHTML = `<span class="test-drop-hint">Przeciągnij → Audyt/Przyczepność</span>`;
+          
+          testShiftCell.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            testShiftCell.classList.add('drag-over');
+          });
+          testShiftCell.addEventListener('dragleave', () => testShiftCell.classList.remove('drag-over'));
+          testShiftCell.addEventListener('drop', async (e) => {
+            e.preventDefault();
+            testShiftCell.classList.remove('drag-over');
+            if (this.draggedEmployeeId) {
+              this.showAssignmentTypeModal(groupKey, test.id, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3, true);
+            }
+          });
+          
+          testHeader.appendChild(testShiftCell);
+        }
+        
+        testSection.appendChild(testHeader);
+        
+        // Parts grid
+        const partsGrid = document.createElement('div');
+        partsGrid.className = 'parts-grid';
         
         parts.forEach(({ part, projectId, soll }) => {
-          const partItem = document.createElement('div');
-          partItem.className = 'part-item';
+          const partRow = document.createElement('div');
+          partRow.className = `part-row shifts-${this.scheduleShiftSystem}`;
           
-          const partName = document.createElement('div');
-          partName.className = 'part-name';
-          partName.textContent = `${part.name} (${soll})`;
-          partItem.appendChild(partName);
+          partRow.innerHTML = `
+            <div class="part-info">
+              <span class="part-name">${part.name}</span>
+              <span class="part-soll">${soll}</span>
+            </div>
+          `;
           
+          // Shift cells for part-specific assignments
           for (let s = 1; s <= this.scheduleShiftSystem; s++) {
-            const dropZone = this.createDropZone(projectId, test.id, weekKey, s as 1 | 2 | 3, false);
-            dropZone.className = 'part-drop';
-            partItem.appendChild(dropZone);
+            const partShiftCell = document.createElement('div');
+            partShiftCell.className = `part-shift-cell shift-${s}`;
+            
+            // Get specific assignments for this part
+            const partAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+              a.projectId === projectId &&
+              a.week === weekKey &&
+              a.shift === s &&
+              a.scope === 'specific'
+            );
+            
+            partAssignments.forEach((assignment: ScheduleAssignment) => {
+              const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+              if (!emp) return;
+              
+              const chip = document.createElement('span');
+              chip.className = 'mini-chip';
+              chip.style.setProperty('--emp-color', emp.color);
+              chip.innerHTML = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
+              chip.title = `${emp.firstName} ${emp.lastName}${assignment.note ? ': ' + assignment.note : ''}`;
+              
+              chip.addEventListener('click', async () => {
+                if (confirm(`Usunąć przypisanie ${emp.firstName} ${emp.lastName}?`)) {
+                  await this.removeAssignment(assignment.id);
+                }
+              });
+              
+              partShiftCell.appendChild(chip);
+            });
+            
+            // Drop zone
+            partShiftCell.addEventListener('dragover', (e) => {
+              e.preventDefault();
+              partShiftCell.classList.add('drag-over');
+            });
+            partShiftCell.addEventListener('dragleave', () => partShiftCell.classList.remove('drag-over'));
+            partShiftCell.addEventListener('drop', async (e) => {
+              e.preventDefault();
+              partShiftCell.classList.remove('drag-over');
+              if (this.draggedEmployeeId) {
+                this.showSpecificAssignmentModal(projectId, test.id, part.id, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3, part.name);
+              }
+            });
+            
+            partRow.appendChild(partShiftCell);
           }
           
-          partGrid.appendChild(partItem);
+          partsGrid.appendChild(partRow);
         });
         
-        testGroup.appendChild(partGrid);
-        detailsContent.appendChild(testGroup);
+        testSection.appendChild(partsGrid);
+        detailsSection.appendChild(testSection);
       });
       
-      detailsRow.appendChild(detailsContent);
-      projectsContainer.appendChild(detailsRow);
+      projectCard.appendChild(detailsSection);
+      projectsContainer.appendChild(projectCard);
     });
+  }
+  
+  private showAssignmentTypeModal(projectId: string, testId: string | undefined, employeeId: string, week: string, shift: 1 | 2 | 3, testLevel: boolean = false): void {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
+        <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
+      </svg>
+      Przypisz: ${emp.firstName} ${emp.lastName}
+    `;
+    
+    const scopeOptions = testLevel ? `
+      <label class="scope-option">
+        <input type="radio" name="assignmentScope" value="audit">
+        <div class="scope-card">
+          <span class="scope-badge scope-audit">A</span>
+          <div class="scope-info">
+            <strong>Audyty</strong>
+            <small>Tylko kontrola jakości / audyty</small>
+          </div>
+        </div>
+      </label>
+      <label class="scope-option">
+        <input type="radio" name="assignmentScope" value="adhesion">
+        <div class="scope-card">
+          <span class="scope-badge scope-adhesion">H</span>
+          <div class="scope-info">
+            <strong>Przyczepność</strong>
+            <small>Tylko testy przyczepności</small>
+          </div>
+        </div>
+      </label>
+    ` : `
+      <label class="scope-option">
+        <input type="radio" name="assignmentScope" value="project" checked>
+        <div class="scope-card">
+          <span class="scope-badge scope-project">P</span>
+          <div class="scope-info">
+            <strong>Cały projekt</strong>
+            <small>Pracuje nad wszystkim w projekcie</small>
+          </div>
+        </div>
+      </label>
+      <label class="scope-option">
+        <input type="radio" name="assignmentScope" value="audit">
+        <div class="scope-card">
+          <span class="scope-badge scope-audit">A</span>
+          <div class="scope-info">
+            <strong>Tylko audyty</strong>
+            <small>Kontrola jakości i audyty</small>
+          </div>
+        </div>
+      </label>
+      <label class="scope-option">
+        <input type="radio" name="assignmentScope" value="adhesion">
+        <div class="scope-card">
+          <span class="scope-badge scope-adhesion">H</span>
+          <div class="scope-info">
+            <strong>Tylko przyczepność</strong>
+            <small>Testy przyczepności</small>
+          </div>
+        </div>
+      </label>
+    `;
+    
+    modalBody.innerHTML = `
+      <div class="assignment-modal">
+        <div class="employee-preview">
+          <div class="employee-avatar-lg" style="background-color: ${emp.color}">
+            ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+          </div>
+          <div>
+            <strong>${emp.firstName} ${emp.lastName}</strong>
+            <small>Zmiana ${shift} • ${week}</small>
+          </div>
+        </div>
+        
+        <div class="scope-selection">
+          <label class="form-label">Zakres pracy:</label>
+          <div class="scope-options">
+            ${scopeOptions}
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Notatka (opcjonalnie):</label>
+          <input type="text" id="assignmentNote" class="form-control" placeholder="Np. skupić się na..., priorytet...">
+        </div>
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = '';
+    confirmBtn.textContent = 'Przypisz';
+    confirmBtn.onclick = async () => {
+      const scopeEl = document.querySelector('input[name="assignmentScope"]:checked') as HTMLInputElement;
+      const scope = (scopeEl?.value || 'project') as 'project' | 'audit' | 'adhesion' | 'specific';
+      const note = (document.getElementById('assignmentNote') as HTMLInputElement)?.value.trim() || undefined;
+      
+      await this.addAssignmentWithScope(projectId, testId, undefined, employeeId, week, shift, scope, note);
+      this.hideModal();
+    };
+    
+    modal.classList.add('active');
+  }
+  
+  private showSpecificAssignmentModal(projectId: string, testId: string, partId: string, employeeId: string, week: string, shift: 1 | 2 | 3, partName: string): void {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    modalTitle.textContent = `Przypisz do części: ${partName}`;
+    
+    modalBody.innerHTML = `
+      <div class="assignment-modal">
+        <div class="employee-preview">
+          <div class="employee-avatar-lg" style="background-color: ${emp.color}">
+            ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+          </div>
+          <div>
+            <strong>${emp.firstName} ${emp.lastName}</strong>
+            <small>Zmiana ${shift} • Część: ${partName}</small>
+          </div>
+        </div>
+        
+        <div class="info-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>Przypisanie do konkretnej części będzie widoczne w widoku głównym projektu z oznaczeniem [S]</span>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Co ma robić? (wymagane):</label>
+          <input type="text" id="specificNote" class="form-control" placeholder="Np. kontrola wymiarowa, test X..." required>
+        </div>
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = '';
+    confirmBtn.textContent = 'Przypisz do części';
+    confirmBtn.onclick = async () => {
+      const note = (document.getElementById('specificNote') as HTMLInputElement)?.value.trim();
+      if (!note) {
+        this.showToast('Podaj co pracownik ma robić', 'warning');
+        return;
+      }
+      
+      await this.addAssignmentWithScope(projectId, testId, partId, employeeId, week, shift, 'specific', note);
+      this.hideModal();
+    };
+    
+    modal.classList.add('active');
+  }
+  
+  private showSelectEmployeeModal(projectId: string, testId: string | undefined, week: string, shift: 1 | 2 | 3): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    modalTitle.textContent = 'Wybierz pracownika';
+    
+    if (this.state.employees.length === 0) {
+      modalBody.innerHTML = `
+        <div class="empty-state">
+          <p>Brak pracowników. Dodaj pierwszego pracownika, aby móc przypisywać.</p>
+          <button class="btn-primary" onclick="window.kappaApp.hideModal(); window.kappaApp.showAddEmployeeModal();">Dodaj pracownika</button>
+        </div>
+      `;
+      const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+      confirmBtn.style.display = 'none';
+      modal.classList.add('active');
+      return;
+    }
+    
+    modalBody.innerHTML = `
+      <div class="employee-select-grid">
+        ${this.state.employees.map(emp => `
+          <button class="employee-select-btn" data-employee-id="${emp.id}">
+            <div class="employee-avatar" style="background-color: ${emp.color}">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </div>
+            <span>${emp.firstName} ${emp.lastName}</span>
+          </button>
+        `).join('')}
+      </div>
+    `;
+    
+    modalBody.querySelectorAll('.employee-select-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const empId = (btn as HTMLElement).dataset.employeeId;
+        if (empId) {
+          this.hideModal();
+          this.showAssignmentTypeModal(projectId, testId, empId, week, shift);
+        }
+      });
+    });
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = 'none';
+    
+    modal.classList.add('active');
+  }
+  
+  private async addAssignmentWithScope(
+    projectId: string, 
+    testId: string | undefined, 
+    partId: string | undefined,
+    employeeId: string, 
+    week: string, 
+    shift: 1 | 2 | 3,
+    scope: 'project' | 'audit' | 'adhesion' | 'specific',
+    note?: string
+  ): Promise<void> {
+    // Check if already exists with same scope
+    const exists = this.state.scheduleAssignments.find((a: ScheduleAssignment) =>
+      a.projectId === projectId &&
+      a.employeeId === employeeId &&
+      a.week === week &&
+      a.shift === shift &&
+      a.scope === scope &&
+      (scope === 'specific' ? a.partId === partId : true)
+    );
+    
+    if (exists) {
+      this.showToast('To przypisanie już istnieje', 'warning');
+      return;
+    }
+    
+    const assignment: ScheduleAssignment = {
+      id: this.generateId(),
+      projectId,
+      scope,
+      testId,
+      partId,
+      employeeId,
+      week,
+      shift,
+      note,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    
+    this.state.scheduleAssignments.push(assignment);
+    await db.put('scheduleAssignments', assignment);
+    
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    const scopeLabels = { project: 'Projekt', audit: 'Audyty', adhesion: 'Przyczepność', specific: 'Konkretne' };
+    await this.addLog('created', 'Assignment', `${emp?.firstName || ''} → ${week} Z${shift} [${scopeLabels[scope]}]`);
+    
+    this.showToast('Pracownik przypisany', 'success');
+    this.renderScheduleProjectsPanel();
   }
   
   private createDropZone(projectId: string, testId: string | undefined, week: string, shift: 1 | 2 | 3, isGroupLevel: boolean = false): HTMLElement {
@@ -5863,7 +8980,7 @@ class KappaApp {
     zone.dataset.shift = shift.toString();
     if (testId) zone.dataset.testId = testId;
     
-    // Get assignments for this zone
+    // Get assignments for this zone (legacy compatibility)
     const assignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
       a.projectId === projectId &&
       a.week === week &&
@@ -5876,11 +8993,14 @@ class KappaApp {
       const emp = this.state.employees.find(e => e.id === assignment.employeeId);
       if (!emp) return;
       
+      const scopeBadge = assignment.scope === 'project' ? 'P' : assignment.scope === 'audit' ? 'A' : assignment.scope === 'adhesion' ? 'H' : 'S';
+      
       const chip = document.createElement('div');
-      chip.className = 'emp-chip';
+      chip.className = `emp-chip scope-${assignment.scope || 'project'}`;
       chip.style.backgroundColor = emp.color + '22';
       chip.style.color = emp.color;
       chip.innerHTML = `
+        <span class="chip-scope">${scopeBadge}</span>
         <span>${emp.firstName}</span>
         <span class="remove" data-id="${assignment.id}">×</span>
       `;
@@ -5904,55 +9024,31 @@ class KappaApp {
       zone.classList.remove('drag-over');
       
       if (this.draggedEmployeeId) {
-        await this.addAssignment(projectId, testId, this.draggedEmployeeId, week, shift);
+        await this.addAssignmentWithScope(projectId, testId, undefined, this.draggedEmployeeId, week, shift, 'project');
       }
     });
     
     return zone;
   }
   
-  private async addAssignment(projectId: string, testId: string | undefined, employeeId: string, week: string, shift: 1 | 2 | 3): Promise<void> {
-    // Check if already exists
-    const exists = this.state.scheduleAssignments.find((a: ScheduleAssignment) =>
-      a.projectId === projectId &&
-      a.employeeId === employeeId &&
-      a.week === week &&
-      a.shift === shift &&
-      (testId ? a.testId === testId : !a.testId)
-    );
-    
-    if (exists) {
-      this.showToast('Ten pracownik jest już przypisany', 'warning');
-      return;
-    }
-    
-    const assignment: ScheduleAssignment = {
-      id: this.generateId(),
-      projectId,
-      testId,
-      employeeId,
-      week,
-      shift,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    
-    this.state.scheduleAssignments.push(assignment);
-    await db.put('scheduleAssignments', assignment);
-    
-    const emp = this.state.employees.find(e => e.id === employeeId);
-    await this.addLog('created', 'Assignment', `${emp?.firstName || ''} → ${week} Z${shift}`);
-    
-    this.renderScheduleProjectsPanel();
-  }
-  
   private async removeAssignment(assignmentId: string): Promise<void> {
     const idx = this.state.scheduleAssignments.findIndex((a: ScheduleAssignment) => a.id === assignmentId);
     if (idx !== -1) {
+      const assignment = this.state.scheduleAssignments[idx];
+      const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+      const project = this.state.projects.find(p => p.id === assignment.projectId || `${p.customer_id}-${p.type_id}` === assignment.projectId);
+      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+      
       this.state.scheduleAssignments.splice(idx, 1);
       await db.delete('scheduleAssignments', assignmentId);
       await this.addLog('deleted', 'Assignment', assignmentId);
+      
+      // Loguj do historii
+      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${assignment.shift}`);
+      
       this.renderScheduleProjectsPanel();
+      this.renderScheduleEmployeePanel();
+      this.updateCoverageBar();
     }
   }
   
@@ -6228,6 +9324,8 @@ class KappaApp {
     modalTitle.textContent = `${isEdit ? '✏️' : '➕'} ${i18n.t(isEdit ? 'schedule.editEmployee' : 'schedule.addEmployee')}`;
     
     const selectedColor = employee?.color || EMPLOYEE_COLORS[this.state.employees.length % EMPLOYEE_COLORS.length];
+    const currentStatus = employee?.status || 'available';
+    const currentShift = employee?.suggestedShift || '';
     
     modalBody.innerHTML = `
       <div class="form-group">
@@ -6248,6 +9346,23 @@ class KappaApp {
           `).join('')}
         </div>
       </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.status')}:</label>
+        <select id="employeeStatus" class="form-control">
+          <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
+          <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
+          <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.suggestedShift')}:</label>
+        <select id="employeeShift" class="form-control">
+          <option value="" ${!currentShift ? 'selected' : ''}>— ${i18n.t('schedule.noPreference')} —</option>
+          <option value="1" ${currentShift === 1 ? 'selected' : ''}>${i18n.t('schedule.shift')} 1 (${i18n.t('schedule.morning')} 6:00-14:00)</option>
+          <option value="2" ${currentShift === 2 ? 'selected' : ''}>${i18n.t('schedule.shift')} 2 (${i18n.t('schedule.afternoon')} 14:00-22:00)</option>
+          <option value="3" ${currentShift === 3 ? 'selected' : ''}>${i18n.t('schedule.shift')} 3 (${i18n.t('schedule.night')} 22:00-6:00)</option>
+        </select>
+      </div>
     `;
     
     // Color picker logic
@@ -6265,6 +9380,9 @@ class KappaApp {
       const lastName = (document.getElementById('employeeLastName') as HTMLInputElement).value.trim();
       const colorEl = document.querySelector('.employee-color-option.selected') as HTMLElement;
       const color = colorEl?.dataset.color || EMPLOYEE_COLORS[0];
+      const status = (document.getElementById('employeeStatus') as HTMLSelectElement).value as EmployeeStatus;
+      const shiftValue = (document.getElementById('employeeShift') as HTMLSelectElement).value;
+      const suggestedShift = shiftValue ? parseInt(shiftValue) as 1 | 2 | 3 : undefined;
       
       if (!firstName || !lastName) {
         this.showToast(i18n.t('messages.errorOccurred'), 'error');
@@ -6275,6 +9393,8 @@ class KappaApp {
         employee.firstName = firstName;
         employee.lastName = lastName;
         employee.color = color;
+        employee.status = status;
+        employee.suggestedShift = suggestedShift;
         await db.put('employees', employee);
         await this.addLog('updated', 'Employee', `${firstName} ${lastName}`);
       } else {
@@ -6283,6 +9403,8 @@ class KappaApp {
           firstName,
           lastName,
           color,
+          status,
+          suggestedShift,
           createdAt: Date.now(),
         };
         this.state.employees.push(newEmployee);
