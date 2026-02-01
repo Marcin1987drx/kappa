@@ -54,6 +54,7 @@ export interface Employee {
   color: string;
   status?: EmployeeStatus;        // Domyślnie 'available'
   suggestedShift?: 1 | 2 | 3;     // Sugerowana zmiana
+  note?: string;                  // Notatka o pracowniku
   createdAt: number;
 }
 

@@ -5655,8 +5655,8 @@ class KappaApp {
     // Eksport
     document.getElementById('exportSchedule')?.addEventListener('click', () => this.showExportModal());
     
-    // Kopiuj tydzień
-    document.getElementById('copyWeekBtn')?.addEventListener('click', () => this.showCopyWeekModal());
+    // Wyślij email
+    document.getElementById('sendEmailBtn')?.addEventListener('click', () => this.showSendEmailModal());
     
     // Szablony
     document.getElementById('templatesBtn')?.addEventListener('click', () => this.showTemplatesModal());
@@ -6756,20 +6756,10 @@ class KappaApp {
   }
   
   private renderScheduleEmployeePanel(): void {
-    const container = document.getElementById('employeeDragList');
-    const absenceList = document.getElementById('absenceList');
-    if (!container) return;
-    
-    if (this.state.employees.length === 0) {
-      container.innerHTML = `
-        <div class="sched-empty-state">
-          <p>${i18n.t('schedule.noEmployees')}</p>
-          <button class="sched-add-btn" onclick="window.kappaApp.showAddEmployeeModal()">${i18n.t('schedule.addEmployee')}</button>
-        </div>
-      `;
-      (window as any).kappaApp = this;
-      return;
-    }
+    const assignedList = document.getElementById('assignedList');
+    const unassignedList = document.getElementById('unassignedList');
+    const absentList = document.getElementById('absentList');
+    const uncoveredList = document.getElementById('uncoveredProjectsList');
     
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
@@ -6778,15 +6768,13 @@ class KappaApp {
     // Podziel pracowników
     const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
     const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
-    
-    // Przypisani i nieprzypisani
     const assignedAvailable = availableEmployees.filter(e => assignedEmployeeIds.has(e.id));
     const unassignedAvailable = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id));
     
-    // Helper: pobierz zadania pracownika
-    const getEmployeeTasks = (empId: string): string[] => {
+    // Helper: karta pracownika
+    const renderEmployeeCard = (emp: Employee, isDraggable: boolean = true) => {
       const tasks = weekAssignments
-        .filter((a: ScheduleAssignment) => a.employeeId === empId)
+        .filter((a: ScheduleAssignment) => a.employeeId === emp.id)
         .map((a: ScheduleAssignment) => {
           const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
           if (project) {
@@ -6795,66 +6783,123 @@ class KappaApp {
           }
           return '?';
         });
-      return [...new Set(tasks)];
+      const uniqueTasks = [...new Set(tasks)];
+      
+      return `
+        <div class="sched-emp-card" ${isDraggable ? 'draggable="true"' : ''} data-employee-id="${emp.id}">
+          <div class="sched-emp-avatar" style="background: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
+          <div class="sched-emp-info">
+            <span class="sched-emp-name">${emp.firstName} ${emp.lastName}</span>
+            ${uniqueTasks.length > 0 ? `<span class="sched-emp-tasks">${uniqueTasks.slice(0, 2).join(', ')}${uniqueTasks.length > 2 ? '...' : ''}</span>` : ''}
+          </div>
+        </div>
+      `;
     };
     
-    // Renderuj nieprzypisanych (do drag & drop)
-    let html = '';
-    if (unassignedAvailable.length > 0) {
-      html += `<div class="sched-section-label">⚠️ Nieprzypisani (${unassignedAvailable.length})</div>`;
-      html += unassignedAvailable.map(emp => `
-        <div class="sched-team-card unassigned" draggable="true" data-employee-id="${emp.id}">
-          <div class="sched-team-avatar" style="background-color: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
-          <span class="sched-team-name">${emp.firstName} ${emp.lastName}</span>
-        </div>
-      `).join('');
+    // 1. Przypisani
+    if (assignedList) {
+      document.getElementById('assignedCount')!.textContent = String(assignedAvailable.length);
+      assignedList.innerHTML = assignedAvailable.length > 0 
+        ? assignedAvailable.map(e => renderEmployeeCard(e)).join('')
+        : '<p class="sched-panel-empty">—</p>';
     }
     
-    // Renderuj przypisanych z zadaniami
-    if (assignedAvailable.length > 0) {
-      html += `<div class="sched-section-label">✓ Przypisani (${assignedAvailable.length})</div>`;
-      html += assignedAvailable.map(emp => {
-        const tasks = getEmployeeTasks(emp.id);
-        return `
-          <div class="sched-team-card assigned" draggable="true" data-employee-id="${emp.id}">
-            <div class="sched-team-avatar" style="background-color: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
-            <div class="sched-team-info">
-              <span class="sched-team-name">${emp.firstName} ${emp.lastName}</span>
-              ${tasks.length > 0 ? `<span class="sched-team-tasks">${tasks.slice(0, 2).join(', ')}${tasks.length > 2 ? '...' : ''}</span>` : ''}
-            </div>
-          </div>
-        `;
-      }).join('');
+    // 2. Bez przydziału (drag & drop)
+    if (unassignedList) {
+      document.getElementById('unassignedCount')!.textContent = String(unassignedAvailable.length);
+      unassignedList.innerHTML = unassignedAvailable.length > 0 
+        ? unassignedAvailable.map(e => renderEmployeeCard(e)).join('')
+        : '<p class="sched-panel-empty">—</p>';
     }
     
-    container.innerHTML = html || `<p class="sched-empty-hint">Brak dostępnych pracowników</p>`;
-    
-    // Renderuj nieobecnych z ikonami SVG
-    if (absenceList) {
+    // 3. Nieobecni
+    if (absentList) {
+      document.getElementById('absentCount')!.textContent = String(absentEmployees.length);
       if (absentEmployees.length === 0) {
-        absenceList.innerHTML = `<p class="sched-empty-hint">${i18n.t('schedule.noAbsences')}</p>`;
+        absentList.innerHTML = '<p class="sched-panel-empty">—</p>';
       } else {
-        absenceList.innerHTML = absentEmployees.map(emp => {
+        absentList.innerHTML = absentEmployees.map(emp => {
           const isVacation = emp.status === 'vacation';
-          const statusText = isVacation ? i18n.t('schedule.vacation') : i18n.t('schedule.sickLeave');
-          const statusClass = isVacation ? 'vacation' : 'sick';
-          const icon = isVacation 
-            ? `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>`
-            : `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`;
-          
+          const icon = isVacation ? '🏖️' : '🤒';
+          const label = isVacation ? 'Urlop' : 'L4';
           return `
-            <div class="sched-absence-item ${statusClass}">
-              <span class="sched-absence-icon">${icon}</span>
-              <span class="sched-absence-name">${emp.firstName} ${emp.lastName}</span>
-              <span class="sched-absence-type ${statusClass}">${statusText}</span>
+            <div class="sched-absent-card" data-employee-id="${emp.id}">
+              <span class="sched-absent-icon">${icon}</span>
+              <span class="sched-absent-name">${emp.firstName} ${emp.lastName}</span>
+              <span class="sched-absent-badge ${emp.status}">${label}</span>
+              <button class="sched-absent-return" data-emp-id="${emp.id}" title="Przywróć">↩</button>
             </div>
           `;
         }).join('');
+        
+        // Obsługa przywracania
+        absentList.querySelectorAll('.sched-absent-return').forEach(btn => {
+          btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const empId = (btn as HTMLElement).dataset.empId;
+            if (empId) {
+              const emp = this.state.employees.find(e => e.id === empId);
+              if (emp) {
+                emp.status = 'available';
+                await db.put('employees', emp);
+                this.showToast(`${emp.firstName} wrócił do pracy`, 'success');
+                this.renderScheduleEmployeePanel();
+              }
+            }
+          });
+        });
       }
     }
     
-    // Drag events
-    container.querySelectorAll('.sched-team-card').forEach(item => {
+    // 4. Projekty bez obsady
+    if (uncoveredList) {
+      // Znajdź projekty z SOLL w tym tygodniu bez przypisań
+      const projectsWithSoll = this.state.projects.filter(p => {
+        if (p.hidden) return false;
+        const weekData = p.weeks[weekKey];
+        return weekData && weekData.soll > 0;
+      });
+      
+      const uncoveredProjects = projectsWithSoll.filter(p => {
+        const groupKey = `${p.customer_id}-${p.type_id}`;
+        const hasAssignment = weekAssignments.some((a: ScheduleAssignment) => 
+          a.projectId === groupKey || a.projectId === p.id
+        );
+        return !hasAssignment;
+      });
+      
+      // Grupuj po kliencie
+      const grouped = new Map<string, { customer: string; types: string[] }>();
+      uncoveredProjects.forEach(p => {
+        const customer = this.state.customers.find(c => c.id === p.customer_id);
+        const type = this.state.types.find(t => t.id === p.type_id);
+        const custName = customer?.name || '?';
+        if (!grouped.has(custName)) {
+          grouped.set(custName, { customer: custName, types: [] });
+        }
+        const typeName = type?.name || '?';
+        if (!grouped.get(custName)!.types.includes(typeName)) {
+          grouped.get(custName)!.types.push(typeName);
+        }
+      });
+      
+      document.getElementById('uncoveredCount')!.textContent = String(grouped.size);
+      
+      if (grouped.size === 0) {
+        uncoveredList.innerHTML = '<p class="sched-panel-empty">Wszystko obsadzone ✓</p>';
+      } else {
+        uncoveredList.innerHTML = Array.from(grouped.entries()).map(([_, g]) => `
+          <div class="sched-uncovered-item">
+            <span class="sched-uncovered-customer">${g.customer}</span>
+            <span class="sched-uncovered-types">${g.types.join(', ')}</span>
+          </div>
+        `).join('');
+      }
+    }
+    
+    // Event listeners dla drag & drop
+    const allCards = document.querySelectorAll('.sched-emp-card[draggable="true"]');
+    allCards.forEach(item => {
       item.addEventListener('dragstart', (e) => {
         this.draggedEmployeeId = (item as HTMLElement).dataset.employeeId || null;
         this.draggedEmployeeScope = 'project';
@@ -6866,7 +6911,16 @@ class KappaApp {
         this.draggedEmployeeId = null;
       });
       
-      // Hover - podświetlanie przypisań + popup
+      // Kliknięcie - modal
+      item.addEventListener('click', (e) => {
+        const empId = (item as HTMLElement).dataset.employeeId;
+        if (empId) {
+          this.hideEmployeeHoverPopup();
+          this.showEmployeeModal(empId);
+        }
+      });
+      
+      // Hover
       item.addEventListener('mouseenter', (e) => {
         const empId = (item as HTMLElement).dataset.employeeId;
         if (empId) {
@@ -6883,16 +6937,8 @@ class KappaApp {
       });
     });
     
-    // Quick add & edit
+    // Quick add
     document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
-    
-    container.querySelectorAll('.sched-team-edit').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const empId = (btn as HTMLElement).dataset.empId;
-        if (empId) this.editEmployee(empId);
-      });
-    });
     
     (window as any).kappaApp = this;
   }
@@ -6929,6 +6975,26 @@ class KappaApp {
     });
   }
   
+  // Dodanie nieobecności dla pracownika
+  private async addAbsenceForEmployee(employeeId: string, type: 'vacation' | 'sick'): Promise<void> {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    // Jeśli już ma ten status, przywróć do pracy
+    if (emp.status === type) {
+      emp.status = 'available';
+      await db.put('employees', emp);
+      this.showToast(`${emp.firstName} ${emp.lastName} wrócił do pracy`, 'success');
+    } else {
+      emp.status = type;
+      await db.put('employees', emp);
+      const typeLabel = type === 'vacation' ? 'urlopie' : 'L4';
+      this.showToast(`${emp.firstName} ${emp.lastName} jest na ${typeLabel}`, 'success');
+    }
+    
+    this.renderScheduleEmployeePanel();
+  }
+  
   // Popup z detalami przypisań pracownika
   private showEmployeeHoverPopup(event: MouseEvent, employeeId: string): void {
     this.hideEmployeeHoverPopup();
@@ -6944,7 +7010,7 @@ class KappaApp {
     if (assignments.length === 0) return;
     
     // Grupuj po projekcie i zmianie
-    const grouped = new Map<string, { customer: string; type: string; shifts: number[]; scopes: string[] }>();
+    const grouped = new Map<string, { customer: string; type: string; shifts: number[]; scopes: string[]; notes: string[] }>();
     
     assignments.forEach((a: ScheduleAssignment) => {
       const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
@@ -6958,14 +7024,40 @@ class KappaApp {
             customer: customer?.name || '?',
             type: type?.name || '?',
             shifts: [],
-            scopes: []
+            scopes: [],
+            notes: []
           });
         }
         const g = grouped.get(key)!;
         if (!g.shifts.includes(a.shift)) g.shifts.push(a.shift);
-        if (a.scope && !g.scopes.includes(a.scope)) g.scopes.push(a.scope);
+        
+        // Dodaj konkretny zakres pracy zamiast 'specific'
+        let scopeLabel = '';
+        if (a.scope === 'adhesion') {
+          scopeLabel = '🧪 Przyczepność';
+        } else if (a.scope === 'audit') {
+          scopeLabel = '🔍 Audyt';
+        } else if (a.testId) {
+          const test = this.state.tests.find(t => t.id === a.testId);
+          scopeLabel = `⚙️ ${test?.name || 'Test'}`;
+        } else if (a.partId) {
+          const part = this.state.parts.find(p => p.id === a.partId);
+          scopeLabel = `📦 ${part?.name || 'Część'}`;
+        } else if (a.scope === 'project') {
+          scopeLabel = '📋 Cały projekt';
+        }
+        
+        if (scopeLabel && !g.scopes.includes(scopeLabel)) g.scopes.push(scopeLabel);
+        
+        // Dodaj notatkę jeśli istnieje
+        if (a.note && a.note.trim()) {
+          g.notes.push(`Z${a.shift}: ${a.note}`);
+        }
       }
     });
+    
+    // Sprawdź czy są jakiekolwiek notatki
+    const hasAnyNotes = Array.from(grouped.values()).some(g => g.notes.length > 0);
     
     const popup = document.createElement('div');
     popup.className = 'sched-employee-popup';
@@ -6973,6 +7065,7 @@ class KappaApp {
       <div class="sched-popup-header" style="background: ${emp.color}">
         <span class="sched-popup-avatar">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
         <span class="sched-popup-name">${emp.firstName} ${emp.lastName}</span>
+        ${hasAnyNotes ? '<span class="sched-popup-note-badge">📝</span>' : ''}
       </div>
       <div class="sched-popup-content">
         <div class="sched-popup-week">KW${this.scheduleCurrentWeek} • ${assignments.length} przypisań</div>
@@ -6984,6 +7077,11 @@ class KappaApp {
               <span class="sched-popup-shifts">${g.shifts.sort().map(s => `Z${s}`).join(', ')}</span>
               ${g.scopes.length > 0 ? `<span class="sched-popup-scopes">${g.scopes.join(', ')}</span>` : ''}
             </div>
+            ${g.notes.length > 0 ? `
+              <div class="sched-popup-notes">
+                ${g.notes.map(n => `<div class="sched-popup-note">📝 ${n}</div>`).join('')}
+              </div>
+            ` : ''}
           </div>
         `).join('')}
       </div>
@@ -7038,6 +7136,7 @@ class KappaApp {
       scope: string;
       scopeClass: string;
       details: string[];
+      notes: string[];
     }>();
     
     assignments.forEach((a: ScheduleAssignment) => {
@@ -7078,13 +7177,17 @@ class KappaApp {
           shifts: [],
           scope,
           scopeClass,
-          details
+          details,
+          notes: []
         });
       }
       
       const task = projectTasks.get(key)!;
       if (!task.shifts.includes(a.shift)) {
         task.shifts.push(a.shift);
+      }
+      if (a.note && a.note.trim()) {
+        task.notes.push(`Z${a.shift}: ${a.note}`);
       }
     });
     
@@ -7140,6 +7243,11 @@ class KappaApp {
                         ${task.details.slice(0, 3).map(d => `<span class="employee-task-tag">${d}</span>`).join('')}
                         ${task.details.length > 3 ? `<span class="employee-task-tag">+${task.details.length - 3} więcej</span>` : ''}
                       </div>
+                      ${task.notes.length > 0 ? `
+                        <div class="employee-task-notes">
+                          ${task.notes.map(n => `<div class="employee-task-note">📝 ${n}</div>`).join('')}
+                        </div>
+                      ` : ''}
                     </div>
                   </div>
                 `).join('')}
@@ -7153,39 +7261,64 @@ class KappaApp {
           `}
           
           <div class="employee-modal-section">
-            <h3>📅 Grafik tygodniowy</h3>
-            <div class="employee-schedule-grid">
-              ${days.map((day) => {
+            <h3>� Statystyki</h3>
+            <div class="employee-stats-grid">
+              ${(() => {
+                // Oblicz statystyki z całego roku
+                const yearAssignments = this.state.scheduleAssignments.filter(
+                  (a: ScheduleAssignment) => a.employeeId === employeeId && a.week.startsWith(String(this.scheduleCurrentYear))
+                );
+                const monthAssignments = this.state.scheduleAssignments.filter(
+                  (a: ScheduleAssignment) => {
+                    if (a.employeeId !== employeeId) return false;
+                    const weekNum = parseInt(a.week.split('KW')[1]);
+                    const currentMonth = Math.ceil(this.scheduleCurrentWeek / 4.33);
+                    const assignmentMonth = Math.ceil(weekNum / 4.33);
+                    return assignmentMonth === currentMonth;
+                  }
+                );
+                const shiftsThisMonth = monthAssignments.length;
+                const shiftsThisYear = yearAssignments.length;
+                const uniqueProjectsYear = new Set(yearAssignments.map((a: ScheduleAssignment) => a.projectId)).size;
+                
+                // Policz zmiany
+                const shiftCounts = { 1: 0, 2: 0, 3: 0 };
+                yearAssignments.forEach((a: ScheduleAssignment) => shiftCounts[a.shift as 1|2|3]++);
+                const preferredShift = Object.entries(shiftCounts).sort((a, b) => b[1] - a[1])[0];
+                
                 return `
-                  <div class="employee-schedule-day">
-                    <div class="employee-schedule-day-header">
-                      <span class="employee-schedule-day-name">${day}</span>
-                    </div>
-                    <div class="employee-schedule-shifts">
-                      ${[1, 2, 3].slice(0, this.scheduleShiftSystem).map(s => {
-                        const hasShift = assignments.some((a: ScheduleAssignment) => a.shift === s);
-                        const shiftAssignment = assignments.find((a: ScheduleAssignment) => a.shift === s);
-                        let projectName = '';
-                        if (shiftAssignment) {
-                          const proj = this.state.projects.find(p => 
-                            p.id === shiftAssignment.projectId || `${p.customer_id}-${p.type_id}` === shiftAssignment.projectId
-                          );
-                          if (proj) {
-                            const cust = this.state.customers.find(c => c.id === proj.customer_id);
-                            projectName = cust?.name || '?';
-                          }
-                        }
-                        return `
-                          <div class="employee-schedule-shift shift-${s} ${hasShift ? 'assigned' : ''}">
-                            <span class="employee-schedule-shift-label">Z${s}</span>
-                            ${hasShift ? `<span class="employee-schedule-shift-project">${projectName}</span>` : ''}
-                          </div>
-                        `;
-                      }).join('')}
-                    </div>
+                  <div class="employee-stat-card">
+                    <span class="employee-stat-value">${shiftsThisMonth}</span>
+                    <span class="employee-stat-label">Zmian w miesiącu</span>
+                  </div>
+                  <div class="employee-stat-card">
+                    <span class="employee-stat-value">${shiftsThisYear}</span>
+                    <span class="employee-stat-label">Zmian w roku</span>
+                  </div>
+                  <div class="employee-stat-card">
+                    <span class="employee-stat-value">${uniqueProjectsYear}</span>
+                    <span class="employee-stat-label">Projektów w roku</span>
                   </div>
                 `;
-              }).join('')}
+              })()}
+            </div>
+          </div>
+          
+          <div class="employee-modal-section">
+            <h3>⚡ Szybkie akcje</h3>
+            <div class="employee-quick-actions">
+              <button class="employee-action-btn" data-action="edit">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                Edytuj dane
+              </button>
+              <button class="employee-action-btn" data-action="vacation">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2"/></svg>
+                ${emp.status === 'vacation' ? 'Zakończ urlop' : 'Ustaw urlop'}
+              </button>
+              <button class="employee-action-btn" data-action="sick">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                ${emp.status === 'sick' ? 'Zakończ L4' : 'Ustaw L4'}
+              </button>
             </div>
           </div>
         </div>
@@ -7198,6 +7331,30 @@ class KappaApp {
     overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) overlay.remove();
+    });
+    
+    // Obsługa szybkich akcji
+    overlay.querySelectorAll('.employee-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const action = (btn as HTMLElement).dataset.action;
+        
+        if (action === 'edit') {
+          overlay.remove();
+          this.editEmployee(employeeId);
+        } else if (action === 'vacation') {
+          emp.status = emp.status === 'vacation' ? 'available' : 'vacation';
+          await db.put('employees', emp);
+          this.showToast(emp.status === 'vacation' ? `${emp.firstName} jest na urlopie` : `${emp.firstName} wrócił z urlopu`, 'success');
+          overlay.remove();
+          this.renderScheduleEmployeePanel();
+        } else if (action === 'sick') {
+          emp.status = emp.status === 'sick' ? 'available' : 'sick';
+          await db.put('employees', emp);
+          this.showToast(emp.status === 'sick' ? `${emp.firstName} jest na L4` : `${emp.firstName} wrócił z L4`, 'success');
+          overlay.remove();
+          this.renderScheduleEmployeePanel();
+        }
+      });
     });
     
     // Escape
@@ -7556,6 +7713,306 @@ class KappaApp {
     modal.classList.add('active');
   }
 
+  // ==================== WYSYŁANIE GRAFIKU MAILEM ====================
+  private showSendEmailModal(): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    // Pobierz zapisane adresy email
+    const savedEmails = localStorage.getItem('kappa_email_addresses') || '';
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+      </svg>
+      Wyślij grafik mailem
+    `;
+    
+    // Grupuj przypisania wg pracownika
+    const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (emp) {
+        if (!byEmployee.has(emp.id)) {
+          byEmployee.set(emp.id, { emp, assignments: [] });
+        }
+        byEmployee.get(emp.id)!.assignments.push(a);
+      }
+    });
+    
+    modalBody.innerHTML = `
+      <div class="send-email-modal">
+        <div class="info-box info-box-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>Wyślij grafik przez Outlook. Możesz wysłać ogólny grafik lub indywidualne maile dla pracowników.</span>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Adresy email (rozdziel przecinkami lub enterem):</label>
+          <textarea id="emailAddresses" class="form-control" rows="2" placeholder="jan.kowalski@firma.pl, anna.nowak@firma.pl">${savedEmails}</textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">Typ wiadomości:</label>
+          <div class="email-type-options">
+            <label class="radio-option">
+              <input type="radio" name="emailType" value="general" checked>
+              <span>📋 Ogólny grafik (dla wszystkich)</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="emailType" value="individual">
+              <span>👤 Indywidualne maile (każdy pracownik dostaje swój)</span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="email-preview-section">
+          <h4>📧 Podgląd wiadomości</h4>
+          <div class="email-preview" id="emailPreviewContent">
+            ${this.generateScheduleEmailHtml(weekKey, 'general')}
+          </div>
+        </div>
+        
+        <div class="form-actions" style="margin-top: 16px; display: flex; gap: 12px;">
+          <button class="btn btn-primary" id="sendGeneralEmail">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+            Otwórz w Outlook
+          </button>
+          <button class="btn btn-secondary" id="sendIndividualEmails" style="display: none;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Wyślij do wszystkich pracowników
+          </button>
+        </div>
+      </div>
+    `;
+    
+    // Obsługa zmiany typu
+    modalBody.querySelectorAll('input[name="emailType"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        const type = (e.target as HTMLInputElement).value as 'general' | 'individual';
+        document.getElementById('emailPreviewContent')!.innerHTML = this.generateScheduleEmailHtml(weekKey, type);
+        document.getElementById('sendGeneralEmail')!.style.display = type === 'general' ? '' : 'none';
+        document.getElementById('sendIndividualEmails')!.style.display = type === 'individual' ? '' : 'none';
+      });
+    });
+    
+    // Zapisz adresy email
+    document.getElementById('emailAddresses')?.addEventListener('blur', (e) => {
+      localStorage.setItem('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
+    });
+    
+    // Wysyłanie ogólnego emaila
+    document.getElementById('sendGeneralEmail')?.addEventListener('click', () => {
+      const emails = (document.getElementById('emailAddresses') as HTMLTextAreaElement).value
+        .split(/[,\n]/)
+        .map(e => e.trim())
+        .filter(e => e);
+      
+      if (emails.length === 0) {
+        this.showToast('Wprowadź przynajmniej jeden adres email', 'warning');
+        return;
+      }
+      
+      localStorage.setItem('kappa_email_addresses', emails.join(', '));
+      this.openOutlookEmail(emails.join('; '), `Grafik ${weekKey}`, this.generateScheduleEmailBody(weekKey, 'general'));
+      this.hideModal();
+    });
+    
+    // Wysyłanie indywidualnych maili
+    document.getElementById('sendIndividualEmails')?.addEventListener('click', () => {
+      let count = 0;
+      byEmployee.forEach(({ emp }) => {
+        const email = this.getEmployeeEmail(emp);
+        if (email) {
+          this.openOutlookEmail(email, `Twój grafik na ${weekKey} - ${emp.firstName} ${emp.lastName}`, 
+            this.generateEmployeeScheduleEmailBody(emp.id, weekKey));
+          count++;
+        }
+      });
+      
+      if (count > 0) {
+        this.showToast(`Otwarto ${count} okien Outlook`, 'success');
+      } else {
+        this.showToast('Brak pracowników z przypisanymi adresami email', 'warning');
+      }
+      this.hideModal();
+    });
+    
+    // Ukryj domyślny przycisk potwierdzenia
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = 'none';
+    
+    modal.classList.add('active');
+  }
+  
+  private generateScheduleEmailHtml(weekKey: string, type: 'general' | 'individual'): string {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    if (type === 'general') {
+      // Grupuj wg projektu
+      const byProject = new Map<string, { customer: string; type: string; shifts: Map<number, string[]> }>();
+      
+      weekAssignments.forEach((a: ScheduleAssignment) => {
+        const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+        const emp = this.state.employees.find(e => e.id === a.employeeId);
+        if (project && emp) {
+          const customer = this.state.customers.find(c => c.id === project.customer_id);
+          const ptype = this.state.types.find(t => t.id === project.type_id);
+          const key = `${customer?.name || '?'} - ${ptype?.name || '?'}`;
+          
+          if (!byProject.has(key)) {
+            byProject.set(key, { customer: customer?.name || '?', type: ptype?.name || '?', shifts: new Map() });
+          }
+          const data = byProject.get(key)!;
+          if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
+          data.shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
+        }
+      });
+      
+      const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
+      
+      return `
+        <div style="font-family: Arial, sans-serif; max-width: 600px;">
+          <div style="background: #0097AC; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
+            <h2 style="margin: 0;">📅 Grafik tygodniowy ${weekKey}</h2>
+            <p style="margin: 8px 0 0; opacity: 0.9;">DRÄXLMAIER Kappa Plannung</p>
+          </div>
+          <div style="padding: 20px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 8px 8px;">
+            ${Array.from(byProject.entries()).map(([name, data]) => `
+              <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                <h3 style="margin: 0 0 12px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 8px;">${name}</h3>
+                ${[1, 2, 3].filter(s => data.shifts.has(s)).map(s => `
+                  <div style="margin-bottom: 8px;">
+                    <strong style="color: #64748b; font-size: 12px;">${shiftNames[s-1]}:</strong>
+                    <div style="margin-top: 4px;">
+                      ${data.shifts.get(s)!.map(emp => `
+                        <span style="display: inline-block; background: #0097AC; color: white; padding: 4px 12px; border-radius: 16px; margin: 2px; font-size: 13px;">${emp}</span>
+                      `).join('')}
+                    </div>
+                  </div>
+                `).join('')}
+              </div>
+            `).join('')}
+            ${byProject.size === 0 ? '<p style="text-align: center; color: #64748b;">Brak przypisań w tym tygodniu</p>' : ''}
+          </div>
+        </div>
+      `;
+    } else {
+      // Podgląd indywidualny (przykład)
+      return `
+        <div style="font-family: Arial, sans-serif; max-width: 600px;">
+          <div style="background: #0097AC; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
+            <h2 style="margin: 0;">👤 Twój grafik na ${weekKey}</h2>
+            <p style="margin: 8px 0 0; opacity: 0.9;">Indywidualna wiadomość dla każdego pracownika</p>
+          </div>
+          <div style="padding: 20px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 8px 8px;">
+            <p style="color: #64748b;">Każdy pracownik otrzyma email z listą swoich przypisań:</p>
+            <ul style="color: #1e293b;">
+              <li>Projekty do realizacji</li>
+              <li>Zmiany i godziny pracy</li>
+              <li>Szczegóły zadań (audyt, przyczepność itp.)</li>
+            </ul>
+          </div>
+        </div>
+      `;
+    }
+  }
+  
+  private generateScheduleEmailBody(weekKey: string, type: 'general'): string {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const shiftNames = ['Z1 (6:00-14:00)', 'Z2 (14:00-22:00)', 'Z3 (22:00-6:00)'];
+    
+    // Grupuj wg projektu
+    const byProject = new Map<string, { customer: string; type: string; shifts: Map<number, string[]> }>();
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (project && emp) {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const ptype = this.state.types.find(t => t.id === project.type_id);
+        const key = `${customer?.name || '?'} - ${ptype?.name || '?'}`;
+        
+        if (!byProject.has(key)) {
+          byProject.set(key, { customer: customer?.name || '?', type: ptype?.name || '?', shifts: new Map() });
+        }
+        const data = byProject.get(key)!;
+        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
+        data.shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
+      }
+    });
+    
+    let body = `GRAFIK TYGODNIOWY ${weekKey}\\n`;
+    body += `DRÄXLMAIER Kappa Plannung\\n`;
+    body += `================================\\n\\n`;
+    
+    byProject.forEach((data, name) => {
+      body += `📦 ${name}\\n`;
+      [1, 2, 3].forEach(s => {
+        if (data.shifts.has(s)) {
+          body += `   ${shiftNames[s-1]}: ${data.shifts.get(s)!.join(', ')}\\n`;
+        }
+      });
+      body += `\\n`;
+    });
+    
+    return body;
+  }
+  
+  private generateEmployeeScheduleEmailBody(employeeId: string, weekKey: string): string {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return '';
+    
+    const assignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
+    );
+    
+    const shiftNames = ['Z1 (6:00-14:00)', 'Z2 (14:00-22:00)', 'Z3 (22:00-6:00)'];
+    
+    let body = `Cześć ${emp.firstName}!\\n\\n`;
+    body += `Oto Twój grafik na ${weekKey}:\\n`;
+    body += `================================\\n\\n`;
+    
+    assignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      if (project) {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const ptype = this.state.types.find(t => t.id === project.type_id);
+        
+        body += `📦 ${customer?.name || '?'} - ${ptype?.name || '?'}\\n`;
+        body += `   ⏰ ${shiftNames[a.shift - 1]}\\n`;
+        
+        if (a.scope !== 'project') {
+          const scopeLabels: Record<string, string> = { audit: 'Audyt', adhesion: 'Przyczepność', specific: 'Specyficzne zadanie' };
+          body += `   📋 Zakres: ${scopeLabels[a.scope] || a.scope}\\n`;
+        }
+        body += `\\n`;
+      }
+    });
+    
+    body += `\\nPowodzenia!\\nZespół Kappa`;
+    
+    return body;
+  }
+  
+  private getEmployeeEmail(emp: Employee): string | null {
+    // Sprawdź czy pracownik ma email (możesz dodać pole email do Employee)
+    // Na razie zwracamy null - trzeba będzie rozszerzyć model Employee
+    return (emp as any).email || null;
+  }
+  
+  private openOutlookEmail(to: string, subject: string, body: string): void {
+    // Użyj protokołu mailto: który otworzy domyślny klient pocztowy (Outlook)
+    const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.replace(/\\n/g, '\n'))}`;
+    window.open(mailtoUrl, '_blank');
+  }
+
   // ==================== WIDOK GANTT OBCIĄŻENIA ====================
   private showGanttView(): void {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
@@ -7844,19 +8301,109 @@ class KappaApp {
     });
   }
   
-  private async moveAssignmentToShift(assignmentId: string, newShift: 1 | 2 | 3): Promise<void> {
+  // Modal do edycji notatki przypisania
+  private showAssignmentNoteModal(assignmentId: string): void {
     const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
-    if (!assignment || assignment.shift === newShift) return;
+    if (!assignment) return;
+    
+    const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+    const project = this.state.projects.find(p => p.id === assignment.projectId);
+    const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+    const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'note-modal-overlay';
+    overlay.innerHTML = `
+      <div class="note-modal">
+        <div class="note-modal-header">
+          <h3>📝 Notatka</h3>
+          <button class="note-modal-close">×</button>
+        </div>
+        <div class="note-modal-info">
+          <span class="note-modal-employee" style="--emp-color: ${emp?.color || '#64748b'}">
+            ${emp?.firstName} ${emp?.lastName}
+          </span>
+          <span class="note-modal-project">${customer?.name || '?'} / ${type?.name || '?'}</span>
+          <span class="note-modal-shift">Zmiana ${assignment.shift}</span>
+        </div>
+        <textarea class="note-modal-textarea" placeholder="Wpisz notatkę dla tego przypisania...">${assignment.note || ''}</textarea>
+        <div class="note-modal-actions">
+          <button class="note-modal-cancel">Anuluj</button>
+          <button class="note-modal-save">Zapisz</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    const textarea = overlay.querySelector('.note-modal-textarea') as HTMLTextAreaElement;
+    textarea.focus();
+    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    
+    // Zamykanie
+    overlay.querySelector('.note-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.note-modal-cancel')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    
+    // Zapisywanie
+    overlay.querySelector('.note-modal-save')?.addEventListener('click', async () => {
+      const note = textarea.value.trim();
+      assignment.note = note || undefined;
+      assignment.updatedAt = Date.now();
+      await db.put('scheduleAssignments', assignment);
+      this.showToast(note ? 'Notatka zapisana' : 'Notatka usunięta', 'success');
+      overlay.remove();
+      this.renderScheduleContent();
+    });
+    
+    // Escape
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+  }
+  
+  private async moveAssignmentToShift(assignmentId: string, newShift: 1 | 2 | 3, newProjectId?: string): Promise<void> {
+    const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
+    if (!assignment) return;
     
     const emp = this.state.employees.find(e => e.id === assignment.employeeId);
     const oldShift = assignment.shift;
+    const oldProjectId = assignment.projectId;
     
-    assignment.shift = newShift;
+    // Sprawdź czy coś się zmienia
+    const shiftChanged = assignment.shift !== newShift;
+    const projectChanged = newProjectId && assignment.projectId !== newProjectId;
+    
+    if (!shiftChanged && !projectChanged) return;
+    
+    if (shiftChanged) {
+      assignment.shift = newShift;
+    }
+    if (projectChanged && newProjectId) {
+      assignment.projectId = newProjectId;
+    }
+    
     assignment.updatedAt = Date.now();
     await db.put('scheduleAssignments', assignment);
     
-    this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono Z${oldShift} → Z${newShift}`);
-    this.showToast(`Przeniesiono na zmianę ${newShift}`, 'success');
+    // Log zmiany
+    if (projectChanged && shiftChanged) {
+      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono do innego projektu i Z${oldShift} → Z${newShift}`);
+      this.showToast(`Przeniesiono do innego projektu na zmianę ${newShift}`, 'success');
+    } else if (projectChanged) {
+      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono do innego projektu`);
+      this.showToast(`Przeniesiono do innego projektu`, 'success');
+    } else {
+      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono Z${oldShift} → Z${newShift}`);
+      this.showToast(`Przeniesiono na zmianę ${newShift}`, 'success');
+    }
+    
     this.renderScheduleContent();
     this.renderScheduleEmployeePanel();
   }
@@ -7953,7 +8500,7 @@ class KappaApp {
         
         const shiftAssignments = groupAssignments.filter((a: ScheduleAssignment) => a.shift === s);
         
-        // Renderuj chipy pracowników - większe, z zakresem pracy
+        // Renderuj chipy pracowników - eleganckie karty
         const chipsHtml = shiftAssignments.map((a: ScheduleAssignment) => {
           const emp = this.state.employees.find(e => e.id === a.employeeId);
           if (!emp) return '';
@@ -7961,46 +8508,47 @@ class KappaApp {
           // Pobierz szczegóły zakresu pracy
           let scopeLabel = '';
           let scopeClass = '';
-          let taskDetails: string[] = [];
+          let scopeIcon = '';
           
-          if (a.scope === 'project') {
-            scopeLabel = 'Cały projekt';
-            scopeClass = 'scope-project';
-          } else if (a.scope === 'adhesion') {
+          if (a.scope === 'adhesion') {
             scopeLabel = 'Przyczepność';
             scopeClass = 'scope-adhesion';
+            scopeIcon = '🧪';
           } else if (a.scope === 'audit') {
             scopeLabel = 'Audyt';
             scopeClass = 'scope-audit';
+            scopeIcon = '🔍';
           } else if (a.testId) {
             const test = this.state.tests.find(t => t.id === a.testId);
             scopeLabel = test?.name || 'Test';
             scopeClass = 'scope-test';
+            scopeIcon = '⚙️';
           } else if (a.partId) {
             const part = this.state.parts.find(p => p.id === a.partId);
             scopeLabel = part?.name || 'Część';
             scopeClass = 'scope-part';
+            scopeIcon = '📦';
           }
           
-          const hasDetails = taskDetails.length > 0 || (scopeLabel && scopeLabel !== 'Cały projekt');
+          const initials = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
+          const fullName = `${emp.firstName} ${emp.lastName}`;
+          const hasNote = a.note && a.note.trim().length > 0;
           
           return `
-            <div class="sched-chip ${hasDetails ? 'has-scope' : ''}" 
+            <div class="sched-chip ${hasNote ? 'has-note' : ''}" 
                  style="--chip-color: ${emp.color}" 
                  data-id="${a.id}" 
                  data-employee-id="${emp.id}"
-                 data-assignment='${JSON.stringify({ id: a.id, scope: a.scope, testId: a.testId, partId: a.partId })}'>
+                 data-assignment='${JSON.stringify({ id: a.id, scope: a.scope, testId: a.testId, partId: a.partId, note: a.note || '' })}'>
               <div class="sched-chip-main">
-                <span class="sched-chip-avatar">${emp.firstName.charAt(0)}</span>
-                <span class="sched-chip-name">${emp.firstName}</span>
-                <button class="sched-chip-remove" data-aid="${a.id}">×</button>
-              </div>
-              ${scopeLabel && scopeLabel !== 'Cały projekt' ? `
-                <div class="sched-chip-tasks">
-                  <span class="sched-chip-task ${scopeClass}">${scopeLabel}</span>
-                  ${taskDetails.map(t => `<span class="sched-chip-task">${t}</span>`).join('')}
+                <span class="sched-chip-avatar">${initials}</span>
+                <div class="sched-chip-info">
+                  <span class="sched-chip-name">${fullName}</span>
+                  ${scopeLabel ? `<span class="sched-chip-badge ${scopeClass}">${scopeIcon} ${scopeLabel}</span>` : ''}
                 </div>
-              ` : ''}
+              </div>
+              ${hasNote ? `<span class="sched-chip-note-icon" title="${a.note}">📝</span>` : ''}
+              <button class="sched-chip-remove" data-aid="${a.id}">×</button>
             </div>
           `;
         }).join('');
@@ -8011,17 +8559,31 @@ class KappaApp {
         shiftCell.querySelectorAll('.sched-chip').forEach(chip => {
           chip.addEventListener('click', (e) => {
             if ((e.target as HTMLElement).classList.contains('sched-chip-remove')) return;
+            if ((e.target as HTMLElement).classList.contains('sched-chip-note-icon')) {
+              // Kliknięcie na ikonę notatki - pokaż/edytuj notatkę
+              const assignmentId = (chip as HTMLElement).dataset.id;
+              if (assignmentId) this.showAssignmentNoteModal(assignmentId);
+              return;
+            }
             const empId = (chip as HTMLElement).dataset.employeeId;
             if (empId) this.showEmployeeModal(empId);
           });
           
-          // Drag chip to move between shifts
+          // Prawy klik - edycja notatki
+          chip.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            const assignmentId = (chip as HTMLElement).dataset.id;
+            if (assignmentId) this.showAssignmentNoteModal(assignmentId);
+          });
+          
+          // Drag chip to move between shifts AND projects
           (chip as HTMLElement).draggable = true;
           chip.addEventListener('dragstart', (e) => {
             const assignmentId = (chip as HTMLElement).dataset.id;
             if (assignmentId) {
               (e as DragEvent).dataTransfer?.setData('assignmentId', assignmentId);
               (e as DragEvent).dataTransfer?.setData('sourceShift', String(s));
+              (e as DragEvent).dataTransfer?.setData('sourceProject', groupKey);
             }
             (chip as HTMLElement).classList.add('dragging');
           });
@@ -8040,10 +8602,13 @@ class KappaApp {
           e.preventDefault();
           shiftCell.classList.remove('drag-over');
           
-          // Sprawdź czy to przenoszenie istniejącego chipa
+          // Sprawdź czy to przenoszenie istniejącego chipa (między zmianami lub projektami)
           const assignmentId = (e as DragEvent).dataTransfer?.getData('assignmentId');
           if (assignmentId) {
-            await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3);
+            const sourceProject = (e as DragEvent).dataTransfer?.getData('sourceProject');
+            // Przekaż nowy projekt jeśli różny od źródłowego
+            const newProjectId = sourceProject !== groupKey ? groupKey : undefined;
+            await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3, newProjectId);
             return;
           }
           
@@ -9352,15 +9917,6 @@ class KappaApp {
           <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
           <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
           <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>${i18n.t('schedule.suggestedShift')}:</label>
-        <select id="employeeShift" class="form-control">
-          <option value="" ${!currentShift ? 'selected' : ''}>— ${i18n.t('schedule.noPreference')} —</option>
-          <option value="1" ${currentShift === 1 ? 'selected' : ''}>${i18n.t('schedule.shift')} 1 (${i18n.t('schedule.morning')} 6:00-14:00)</option>
-          <option value="2" ${currentShift === 2 ? 'selected' : ''}>${i18n.t('schedule.shift')} 2 (${i18n.t('schedule.afternoon')} 14:00-22:00)</option>
-          <option value="3" ${currentShift === 3 ? 'selected' : ''}>${i18n.t('schedule.shift')} 3 (${i18n.t('schedule.night')} 22:00-6:00)</option>
         </select>
       </div>
     `;

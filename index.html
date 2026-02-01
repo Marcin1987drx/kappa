@@ -802,90 +802,40 @@
         <div class="sched-topbar">
           <div class="sched-topbar-left">
             <h1 class="sched-title" data-i18n="schedule.title">Grafik</h1>
-            <div class="sched-view-toggle">
-              <button class="sched-view-btn active" data-view="week" title="Tydzień">1T</button>
-              <button class="sched-view-btn" data-view="3week" title="3 tygodnie">3T</button>
-            </div>
-            <div class="sched-week-nav">
-              <button class="sched-nav-btn" id="schedulePrevWeek" aria-label="Poprzedni tydzień">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+
+            <!-- Prosty przełącznik tygodni -->
+            <div class="sched-week-switcher">
+              <button class="sched-week-nav-btn" id="schedulePrevWeek">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
               </button>
-              <div class="sched-week-info">
-                <span class="sched-week-number" id="scheduleWeekLabel">KW05</span>
-                <span class="sched-week-dates" id="scheduleWeekDates">27.01 – 02.02</span>
+              <div class="sched-week-display">
+                <span class="sched-week-kw" id="scheduleWeekLabel">KW05</span>
+                <span class="sched-week-date" id="scheduleWeekDates">26.01 – 01.02</span>
               </div>
-              <button class="sched-nav-btn" id="scheduleNextWeek" aria-label="Następny tydzień">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+              <button class="sched-week-nav-btn" id="scheduleNextWeek">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
               </button>
               <button class="sched-today-btn" id="scheduleToday">Dziś</button>
             </div>
-            <!-- Pasek pokrycia -->
-            <div class="sched-coverage" id="scheduleCoverage" title="Pokrycie pracowników">
-              <div class="sched-coverage-bar">
-                <div class="sched-coverage-fill" id="scheduleCoverageFill"></div>
-              </div>
-              <span class="sched-coverage-text" id="scheduleCoverageText">0/0</span>
-            </div>
           </div>
+          
           <div class="sched-topbar-right">
-            <!-- Mini kalendarz -->
-            <div class="sched-mini-calendar">
-              <button class="sched-mini-calendar-btn" id="toggleMiniCalendar">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/></svg>
-                <span id="miniCalendarMonth">Sty</span>
-              </button>
-              <div class="sched-mini-calendar-dropdown" id="miniCalendarDropdown" style="display: none;"></div>
-            </div>
-            
+            <!-- Przełącznik zmian -->
             <div class="sched-shift-toggle">
               <button class="sched-shift-btn" data-shift="1">1</button>
               <button class="sched-shift-btn active" data-shift="2">2</button>
               <button class="sched-shift-btn" data-shift="3">3</button>
             </div>
             
-            <!-- Historia zmian -->
-            <button class="sched-action-btn" id="toggleHistory" title="Historia zmian">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <!-- Akcje -->
+            <button class="sched-action-btn" id="sendEmailBtn" title="Wyślij grafik mailem">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
             </button>
-            
-            <!-- Kopiuj tydzień -->
-            <button class="sched-action-btn" id="copyWeekBtn" title="Kopiuj tydzień">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-            </button>
-            
-            <!-- Szablony -->
-            <button class="sched-action-btn" id="templatesBtn" title="Szablony grafiku">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
-            </button>
-            
-            <!-- Widok Gantt -->
-            <button class="sched-action-btn" id="ganttViewBtn" title="Wykres obciążenia">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-            </button>
-            
-            <!-- Statystyki -->
-            <button class="sched-action-btn" id="employeeStatsBtn" title="Statystyki pracowników">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><path d="M20 8v6"/><path d="M23 11h-6"/></svg>
-            </button>
-            
-            <!-- Powiadomienia -->
-            <button class="sched-action-btn" id="notificationsBtn" title="Powiadomienia">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/></svg>
-            </button>
-            
-            <!-- Eksport -->
-            <button class="sched-action-btn" id="exportSchedule" title="Eksportuj grafik">
+            <button class="sched-action-btn" id="exportSchedule" title="Eksportuj">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            </button>
-            
-            <button class="sched-action-btn" id="addEmployeeQuick" title="Dodaj pracownika">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
             </button>
           </div>
         </div>
-
-        <!-- Alerty -->
-        <div class="sched-alerts" id="scheduleAlerts"></div>
 
         <!-- Główny Layout -->
         <div class="sched-container">
@@ -897,26 +847,53 @@
             </div>
           </main>
 
-          <!-- Panel Zespołu -->
+          <!-- Panel Boczny - Dashboard -->
           <aside class="sched-sidebar">
+            <!-- Sekcja: Pracownicy przypisani -->
             <div class="sched-panel">
-              <div class="sched-panel-header">
-                <h3 data-i18n="schedule.employees">Zespół</h3>
-                <button class="sched-panel-add" id="addEmployeeQuick" aria-label="Dodaj pracownika">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-                </button>
+              <div class="sched-panel-header sched-panel-header-green">
+                <span class="sched-panel-icon">✓</span>
+                <h3>Przypisani</h3>
+                <span class="sched-panel-count" id="assignedCount">0</span>
               </div>
-              <div class="sched-team-list" id="employeeDragList"></div>
+              <div class="sched-panel-content sched-team-list" id="assignedList"></div>
             </div>
-
-            <div class="sched-panel sched-panel-secondary">
-              <div class="sched-panel-header">
-                <h3 data-i18n="schedule.absences">Nieobecności</h3>
+            
+            <!-- Sekcja: Pracownicy wolni -->
+            <div class="sched-panel">
+              <div class="sched-panel-header sched-panel-header-orange">
+                <span class="sched-panel-icon">⏳</span>
+                <h3>Bez przydziału</h3>
+                <span class="sched-panel-count" id="unassignedCount">0</span>
               </div>
-              <div class="sched-absence-list" id="absenceList">
-                <p class="sched-empty-state">Brak nieobecności w tym tygodniu</p>
-              </div>
+              <div class="sched-panel-content sched-team-list" id="unassignedList"></div>
             </div>
+            
+            <!-- Sekcja: Nieobecni -->
+            <div class="sched-panel">
+              <div class="sched-panel-header sched-panel-header-red">
+                <span class="sched-panel-icon">🏥</span>
+                <h3>Nieobecni</h3>
+                <span class="sched-panel-count" id="absentCount">0</span>
+              </div>
+              <div class="sched-panel-content" id="absentList"></div>
+            </div>
+            
+            <!-- Sekcja: Projekty bez obsady -->
+            <div class="sched-panel">
+              <div class="sched-panel-header sched-panel-header-purple">
+                <span class="sched-panel-icon">⚠️</span>
+                <h3>Projekty bez obsady</h3>
+                <span class="sched-panel-count" id="uncoveredCount">0</span>
+              </div>
+              <div class="sched-panel-content" id="uncoveredProjectsList"></div>
+            </div>
+            
+            <!-- Przycisk dodawania -->
+            <button class="sched-add-employee-btn" id="addEmployeeQuick">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+              Dodaj pracownika
+            </button>
           </aside>
         </div>
       </div>
