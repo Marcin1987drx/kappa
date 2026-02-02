@@ -5723,6 +5723,24 @@ class KappaApp {
     
     document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
     
+    // Filtr pracownika w topbar
+    const employeeFilterTopbar = document.getElementById('scheduleEmployeeFilter') as HTMLSelectElement;
+    if (employeeFilterTopbar) {
+      // Uzupełnij opcje
+      employeeFilterTopbar.innerHTML = '<option value="">Wszyscy pracownicy</option>' + 
+        this.state.employees
+          .filter(e => !e.status || e.status === 'available')
+          .sort((a, b) => a.firstName.localeCompare(b.firstName))
+          .map(e => `<option value="${e.id}" ${e.id === this.scheduleFilterEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`)
+          .join('');
+      
+      employeeFilterTopbar.addEventListener('change', (e) => {
+        this.scheduleFilterEmployee = (e.target as HTMLSelectElement).value;
+        this.renderScheduleContent();
+        this.renderScheduleEmployeePanel();
+      });
+    }
+    
     // Filtry
     document.getElementById('filterEmployee')?.addEventListener('change', (e) => {
       this.scheduleFilterEmployee = (e.target as HTMLSelectElement).value;
@@ -6959,47 +6977,122 @@ class KappaApp {
       }
     }
     
-    // 4. Projekty bez obsady
+    // 4. Projekty bez obsady - pokazuj tylko te które nie są w pełni obsadzone
     if (uncoveredList) {
-      // Znajdź projekty z SOLL w tym tygodniu bez przypisań
+      // Grupuj projekty wg Customer + Type
+      const projectGroups = new Map<string, {
+        customerName: string;
+        typeName: string;
+        customerId: string;
+        items: Project[];
+      }>();
+      
       const projectsWithSoll = this.state.projects.filter(p => {
         if (p.hidden) return false;
         const weekData = p.weeks[weekKey];
         return weekData && weekData.soll > 0;
       });
       
-      const uncoveredProjects = projectsWithSoll.filter(p => {
-        const groupKey = `${p.customer_id}-${p.type_id}`;
-        const hasAssignment = weekAssignments.some((a: ScheduleAssignment) => 
-          a.projectId === groupKey || a.projectId === p.id
-        );
-        return !hasAssignment;
-      });
-      
-      // Grupuj po kliencie
-      const grouped = new Map<string, { customer: string; types: string[] }>();
-      uncoveredProjects.forEach(p => {
+      projectsWithSoll.forEach(p => {
         const customer = this.state.customers.find(c => c.id === p.customer_id);
         const type = this.state.types.find(t => t.id === p.type_id);
-        const custName = customer?.name || '?';
-        if (!grouped.has(custName)) {
-          grouped.set(custName, { customer: custName, types: [] });
+        const groupKey = `${p.customer_id}-${p.type_id}`;
+        
+        if (!projectGroups.has(groupKey)) {
+          projectGroups.set(groupKey, {
+            customerName: customer?.name || '?',
+            typeName: type?.name || '?',
+            customerId: p.customer_id,
+            items: []
+          });
         }
-        const typeName = type?.name || '?';
-        if (!grouped.get(custName)!.types.includes(typeName)) {
-          grouped.get(custName)!.types.push(typeName);
+        projectGroups.get(groupKey)!.items.push(p);
+      });
+      
+      // Sprawdź które grupy nie są w pełni obsadzone
+      const uncoveredGroupsList: Array<{
+        customer: string;
+        type: string;
+        missing: string[];
+        staffingClass: string;
+      }> = [];
+      
+      projectGroups.forEach((group, groupKey) => {
+        const groupAssignments = weekAssignments.filter((a: ScheduleAssignment) =>
+          a.projectId === groupKey || group.items.some(item => item.id === a.projectId)
+        );
+        
+        const status = this.getProjectStaffingStatus(groupKey, group.items, groupAssignments);
+        
+        // Tylko dodaj jeśli NIE jest w pełni obsadzony
+        if (status.class !== 'staffing-full') {
+          // Znajdź brakujące testy
+          const uniqueTestIds = new Set<string>();
+          group.items.forEach(p => {
+            if (p.test_id) uniqueTestIds.add(p.test_id);
+          });
+          
+          const coveredTestIds = new Set<string>();
+          const hasProjectScope = groupAssignments.some((a: ScheduleAssignment) => a.scope === 'project');
+          
+          if (!hasProjectScope) {
+            groupAssignments.forEach((a: ScheduleAssignment) => {
+              if (a.scope === 'specific' && a.testId) {
+                coveredTestIds.add(a.testId);
+              } else if (a.scope === 'audit') {
+                group.items.forEach(p => {
+                  const test = this.state.tests.find(t => t.id === p.test_id);
+                  if (test?.name?.toLowerCase().includes('audit') || test?.name?.toLowerCase().includes('audyt')) {
+                    coveredTestIds.add(p.test_id);
+                  }
+                });
+              } else if (a.scope === 'adhesion') {
+                group.items.forEach(p => {
+                  const test = this.state.tests.find(t => t.id === p.test_id);
+                  if (test?.name?.toLowerCase().includes('peel') || 
+                      test?.name?.toLowerCase().includes('adhesion') ||
+                      test?.name?.toLowerCase().includes('przyczep')) {
+                    coveredTestIds.add(p.test_id);
+                  }
+                });
+              }
+            });
+          }
+          
+          const missingTests = Array.from(uniqueTestIds)
+            .filter(id => !coveredTestIds.has(id))
+            .map(id => this.state.tests.find(t => t.id === id)?.name || '?');
+          
+          uncoveredGroupsList.push({
+            customer: group.customerName,
+            type: group.typeName,
+            missing: missingTests,
+            staffingClass: status.class
+          });
         }
       });
       
-      document.getElementById('uncoveredCount')!.textContent = String(grouped.size);
+      document.getElementById('uncoveredCount')!.textContent = String(uncoveredGroupsList.length);
       
-      if (grouped.size === 0) {
+      if (uncoveredGroupsList.length === 0) {
         uncoveredList.innerHTML = '<p class="sched-panel-empty">Wszystko obsadzone ✓</p>';
       } else {
-        uncoveredList.innerHTML = Array.from(grouped.entries()).map(([_, g]) => `
-          <div class="sched-uncovered-item">
-            <span class="sched-uncovered-customer">${g.customer}</span>
-            <span class="sched-uncovered-types">${g.types.join(', ')}</span>
+        uncoveredList.innerHTML = uncoveredGroupsList.map(g => `
+          <div class="sched-uncovered-item ${g.staffingClass}">
+            <div class="sched-uncovered-header">
+              <span class="sched-uncovered-customer">${g.customer}</span>
+              <span class="sched-uncovered-type">${g.type}</span>
+            </div>
+            ${g.missing.length > 0 ? `
+              <div class="sched-uncovered-missing">
+                <span class="sched-uncovered-label">Brakuje:</span>
+                ${g.missing.map(m => `<span class="sched-uncovered-test">${m}</span>`).join('')}
+              </div>
+            ` : `
+              <div class="sched-uncovered-missing">
+                <span class="sched-uncovered-label">Brak obsady</span>
+              </div>
+            `}
           </div>
         `).join('');
       }
@@ -7220,6 +7313,156 @@ class KappaApp {
     document.querySelector('.sched-employee-popup')?.remove();
   }
   
+  // Hover popup dla projektu
+  private showProjectHoverPopup(
+    event: MouseEvent, 
+    groupKey: string, 
+    group: { customerName: string; typeName: string; customerId: string; items: Project[] },
+    assignments: ScheduleAssignment[],
+    staffingStatus: { class: string; icon: string; tooltip: string }
+  ): void {
+    this.hideProjectHoverPopup();
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Zbierz informacje o pracownikach przypisanych
+    const employeesByShift = new Map<number, Array<{ name: string; scope: string; color: string }>>();
+    
+    assignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (!emp) return;
+      
+      if (!employeesByShift.has(a.shift)) {
+        employeesByShift.set(a.shift, []);
+      }
+      
+      let scopeLabel = '';
+      if (a.scope === 'adhesion') scopeLabel = 'Przyczepność';
+      else if (a.scope === 'audit') scopeLabel = 'Audyt';
+      else if (a.scope === 'project') scopeLabel = 'Cały projekt';
+      else if (a.testId) {
+        const test = this.state.tests.find(t => t.id === a.testId);
+        scopeLabel = test?.name || 'Test';
+      }
+      
+      employeesByShift.get(a.shift)!.push({
+        name: `${emp.firstName} ${emp.lastName}`,
+        scope: scopeLabel,
+        color: emp.color
+      });
+    });
+    
+    // Zbierz wszystkie testy w tym projekcie
+    const uniqueTests = new Map<string, { name: string; covered: boolean }>();
+    group.items.forEach(p => {
+      if (p.test_id) {
+        const test = this.state.tests.find(t => t.id === p.test_id);
+        if (test) {
+          const isCovered = assignments.some(a => 
+            a.scope === 'project' || 
+            a.testId === test.id ||
+            (a.scope === 'audit' && (test.name.toLowerCase().includes('audit') || test.name.toLowerCase().includes('audyt'))) ||
+            (a.scope === 'adhesion' && (test.name.toLowerCase().includes('peel') || test.name.toLowerCase().includes('adhesion') || test.name.toLowerCase().includes('przyczep')))
+          );
+          uniqueTests.set(test.id, { name: test.name, covered: isCovered });
+        }
+      }
+    });
+    
+    // Oblicz SOLL dla tego projektu
+    let totalSoll = 0;
+    let totalIst = 0;
+    group.items.forEach(p => {
+      const weekData = p.weeks[weekKey];
+      if (weekData) {
+        totalSoll += weekData.soll || 0;
+        totalIst += weekData.ist || 0;
+      }
+    });
+    
+    const popup = document.createElement('div');
+    popup.className = 'sched-project-popup';
+    
+    // Kolor nagłówka zależny od statusu
+    const headerColor = staffingStatus.class === 'staffing-full' ? '#10b981' : 
+                        staffingStatus.class === 'staffing-partial' ? '#f59e0b' : '#94a3b8';
+    
+    popup.innerHTML = `
+      <div class="sched-popup-header" style="background: ${headerColor}">
+        <span class="sched-popup-avatar">${group.customerName.charAt(0)}</span>
+        <div class="sched-popup-project-info">
+          <span class="sched-popup-name">${group.customerName}</span>
+          <span class="sched-popup-type-label">${group.typeName}</span>
+        </div>
+        <span class="sched-popup-status-icon">${staffingStatus.icon}</span>
+      </div>
+      <div class="sched-popup-content">
+        <div class="sched-popup-week">KW${this.scheduleCurrentWeek} • SOLL: ${totalSoll} | IST: ${totalIst}</div>
+        
+        ${uniqueTests.size > 0 ? `
+          <div class="sched-popup-tests">
+            <div class="sched-popup-section-title">Testy:</div>
+            ${Array.from(uniqueTests.values()).map(t => `
+              <span class="sched-popup-test ${t.covered ? 'covered' : 'uncovered'}">
+                ${t.covered ? '✓' : '○'} ${t.name}
+              </span>
+            `).join('')}
+          </div>
+        ` : ''}
+        
+        ${employeesByShift.size > 0 ? `
+          <div class="sched-popup-employees">
+            <div class="sched-popup-section-title">Obsada:</div>
+            ${[1, 2, 3].filter(s => employeesByShift.has(s)).map(s => `
+              <div class="sched-popup-shift-group">
+                <span class="sched-popup-shift-label">Z${s}:</span>
+                ${employeesByShift.get(s)!.map(e => `
+                  <span class="sched-popup-emp-chip" style="--emp-color: ${e.color}">
+                    ${e.name}${e.scope ? ` (${e.scope})` : ''}
+                  </span>
+                `).join('')}
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div class="sched-popup-no-staff">
+            <span class="sched-popup-warning">⚠️ Brak przypisanych pracowników</span>
+          </div>
+        `}
+        
+        ${staffingStatus.class === 'staffing-partial' ? `
+          <div class="sched-popup-missing">
+            <span class="sched-popup-missing-label">⚠️ ${staffingStatus.tooltip}</span>
+          </div>
+        ` : ''}
+      </div>
+    `;
+    
+    document.body.appendChild(popup);
+    
+    // Pozycjonowanie
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    
+    let left = rect.right + 8;
+    let top = rect.top;
+    
+    if (left + popupRect.width > window.innerWidth) {
+      left = rect.left - popupRect.width - 8;
+    }
+    if (top + popupRect.height > window.innerHeight) {
+      top = window.innerHeight - popupRect.height - 8;
+    }
+    if (top < 10) top = 10;
+    
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+  }
+  
+  private hideProjectHoverPopup(): void {
+    document.querySelector('.sched-project-popup')?.remove();
+  }
+
   // Modal pracownika z pełnym grafikiem
   private showEmployeeModal(employeeId: string): void {
     const emp = this.state.employees.find(e => e.id === employeeId);
@@ -8409,35 +8652,113 @@ class KappaApp {
     });
   }
   
-  // Modal do edycji notatki przypisania
+  // Modal do edycji notatki przypisania - nowy design jak na zdjęciu
   private showAssignmentNoteModal(assignmentId: string): void {
     const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
     if (!assignment) return;
     
     const emp = this.state.employees.find(e => e.id === assignment.employeeId);
-    const project = this.state.projects.find(p => p.id === assignment.projectId);
+    const project = this.state.projects.find(p => p.id === assignment.projectId || `${p.customer_id}-${p.type_id}` === assignment.projectId);
     const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
     const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+    
+    // Pobierz istniejące odpowiedzi z notatki (format: główna notatka\n---REPLIES---\njson)
+    let mainNote = assignment.note || '';
+    let replies: Array<{text: string; date: string; author: string}> = [];
+    
+    if (mainNote.includes('---REPLIES---')) {
+      const parts = mainNote.split('---REPLIES---');
+      mainNote = parts[0].trim();
+      try {
+        replies = JSON.parse(parts[1]);
+      } catch (e) {
+        replies = [];
+      }
+    }
     
     const overlay = document.createElement('div');
     overlay.className = 'note-modal-overlay';
     overlay.innerHTML = `
-      <div class="note-modal">
+      <div class="note-modal note-modal-modern">
         <div class="note-modal-header">
-          <h3>📝 Notatka</h3>
+          <div class="note-modal-header-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="16" y1="13" x2="8" y2="13"/>
+              <line x1="16" y1="17" x2="8" y2="17"/>
+            </svg>
+          </div>
+          <h3>Notatka</h3>
           <button class="note-modal-close">×</button>
         </div>
+        
         <div class="note-modal-info">
-          <span class="note-modal-employee" style="--emp-color: ${emp?.color || '#64748b'}">
+          <div class="note-info-tag note-info-employee" style="--emp-color: ${emp?.color || '#64748b'}">
             ${emp?.firstName} ${emp?.lastName}
-          </span>
-          <span class="note-modal-project">${customer?.name || '?'} / ${type?.name || '?'}</span>
-          <span class="note-modal-shift">Zmiana ${assignment.shift}</span>
+          </div>
+          <div class="note-info-tag note-info-project">
+            ${customer?.name || '?'} / ${type?.name || '?'}
+          </div>
+          <div class="note-info-tag note-info-shift">
+            Zmiana ${assignment.shift}
+          </div>
         </div>
-        <textarea class="note-modal-textarea" placeholder="Wpisz notatkę dla tego przypisania...">${assignment.note || ''}</textarea>
+        
+        <div class="note-modal-body">
+          <textarea class="note-modal-textarea" placeholder="Wpisz notatkę...">${mainNote}</textarea>
+          
+          ${replies.length > 0 ? `
+            <div class="note-replies-section">
+              <div class="note-replies-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <polyline points="9 17 4 12 9 7"/>
+                  <path d="M20 18v-2a4 4 0 0 0-4-4H4"/>
+                </svg>
+                Odpowiedzi (${replies.length})
+              </div>
+              <div class="note-replies-list">
+                ${replies.map((r, i) => `
+                  <div class="note-reply-item">
+                    <div class="note-reply-header">
+                      <span class="note-reply-author">${r.author}</span>
+                      <span class="note-reply-date">${r.date}</span>
+                      <button class="note-reply-delete" data-index="${i}" title="Usuń odpowiedź">×</button>
+                    </div>
+                    <div class="note-reply-text">${r.text}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          
+          <div class="note-add-reply">
+            <div class="note-reply-input-wrapper">
+              <input type="text" class="note-reply-input" placeholder="Dodaj odpowiedź...">
+              <button class="note-reply-submit" title="Dodaj odpowiedź">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <line x1="22" y1="2" x2="11" y2="13"/>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        
         <div class="note-modal-actions">
-          <button class="note-modal-cancel">Anuluj</button>
-          <button class="note-modal-save">Zapisz</button>
+          ${mainNote || replies.length > 0 ? `
+            <button class="note-modal-delete">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              Usuń
+            </button>
+          ` : ''}
+          <div class="note-modal-actions-right">
+            <button class="note-modal-cancel">Anuluj</button>
+            <button class="note-modal-save">Zapisz</button>
+          </div>
         </div>
       </div>
     `;
@@ -8446,7 +8767,6 @@ class KappaApp {
     
     const textarea = overlay.querySelector('.note-modal-textarea') as HTMLTextAreaElement;
     textarea.focus();
-    textarea.setSelectionRange(textarea.value.length, textarea.value.length);
     
     // Zamykanie
     overlay.querySelector('.note-modal-close')?.addEventListener('click', () => overlay.remove());
@@ -8455,13 +8775,71 @@ class KappaApp {
       if (e.target === overlay) overlay.remove();
     });
     
+    // Dodawanie odpowiedzi
+    const replyInput = overlay.querySelector('.note-reply-input') as HTMLInputElement;
+    const submitReply = async () => {
+      const replyText = replyInput.value.trim();
+      if (!replyText) return;
+      
+      replies.push({
+        text: replyText,
+        date: new Date().toLocaleDateString('pl-PL'),
+        author: this.state.settings.userName || 'Użytkownik'
+      });
+      
+      // Zapisz natychmiast do bazy
+      const newNote = mainNote + '\n---REPLIES---\n' + JSON.stringify(replies);
+      assignment.note = newNote;
+      assignment.updatedAt = Date.now();
+      await db.put('scheduleAssignments', assignment);
+      
+      // Odśwież modal
+      overlay.remove();
+      this.showAssignmentNoteModal(assignmentId);
+      this.showToast('Odpowiedź dodana', 'success');
+    };
+    
+    overlay.querySelector('.note-reply-submit')?.addEventListener('click', submitReply);
+    replyInput?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') submitReply();
+    });
+    
+    // Usuwanie odpowiedzi
+    overlay.querySelectorAll('.note-reply-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const index = parseInt((btn as HTMLElement).dataset.index || '0');
+        replies.splice(index, 1);
+        
+        // Zapisz natychmiast do bazy
+        const newNote = textarea.value.trim() + (replies.length > 0 ? '\n---REPLIES---\n' + JSON.stringify(replies) : '');
+        assignment.note = newNote || undefined;
+        assignment.updatedAt = Date.now();
+        await db.put('scheduleAssignments', assignment);
+        
+        overlay.remove();
+        this.showAssignmentNoteModal(assignmentId);
+        this.showToast('Odpowiedź usunięta', 'success');
+      });
+    });
+    
+    // Usuwanie całej notatki
+    overlay.querySelector('.note-modal-delete')?.addEventListener('click', async () => {
+      assignment.note = undefined;
+      assignment.updatedAt = Date.now();
+      await db.put('scheduleAssignments', assignment);
+      this.showToast('Notatka usunięta', 'success');
+      overlay.remove();
+      this.renderScheduleContent();
+    });
+    
     // Zapisywanie
     overlay.querySelector('.note-modal-save')?.addEventListener('click', async () => {
       const note = textarea.value.trim();
-      assignment.note = note || undefined;
+      const fullNote = note + (replies.length > 0 ? '\n---REPLIES---\n' + JSON.stringify(replies) : '');
+      assignment.note = fullNote || undefined;
       assignment.updatedAt = Date.now();
       await db.put('scheduleAssignments', assignment);
-      this.showToast(note ? 'Notatka zapisana' : 'Notatka usunięta', 'success');
+      this.showToast(fullNote ? 'Notatka zapisana' : 'Notatka usunięta', 'success');
       overlay.remove();
       this.renderScheduleContent();
     });
@@ -8534,6 +8912,13 @@ class KappaApp {
         ? '<svg class="sort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="6 9 12 15 18 9"/></svg>'
         : '');
     
+    // Ikony dla zmian - słońce, zachód słońca, księżyc
+    const shiftIcons = [
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="4" fill="currentColor"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M12 10V2M4.93 10.93l1.41-1.41M2 18h2M20 18h2M19.07 10.93l-1.41-1.41"/><path d="M17 18a5 5 0 1 0-10 0" fill="currentColor"/><line x1="2" y1="22" x2="22" y2="22"/></svg>',
+      '<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1" width="20" height="20"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+    ];
+    
     headerContainer.className = `sched-table-header shifts-${this.scheduleShiftSystem}`;
     headerContainer.innerHTML = `
       <div class="sched-header-cell sched-project-col sortable ${this.scheduleSortMode !== 'default' ? 'sorted' : ''}" id="schedProjectColHeader">
@@ -8542,6 +8927,7 @@ class KappaApp {
       </div>
       ${Array.from({ length: this.scheduleShiftSystem }, (_, i) => `
         <div class="sched-header-cell sched-shift-col shift-${i + 1}">
+          <div class="shift-icon-wrapper">${shiftIcons[i]}</div>
           <span class="sched-shift-num">${i + 1}</span>
           <span class="sched-shift-name">${shiftNames[i]}</span>
           <span class="sched-shift-hours">${shiftHours[i]}</span>
@@ -8649,27 +9035,52 @@ class KappaApp {
       projectRow.className = `sched-row shifts-${this.scheduleShiftSystem}`;
       projectRow.dataset.groupKey = groupKey;
       
-      // Pobierz komentarz dla tego projektu
+      // Pobierz komentarz dla tego projektu i policz odpowiedzi
       const projectComment = this.getProjectComment(groupKey, weekKey);
       const isPinned = this.pinnedScheduleProjects?.has(groupKey) || false;
       
+      // Parsuj komentarz - oddziel główny komentarz od odpowiedzi
+      let mainCommentText = projectComment || '';
+      let projectRepliesCount = 0;
+      if (mainCommentText.includes('---REPLIES---')) {
+        const parts = mainCommentText.split('---REPLIES---');
+        mainCommentText = parts[0].trim();
+        try {
+          const parsedReplies = JSON.parse(parts[1]);
+          projectRepliesCount = Array.isArray(parsedReplies) ? parsedReplies.length : 0;
+        } catch (e) { projectRepliesCount = 0; }
+      }
+      
+      const hasProjectComment = mainCommentText.length > 0 || projectRepliesCount > 0;
+      const commentPreviewText = mainCommentText.length > 30 ? mainCommentText.slice(0, 30) + '...' : mainCommentText;
+      
+      // Sprawdź status obsadzenia projektu
+      const staffingStatus = this.getProjectStaffingStatus(groupKey, group.items, groupAssignments);
+      const repliesBadgeHtml = projectRepliesCount > 0 ? `<span class="project-replies-badge">${projectRepliesCount}</span>` : '';
+      
       // Komórka projektu z przyciskami akcji
       const projectCell = document.createElement('div');
-      projectCell.className = `sched-project-cell ${projectComment ? 'has-comment' : ''}`;
+      projectCell.className = `sched-project-cell ${hasProjectComment ? 'has-comment' : ''} ${staffingStatus.class}`;
       projectCell.innerHTML = `
         <div class="sched-project-info">
           <button class="sched-project-pin ${isPinned ? 'pinned' : ''}" data-group="${groupKey}" title="${isPinned ? 'Odepnij' : 'Przypnij'}">
             <svg viewBox="0 0 24 24" fill="${isPinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
           </button>
+          <span class="sched-staffing-indicator ${staffingStatus.class}" title="${staffingStatus.tooltip}">
+            ${staffingStatus.icon}
+          </span>
           <div class="sched-project-text">
             <span class="sched-project-customer">${group.customerName}</span>
             <span class="sched-project-type">${group.typeName}</span>
-            ${projectComment ? `<span class="sched-project-comment-preview" data-full-comment="${projectComment.replace(/"/g, '&quot;')}">${projectComment.length > 30 ? projectComment.slice(0, 30) + '...' : projectComment}</span>` : ''}
+            ${mainCommentText ? `<span class="sched-project-comment-preview" data-full-comment="${mainCommentText.replace(/"/g, '&quot;')}">${commentPreviewText}</span>` : ''}
           </div>
         </div>
-        <button class="sched-project-comment-btn ${projectComment ? 'has-comment' : ''}" data-group="${groupKey}" title="${projectComment ? 'Edytuj komentarz' : 'Dodaj komentarz'}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        </button>
+        <div class="sched-project-actions">
+          <button class="sched-project-comment-btn ${hasProjectComment ? 'has-comment' : ''}" data-group="${groupKey}" title="${hasProjectComment ? 'Edytuj komentarz' : 'Dodaj komentarz'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+            ${repliesBadgeHtml}
+          </button>
+        </div>
       `;
       
       // Event listeners dla przycisków
@@ -8678,10 +9089,23 @@ class KappaApp {
         this.toggleScheduleProjectPin(groupKey);
       });
       
-      projectCell.querySelector('.sched-project-comment-btn')?.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.showProjectCommentModal(groupKey, weekKey, projectComment);
-      });
+      const commentBtn = projectCell.querySelector('.sched-project-comment-btn');
+      if (commentBtn) {
+        commentBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.showProjectCommentModal(groupKey, weekKey, projectComment);
+        });
+        
+        // Hover popup na przycisk komentarza pokazuje podgląd
+        if (hasProjectComment) {
+          commentBtn.addEventListener('mouseenter', (e) => {
+            this.showProjectCommentHoverPopup(e as MouseEvent, groupKey, weekKey, projectComment || '');
+          });
+          commentBtn.addEventListener('mouseleave', () => {
+            this.hideProjectCommentHoverPopup();
+          });
+        }
+      }
       
       // Hover popup dla pełnego komentarza
       const commentPreview = projectCell.querySelector('.sched-project-comment-preview');
@@ -8694,6 +9118,17 @@ class KappaApp {
         });
         commentPreview.addEventListener('mouseleave', () => {
           this.hideCommentPopup();
+        });
+      }
+      
+      // Hover popup dla projektu (podobny do pracownika)
+      const projectText = projectCell.querySelector('.sched-project-text');
+      if (projectText) {
+        projectText.addEventListener('mouseenter', (e) => {
+          this.showProjectHoverPopup(e as MouseEvent, groupKey, group, groupAssignments, staffingStatus);
+        });
+        projectText.addEventListener('mouseleave', () => {
+          this.hideProjectHoverPopup();
         });
       }
       
@@ -8738,10 +9173,23 @@ class KappaApp {
           
           const initials = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
           const fullName = `${emp.firstName} ${emp.lastName}`;
-          const hasNote = a.note && a.note.trim().length > 0;
-          const noteText = a.note || '';
-          const notePreview = noteText.length > 20 ? noteText.slice(0, 20) + '...' : noteText;
+          
+          // Parsowanie notatki - oddziel główną notatkę od odpowiedzi
+          let mainNoteText = a.note || '';
+          let repliesCount = 0;
+          if (mainNoteText.includes('---REPLIES---')) {
+            const parts = mainNoteText.split('---REPLIES---');
+            mainNoteText = parts[0].trim();
+            try {
+              const parsedReplies = JSON.parse(parts[1]);
+              repliesCount = Array.isArray(parsedReplies) ? parsedReplies.length : 0;
+            } catch (e) { repliesCount = 0; }
+          }
+          
+          const hasNote = mainNoteText.length > 0 || repliesCount > 0;
+          const notePreview = mainNoteText.length > 15 ? mainNoteText.slice(0, 15) + '...' : mainNoteText;
           const commentIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+          const repliesBadge = repliesCount > 0 ? `<span class="chip-replies-badge">${repliesCount}</span>` : '';
           
           return `
             <div class="sched-chip ${hasNote ? 'has-note' : ''}" 
@@ -8754,8 +9202,9 @@ class KappaApp {
                 <div class="sched-chip-info">
                   <span class="sched-chip-name">${fullName}</span>
                   ${scopeLabel ? `<span class="sched-chip-badge ${scopeClass}">${scopeIcon} ${scopeLabel}</span>` : ''}
-                  ${hasNote ? `<span class="sched-chip-note-preview" data-full-note="${noteText.replace(/"/g, '&quot;')}">${notePreview}</span>` : ''}
+                  ${mainNoteText ? `<span class="sched-chip-note-preview" data-full-note="${mainNoteText.replace(/"/g, '&quot;')}">${notePreview}</span>` : ''}
                 </div>
+                ${repliesBadge}
               </div>
               <button class="sched-chip-comment-btn ${hasNote ? 'has-comment' : ''}" data-aid="${a.id}" title="${hasNote ? 'Edytuj komentarz' : 'Dodaj komentarz'}">
                 ${commentIcon}
@@ -8796,6 +9245,33 @@ class KappaApp {
             const empId = (chip as HTMLElement).dataset.employeeId;
             if (empId) this.showEmployeeModal(empId);
           });
+          
+          // Hover na chipie - pokaż popup z notatką
+          const chipData = (chip as HTMLElement).dataset.assignment;
+          if (chipData) {
+            try {
+              const assignmentData = JSON.parse(chipData);
+              if (assignmentData.note) {
+                let hoverTimeout: number | null = null;
+                
+                chip.addEventListener('mouseenter', (e) => {
+                  if (hoverTimeout) { clearTimeout(hoverTimeout); hoverTimeout = null; }
+                  const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentData.id);
+                  const employee = this.state.employees.find(emp => emp.id === (chip as HTMLElement).dataset.employeeId);
+                  if (assignment && employee) {
+                    this.showChipNotePopup(e as MouseEvent, assignment, employee);
+                  }
+                });
+                
+                chip.addEventListener('mouseleave', () => {
+                  hoverTimeout = window.setTimeout(() => {
+                    const popup = document.querySelector('.chip-note-popup');
+                    if (popup && !popup.matches(':hover')) popup.remove();
+                  }, 400);
+                });
+              }
+            } catch (err) {}
+          }
           
           // Prawy klik - edycja notatki
           chip.addEventListener('contextmenu', (e) => {
@@ -8896,6 +9372,22 @@ class KappaApp {
     testId?: string,
     partId?: string
   ): Promise<void> {
+    // Sprawdź czy taki sam przypisanie już istnieje (blokada duplikatów)
+    const existingAssignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) =>
+      a.projectId === projectId &&
+      a.employeeId === employeeId &&
+      a.week === week &&
+      a.shift === shift &&
+      a.scope === scope &&
+      a.testId === testId &&
+      a.partId === partId
+    );
+    
+    if (existingAssignment) {
+      this.showToast('Ten pracownik jest już przypisany do tego zakresu!', 'warning');
+      return;
+    }
+    
     const assignment: ScheduleAssignment = {
       id: crypto.randomUUID(),
       projectId,
@@ -9173,14 +9665,27 @@ class KappaApp {
     
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     
-    // Render modern header
+    // Ikony SVG dla zmian
+    const shiftIcons = [
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`,
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/><path d="M12 7a5 5 0 0 0 0 10" fill="currentColor" opacity="0.3"/></svg>`,
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
+    ];
+    const shiftColors = ['#f59e0b', '#3b82f6', '#6366f1'];
+    
+    // Render modern header with icons
     headerContainer.className = `grid-header shifts-${this.scheduleShiftSystem}`;
     let headerHtml = '<div class="header-cell project-col">Projekt / Test</div>';
     for (let s = 1; s <= this.scheduleShiftSystem; s++) {
       const shiftLabels = ['Poranek', 'Popołudnie', 'Noc'];
-      headerHtml += `<div class="header-cell shift-col shift-${s}">
-        <span class="shift-number">${s}</span>
-        <span class="shift-name">${shiftLabels[s-1] || `Zmiana ${s}`}</span>
+      const shiftTimes = ['6:00-14:00', '14:00-22:00', '22:00-6:00'];
+      headerHtml += `<div class="header-cell shift-col shift-${s}" style="--shift-color: ${shiftColors[s-1]}">
+        <span class="shift-icon">${shiftIcons[s-1]}</span>
+        <div class="shift-info">
+          <span class="shift-number">${s}</span>
+          <span class="shift-name">${shiftLabels[s-1] || `Zmiana ${s}`}</span>
+          <span class="shift-time">${shiftTimes[s-1]}</span>
+        </div>
       </div>`;
     }
     headerContainer.innerHTML = headerHtml;
@@ -9253,14 +9758,41 @@ class KappaApp {
         a.week === weekKey
       );
       
+      // Filtruj po wybranym pracowniku
+      if (this.scheduleFilterEmployee) {
+        const hasSelectedEmployee = groupAssignments.some(a => a.employeeId === this.scheduleFilterEmployee);
+        if (!hasSelectedEmployee) return; // Pomiń projekt jeśli nie ma wybranego pracownika
+      }
+      
       // Get specific assignments (not project-level) to show in summary
       const specificAssignments = groupAssignments.filter((a: ScheduleAssignment) => 
         a.scope === 'audit' || a.scope === 'adhesion' || a.scope === 'specific'
       );
       
+      // Oblicz pokrycie projektu - sprawdź jakie zakresy są obsadzone
+      const hasProjectLevel = groupAssignments.some(a => !a.scope || a.scope === 'project');
+      const hasAudit = groupAssignments.some(a => a.scope === 'audit');
+      const hasAdhesion = groupAssignments.some(a => a.scope === 'adhesion');
+      const hasSpecific = groupAssignments.some(a => a.scope === 'specific');
+      
+      // Określ status pokrycia
+      let coverageStatus = 'uncovered'; // brak obsady
+      let coverageLabel = '';
+      let missingScopes: string[] = [];
+      
+      if (hasProjectLevel) {
+        coverageStatus = 'full'; // pełna obsada
+        coverageLabel = '✓ Obsadzony';
+      } else if (hasAudit || hasAdhesion || hasSpecific) {
+        coverageStatus = 'partial'; // częściowa obsada
+        if (!hasAudit) missingScopes.push('Audyty');
+        if (!hasAdhesion) missingScopes.push('Przyczepność');
+        coverageLabel = `⚠ Częściowo`;
+      }
+      
       // Create project card
       const projectCard = document.createElement('div');
-      projectCard.className = 'project-card';
+      projectCard.className = `project-card coverage-${coverageStatus}`;
       
       // Project header row
       const projectHeader = document.createElement('div');
@@ -9269,6 +9801,19 @@ class KappaApp {
       // Project info cell
       const projectInfo = document.createElement('div');
       projectInfo.className = 'project-info-cell';
+      
+      const coverageBadge = coverageStatus === 'partial' 
+        ? `<span class="badge badge-partial" title="Brakuje: ${missingScopes.join(', ')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            ${coverageLabel}
+           </span>`
+        : coverageStatus === 'full'
+        ? `<span class="badge badge-full">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="20 6 9 17 4 12"/></svg>
+            ${coverageLabel}
+           </span>`
+        : '';
+      
       projectInfo.innerHTML = `
         <button class="expand-btn">
           <svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
@@ -9282,7 +9827,8 @@ class KappaApp {
         <div class="project-badges">
           <span class="badge badge-parts">${partsCount} ${partsCount === 1 ? 'część' : partsCount < 5 ? 'części' : 'części'}</span>
           <span class="badge badge-soll">SOLL: ${projectGroup.totalSoll}</span>
-          ${comment ? `<span class="badge badge-comment" title="${comment}">📝</span>` : ''}
+          ${coverageBadge}
+          ${comment ? `<span class="badge badge-comment has-hover" data-comment="${comment.replace(/"/g, '&quot;')}" data-project="${groupKey}" data-week="${weekKey}">📝</span>` : ''}
         </div>
         <button class="btn-comment ${comment ? 'has-comment' : ''}" title="Dodaj komentarz">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
@@ -9290,6 +9836,22 @@ class KappaApp {
           </svg>
         </button>
       `;
+      
+      // Hover popup for comments
+      const commentBadge = projectInfo.querySelector('.badge-comment.has-hover');
+      if (commentBadge) {
+        commentBadge.addEventListener('mouseenter', (e) => {
+          const badge = e.target as HTMLElement;
+          this.showCommentHoverPopup(badge, comment || '', groupKey, weekKey);
+        });
+        commentBadge.addEventListener('mouseleave', () => {
+          // Delay removal to allow clicking inside popup
+          setTimeout(() => {
+            const popup = document.querySelector('.comment-hover-popup:not(:hover)');
+            if (popup) popup.remove();
+          }, 200);
+        });
+      }
       
       // Toggle expansion
       const expandBtn = projectInfo.querySelector('.expand-btn');
@@ -9320,16 +9882,48 @@ class KappaApp {
           const emp = this.state.employees.find(e => e.id === assignment.employeeId);
           if (!emp) return;
           
+          // Pobierz notatkę bez odpowiedzi
+          let noteDisplay = assignment.note || '';
+          if (noteDisplay.includes('---REPLIES---')) {
+            noteDisplay = noteDisplay.split('---REPLIES---')[0].trim();
+          }
+          
           const chip = document.createElement('div');
-          chip.className = 'assignment-chip scope-project';
+          chip.className = `assignment-chip scope-project ${assignment.note ? 'has-note' : ''}`;
           chip.style.setProperty('--emp-color', emp.color);
+          chip.dataset.assignmentId = assignment.id;
           chip.innerHTML = `
             <span class="chip-badge">P</span>
             <span class="chip-name">${emp.firstName}</span>
+            ${assignment.note ? `<span class="chip-note-icon">💬</span>` : ''}
+            <button class="chip-comment-btn" title="Dodaj/edytuj notatkę">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
             <button class="chip-remove" data-id="${assignment.id}">×</button>
           `;
-          chip.setAttribute('data-tooltip', `${emp.firstName} ${emp.lastName}\n🎯 Cały projekt (${partsCount} części)\n📊 SOLL: ${projectGroup.totalSoll}`);
-          chip.title = `${emp.firstName} ${emp.lastName} - Cały projekt`;
+          
+          // Hover dla notatki
+          if (assignment.note) {
+            let hideTimeout2: number | null = null;
+            chip.addEventListener('mouseenter', (e) => {
+              if (hideTimeout2) { clearTimeout(hideTimeout2); hideTimeout2 = null; }
+              this.showChipNotePopup(e as MouseEvent, assignment, emp);
+            });
+            chip.addEventListener('mouseleave', () => {
+              hideTimeout2 = window.setTimeout(() => {
+                const popup = document.querySelector('.chip-note-popup');
+                if (popup && !popup.matches(':hover')) popup.remove();
+              }, 300);
+            });
+          }
+          
+          // Kliknięcie w ikonę komentarza - otwórz modal
+          chip.querySelector('.chip-comment-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.showAssignmentNoteModal(assignment.id);
+          });
           
           chip.querySelector('.chip-remove')?.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -9349,17 +9943,48 @@ class KappaApp {
           const scopeTitle = assignment.scope === 'audit' ? 'Audyty' : assignment.scope === 'adhesion' ? 'Przyczepność' : (assignment.note || 'Specyficzne');
           const scopeIcon = assignment.scope === 'audit' ? '🔍' : assignment.scope === 'adhesion' ? '🔗' : '📌';
           
+          // Pobierz notatkę bez odpowiedzi
+          let noteDisplay = assignment.note || '';
+          if (noteDisplay.includes('---REPLIES---')) {
+            noteDisplay = noteDisplay.split('---REPLIES---')[0].trim();
+          }
+          
           const chip = document.createElement('div');
-          chip.className = `assignment-chip scope-${assignment.scope}`;
+          chip.className = `assignment-chip scope-${assignment.scope} ${assignment.note ? 'has-note' : ''}`;
           chip.style.setProperty('--emp-color', emp.color);
+          chip.dataset.assignmentId = assignment.id;
           chip.innerHTML = `
             <span class="chip-badge">${scopeLabel}</span>
             <span class="chip-name">${emp.firstName}</span>
-            ${assignment.note ? `<span class="chip-note" title="${assignment.note}">ℹ</span>` : ''}
+            ${assignment.note ? `<span class="chip-note-icon">💬</span>` : ''}
+            <button class="chip-comment-btn" title="Dodaj/edytuj notatkę">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+              </svg>
+            </button>
             <button class="chip-remove" data-id="${assignment.id}">×</button>
           `;
-          chip.setAttribute('data-tooltip', `${emp.firstName} ${emp.lastName}\n${scopeIcon} ${scopeTitle}${assignment.note ? '\n📝 ' + assignment.note : ''}`);
-          chip.title = `${emp.firstName} ${emp.lastName} - ${scopeTitle}${assignment.note ? ': ' + assignment.note : ''}`;
+          
+          // Hover dla notatki
+          if (assignment.note) {
+            let hideTimeout3: number | null = null;
+            chip.addEventListener('mouseenter', (e) => {
+              if (hideTimeout3) { clearTimeout(hideTimeout3); hideTimeout3 = null; }
+              this.showChipNotePopup(e as MouseEvent, assignment, emp);
+            });
+            chip.addEventListener('mouseleave', () => {
+              hideTimeout3 = window.setTimeout(() => {
+                const popup = document.querySelector('.chip-note-popup');
+                if (popup && !popup.matches(':hover')) popup.remove();
+              }, 300);
+            });
+          }
+          
+          // Kliknięcie w ikonę komentarza - otwórz modal
+          chip.querySelector('.chip-comment-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.showAssignmentNoteModal(assignment.id);
+          });
           
           chip.querySelector('.chip-remove')?.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -9885,6 +10510,267 @@ class KappaApp {
     return comment?.comment;
   }
   
+  // Sprawdź status obsadzenia projektu
+  // Logika: projekt jest "w pełni obsadzony" gdy:
+  // 1. Ma przypisanie z scope='project' (osoba do całego projektu), LUB
+  // 2. Wszystkie unikalne testy w projekcie mają przypisane osoby
+  private getProjectStaffingStatus(
+    groupKey: string, 
+    groupItems: Project[], 
+    assignments: ScheduleAssignment[]
+  ): { class: string; icon: string; tooltip: string } {
+    // Sprawdź czy jest przypisanie do całego projektu
+    const hasProjectScope = assignments.some(a => a.scope === 'project');
+    
+    if (hasProjectScope) {
+      return {
+        class: 'staffing-full',
+        icon: '✓',
+        tooltip: 'W pełni obsadzony (przypisanie do całego projektu)'
+      };
+    }
+    
+    // Zbierz wszystkie unikalne testy w tej grupie projektów
+    const uniqueTestIds = new Set<string>();
+    groupItems.forEach(p => {
+      if (p.test_id) uniqueTestIds.add(p.test_id);
+    });
+    
+    if (uniqueTestIds.size === 0) {
+      // Brak testów - sprawdź czy są jakiekolwiek przypisania
+      if (assignments.length > 0) {
+        return {
+          class: 'staffing-full',
+          icon: '✓',
+          tooltip: 'Obsadzony'
+        };
+      }
+      return {
+        class: 'staffing-none',
+        icon: '○',
+        tooltip: 'Brak obsady'
+      };
+    }
+    
+    // Sprawdź które testy mają przypisania
+    const coveredTestIds = new Set<string>();
+    
+    assignments.forEach(a => {
+      if (a.scope === 'specific' && a.testId) {
+        coveredTestIds.add(a.testId);
+      } else if (a.scope === 'audit') {
+        // Audyt pokrywa testy typu "audit"
+        groupItems.forEach(p => {
+          const test = this.state.tests.find(t => t.id === p.test_id);
+          if (test?.name?.toLowerCase().includes('audit') || test?.name?.toLowerCase().includes('audyt')) {
+            coveredTestIds.add(p.test_id);
+          }
+        });
+      } else if (a.scope === 'adhesion') {
+        // Przyczepność pokrywa testy typu "adhesion/peel"
+        groupItems.forEach(p => {
+          const test = this.state.tests.find(t => t.id === p.test_id);
+          if (test?.name?.toLowerCase().includes('peel') || 
+              test?.name?.toLowerCase().includes('adhesion') ||
+              test?.name?.toLowerCase().includes('przyczep')) {
+            coveredTestIds.add(p.test_id);
+          }
+        });
+      }
+    });
+    
+    const totalTests = uniqueTestIds.size;
+    const coveredTests = coveredTestIds.size;
+    
+    if (coveredTests === 0 && assignments.length === 0) {
+      return {
+        class: 'staffing-none',
+        icon: '○',
+        tooltip: 'Brak obsady'
+      };
+    }
+    
+    if (coveredTests >= totalTests) {
+      return {
+        class: 'staffing-full',
+        icon: '✓',
+        tooltip: `W pełni obsadzony (${coveredTests}/${totalTests} testów)`
+      };
+    }
+    
+    // Częściowo obsadzony
+    const missingTests = Array.from(uniqueTestIds)
+      .filter(id => !coveredTestIds.has(id))
+      .map(id => this.state.tests.find(t => t.id === id)?.name || '?')
+      .slice(0, 3);
+    
+    return {
+      class: 'staffing-partial',
+      icon: '◐',
+      tooltip: `Częściowo obsadzony (${coveredTests}/${totalTests}). Brak: ${missingTests.join(', ')}${missingTests.length < totalTests - coveredTests ? '...' : ''}`
+    };
+  }
+
+  // Hover popup dla notatki na chipie pracownika
+  private showChipNotePopup(event: MouseEvent, assignment: ScheduleAssignment, emp: Employee): void {
+    // Usuń istniejące popupy
+    document.querySelectorAll('.chip-note-popup').forEach(p => p.remove());
+    
+    // Pobierz notatkę i odpowiedzi
+    let mainNote = assignment.note || '';
+    let replies: Array<{text: string; date: string; author: string}> = [];
+    
+    if (mainNote.includes('---REPLIES---')) {
+      const parts = mainNote.split('---REPLIES---');
+      mainNote = parts[0].trim();
+      try {
+        replies = JSON.parse(parts[1]);
+      } catch (e) {
+        replies = [];
+      }
+    }
+    
+    if (!mainNote && replies.length === 0) return;
+    
+    const popup = document.createElement('div');
+    popup.className = 'chip-note-popup';
+    popup.innerHTML = `
+      <div class="chip-popup-header" style="background: ${emp.color}">
+        <span class="chip-popup-avatar">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
+        <div class="chip-popup-info">
+          <span class="chip-popup-name">${emp.firstName} ${emp.lastName}</span>
+          <span class="chip-popup-meta">Zmiana ${assignment.shift}</span>
+        </div>
+      </div>
+      <div class="chip-popup-body">
+        ${mainNote ? `
+          <div class="chip-popup-note">
+            <div class="chip-popup-note-label">Notatka:</div>
+            <div class="chip-popup-note-text">${mainNote}</div>
+          </div>
+        ` : ''}
+        ${replies.length > 0 ? `
+          <div class="chip-popup-replies">
+            <div class="chip-popup-replies-label">💬 Odpowiedzi (${replies.length}):</div>
+            ${replies.map(r => `
+              <div class="chip-popup-reply">
+                <span class="chip-reply-author">${r.author}</span>
+                <span class="chip-reply-date">${r.date}</span>
+                <div class="chip-reply-text">${r.text}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+      <div class="chip-popup-quick-reply">
+        <input type="text" class="chip-popup-reply-input" placeholder="Szybka odpowiedź..." />
+        <button class="chip-popup-reply-send" title="Wyślij">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+          </svg>
+        </button>
+      </div>
+      <div class="chip-popup-footer">
+        <button class="chip-popup-edit-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+          </svg>
+          Edytuj
+        </button>
+      </div>
+    `;
+    
+    document.body.appendChild(popup);
+    
+    // Pozycjonowanie
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    let left = rect.right + 10;
+    let top = rect.top - 10;
+    
+    const popupRect = popup.getBoundingClientRect();
+    if (left + popupRect.width > window.innerWidth) {
+      left = rect.left - popupRect.width - 10;
+    }
+    if (top + popupRect.height > window.innerHeight) {
+      top = window.innerHeight - popupRect.height - 10;
+    }
+    if (top < 10) top = 10;
+    
+    popup.style.left = `${left}px`;
+    popup.style.top = `${top}px`;
+    
+    // Szybka odpowiedź
+    const replyInput = popup.querySelector('.chip-popup-reply-input') as HTMLInputElement;
+    const sendBtn = popup.querySelector('.chip-popup-reply-send') as HTMLButtonElement;
+    
+    const sendQuickReply = async () => {
+      const text = replyInput.value.trim();
+      if (!text) return;
+      
+      // Zapisz odpowiedź
+      const newReply = {
+        text,
+        date: new Date().toLocaleString('pl-PL'),
+        author: 'Użytkownik'
+      };
+      
+      let existingNote = assignment.note || '';
+      let existingReplies: Array<{text: string; date: string; author: string}> = [];
+      
+      if (existingNote.includes('---REPLIES---')) {
+        const parts = existingNote.split('---REPLIES---');
+        existingNote = parts[0].trim();
+        try {
+          existingReplies = JSON.parse(parts[1]);
+        } catch (e) {
+          existingReplies = [];
+        }
+      }
+      
+      existingReplies.push(newReply);
+      const newNoteContent = existingNote + '---REPLIES---' + JSON.stringify(existingReplies);
+      
+      // Aktualizuj w bazie
+      await this.database.put('scheduleAssignments', {
+        ...assignment,
+        note: newNoteContent
+      });
+      
+      // Aktualizuj w stanu lokalnym
+      const idx = this.state.scheduleAssignments.findIndex(a => a.id === assignment.id);
+      if (idx >= 0) {
+        this.state.scheduleAssignments[idx].note = newNoteContent;
+      }
+      
+      popup.remove();
+      this.showToast('Dodano odpowiedź', 'success');
+      this.renderScheduleView();
+    };
+    
+    sendBtn.addEventListener('click', sendQuickReply);
+    replyInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendQuickReply();
+    });
+    
+    // Kliknięcie w edytuj
+    popup.querySelector('.chip-popup-edit-btn')?.addEventListener('click', () => {
+      popup.remove();
+      this.showAssignmentNoteModal(assignment.id);
+    });
+    
+    // Utrzymaj popup przy hover
+    popup.addEventListener('mouseenter', () => {
+      popup.classList.add('active');
+    });
+    popup.addEventListener('mouseleave', () => {
+      popup.classList.remove('active');
+      setTimeout(() => {
+        if (!popup.classList.contains('active')) popup.remove();
+      }, 300);
+    });
+  }
+  
   // Popup dla pełnego komentarza przy hover
   private commentPopup: HTMLElement | null = null;
   
@@ -9931,38 +10817,504 @@ class KappaApp {
     }
   }
 
-  private showProjectCommentModal(projectId: string, week: string, existingComment?: string): void {
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
+  // Hover popup dla komentarza projektu z odpowiedziami i szybką odpowiedzią
+  private projectCommentHoverPopup: HTMLElement | null = null;
+  
+  private showProjectCommentHoverPopup(event: MouseEvent, projectId: string, week: string, comment: string): void {
+    this.hideProjectCommentHoverPopup();
     
-    modalTitle.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
-      Komentarz do projektu
-    `;
+    // Parsuj komentarz i odpowiedzi
+    let mainComment = comment;
+    let replies: Array<{text: string; date: string; author: string}> = [];
     
-    modalBody.innerHTML = `
-      <div class="form-group">
-        <label>Komentarz:</label>
-        <textarea id="projectCommentText" class="form-control" rows="4" placeholder="Np. priorytet, uwagi...">${existingComment || ''}</textarea>
+    if (comment.includes('---REPLIES---')) {
+      const parts = comment.split('---REPLIES---');
+      mainComment = parts[0].trim();
+      try {
+        replies = JSON.parse(parts[1]);
+      } catch (e) {
+        replies = [];
+      }
+    }
+    
+    // Pobierz nazwę projektu
+    const [customerId, typeId] = projectId.split('-');
+    const customer = this.state.customers.find(c => c.id === customerId);
+    const type = this.state.types.find(t => t.id === typeId);
+    const projectName = `${customer?.name || 'Nieznany'} - ${type?.name || 'Nieznany'}`;
+    
+    const popup = document.createElement('div');
+    popup.className = 'project-comment-hover-popup';
+    popup.innerHTML = `
+      <div class="pcf-header">
+        <div class="pcf-header-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+        </div>
+        <div class="pcf-header-info">
+          <span class="pcf-title">Komentarz projektu</span>
+          <span class="pcf-project">${projectName}</span>
+        </div>
+      </div>
+      <div class="pcf-body">
+        <div class="pcf-main-comment">
+          <div class="pcf-comment-text">${mainComment}</div>
+        </div>
+        ${replies.length > 0 ? `
+          <div class="pcf-replies">
+            <div class="pcf-replies-title">💬 Odpowiedzi (${replies.length}):</div>
+            ${replies.map(r => `
+              <div class="pcf-reply">
+                <div class="pcf-reply-meta">
+                  <span class="pcf-reply-author">${r.author}</span>
+                  <span class="pcf-reply-date">${r.date}</span>
+                </div>
+                <div class="pcf-reply-text">${r.text}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+      <div class="pcf-quick-reply">
+        <input type="text" class="pcf-reply-input" placeholder="Szybka odpowiedź..." />
+        <button class="pcf-reply-send" title="Wyślij">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
+            <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
+          </svg>
+        </button>
       </div>
     `;
     
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    confirmBtn.style.display = '';
-    confirmBtn.onclick = async () => {
-      const text = (document.getElementById('projectCommentText') as HTMLTextAreaElement).value.trim();
+    document.body.appendChild(popup);
+    this.projectCommentHoverPopup = popup;
+    
+    // Pozycjonowanie
+    const target = event.target as HTMLElement;
+    const rect = target.getBoundingClientRect();
+    let top = rect.bottom + 8;
+    let left = rect.left - 120;
+    
+    const popupRect = popup.getBoundingClientRect();
+    if (top + popupRect.height > window.innerHeight) {
+      top = rect.top - popupRect.height - 8;
+    }
+    if (left + popupRect.width > window.innerWidth) {
+      left = window.innerWidth - popupRect.width - 8;
+    }
+    if (left < 8) left = 8;
+    
+    popup.style.top = `${top}px`;
+    popup.style.left = `${left}px`;
+    
+    // Szybka odpowiedź
+    const replyInput = popup.querySelector('.pcf-reply-input') as HTMLInputElement;
+    const sendBtn = popup.querySelector('.pcf-reply-send') as HTMLButtonElement;
+    
+    const sendQuickReply = async () => {
+      const text = replyInput.value.trim();
+      if (!text) return;
       
-      // Find existing
+      const newReply = {
+        text,
+        date: new Date().toLocaleString('pl-PL'),
+        author: 'Użytkownik'
+      };
+      
+      replies.push(newReply);
+      const newCommentContent = mainComment + '---REPLIES---' + JSON.stringify(replies);
+      
+      // Zapisz
       const existing = this.state.projectComments.find((c: ProjectComment) =>
         c.projectId === projectId && c.week === week
       );
       
-      if (text) {
+      if (existing) {
+        existing.comment = newCommentContent;
+        existing.updatedAt = Date.now();
+        await db.put('projectComments', existing);
+      } else {
+        const newCommentObj: ProjectComment = {
+          id: this.generateId(),
+          projectId,
+          week,
+          comment: newCommentContent,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        this.state.projectComments.push(newCommentObj);
+        await db.put('projectComments', newCommentObj);
+      }
+      
+      popup.remove();
+      this.projectCommentHoverPopup = null;
+      this.showToast('Dodano odpowiedź', 'success');
+      this.renderScheduleView();
+    };
+    
+    sendBtn.addEventListener('click', sendQuickReply);
+    replyInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendQuickReply();
+    });
+    
+    // Keep popup on hover
+    popup.addEventListener('mouseenter', () => {
+      popup.classList.add('active');
+    });
+    popup.addEventListener('mouseleave', () => {
+      popup.classList.remove('active');
+      setTimeout(() => {
+        if (!popup.classList.contains('active') && this.projectCommentHoverPopup === popup) {
+          popup.remove();
+          this.projectCommentHoverPopup = null;
+        }
+      }, 200);
+    });
+  }
+  
+  private hideProjectCommentHoverPopup(): void {
+    if (this.projectCommentHoverPopup && !this.projectCommentHoverPopup.classList.contains('active')) {
+      this.projectCommentHoverPopup.remove();
+      this.projectCommentHoverPopup = null;
+    }
+  }
+  
+  // Modal hover dla komentarzy z możliwością dodawania notatek
+  private showCommentHoverPopup(target: HTMLElement, comment: string, projectId: string, week: string): void {
+    // Usuń istniejący popup
+    document.querySelectorAll('.comment-hover-popup').forEach(p => p.remove());
+    
+    const popup = document.createElement('div');
+    popup.className = 'comment-hover-popup';
+    popup.innerHTML = `
+      <div class="comment-popup-header">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span>Komentarz</span>
+        <button class="popup-close-btn">&times;</button>
+      </div>
+      <div class="comment-popup-body">
+        <div class="comment-main-text">${comment}</div>
+        <div class="comment-reply-section">
+          <textarea class="comment-reply-input" placeholder="Dodaj notatkę lub odpowiedź..."></textarea>
+          <div class="comment-reply-actions">
+            <button class="btn-reply-save">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polyline points="20 6 9 17 4 12"/>
+              </svg>
+              Zapisz
+            </button>
+            <button class="btn-reply-edit">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+              Edytuj
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(popup);
+    
+    // Pozycjonowanie
+    const rect = target.getBoundingClientRect();
+    let top = rect.bottom + 8;
+    let left = rect.left - 100;
+    
+    if (top + 300 > window.innerHeight) {
+      top = rect.top - 300 - 8;
+    }
+    if (left + 280 > window.innerWidth) {
+      left = window.innerWidth - 288;
+    }
+    if (left < 8) left = 8;
+    
+    popup.style.top = `${top}px`;
+    popup.style.left = `${left}px`;
+    
+    // Event handlers
+    popup.querySelector('.popup-close-btn')?.addEventListener('click', () => popup.remove());
+    
+    popup.querySelector('.btn-reply-edit')?.addEventListener('click', () => {
+      popup.remove();
+      this.showProjectCommentModal(projectId, week, comment);
+    });
+    
+    popup.querySelector('.btn-reply-save')?.addEventListener('click', async () => {
+      const replyText = (popup.querySelector('.comment-reply-input') as HTMLTextAreaElement).value.trim();
+      if (!replyText) return;
+      
+      // Dodaj notatkę do komentarza
+      const newComment = comment + `\n\n📌 [${new Date().toLocaleDateString('pl-PL')}]: ${replyText}`;
+      
+      const existing = this.state.projectComments.find((c: ProjectComment) =>
+        c.projectId === projectId && c.week === week
+      );
+      
+      if (existing) {
+        existing.comment = newComment;
+        existing.updatedAt = Date.now();
+        await db.put('projectComments', existing);
+      } else {
+        const newCommentObj: ProjectComment = {
+          id: this.generateId(),
+          projectId,
+          week,
+          comment: newComment,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        this.state.projectComments.push(newCommentObj);
+        await db.put('projectComments', newCommentObj);
+      }
+      
+      popup.remove();
+      this.showToast('Notatka dodana', 'success');
+      this.renderScheduleProjectsPanel();
+    });
+    
+    // Keep popup on hover
+    popup.addEventListener('mouseenter', () => {
+      popup.classList.add('active');
+    });
+    popup.addEventListener('mouseleave', () => {
+      popup.classList.remove('active');
+      setTimeout(() => {
+        if (!popup.classList.contains('active')) popup.remove();
+      }, 200);
+    });
+  }
+
+  private showProjectCommentModal(projectId: string, week: string, existingComment?: string): void {
+    // Znajdź projekt i klienta
+    const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
+    const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+    const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+    const projectName = customer?.name || projectId;
+    const typeName = type?.name || '';
+    
+    // Pobierz komentarz i odpowiedzi (format: główny komentarz\n---REPLIES---\njson)
+    let mainComment = existingComment || '';
+    let replies: Array<{text: string; date: string; author: string}> = [];
+    
+    if (mainComment.includes('---REPLIES---')) {
+      const parts = mainComment.split('---REPLIES---');
+      mainComment = parts[0].trim();
+      try {
+        replies = JSON.parse(parts[1]);
+      } catch (e) {
+        replies = [];
+      }
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'note-modal-overlay';
+    overlay.innerHTML = `
+      <div class="note-modal note-modal-modern note-modal-project">
+        <div class="note-modal-header" style="background: linear-gradient(135deg, #10b981 0%, #059669 100%)">
+          <div class="note-modal-header-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+            </svg>
+          </div>
+          <h3>Komentarz do projektu</h3>
+          <button class="note-modal-close">×</button>
+        </div>
+        
+        <div class="note-modal-info">
+          <div class="note-info-tag note-info-project-green">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            ${projectName}${typeName ? ' / ' + typeName : ''}
+          </div>
+          <div class="note-info-tag note-info-shift">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            ${week}
+          </div>
+        </div>
+        
+        <div class="note-modal-body">
+          <textarea class="note-modal-textarea" id="projectCommentText" placeholder="Wpisz komentarz dla projektu...">${mainComment}</textarea>
+          
+          ${replies.length > 0 ? `
+            <div class="note-replies-section note-replies-project">
+              <div class="note-replies-header">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <polyline points="9 17 4 12 9 7"/>
+                  <path d="M20 18v-2a4 4 0 0 0-4-4H4"/>
+                </svg>
+                Odpowiedzi (${replies.length})
+              </div>
+              <div class="note-replies-list">
+                ${replies.map((r, i) => `
+                  <div class="note-reply-item note-reply-project">
+                    <div class="note-reply-header">
+                      <span class="note-reply-author">${r.author}</span>
+                      <span class="note-reply-date">${r.date}</span>
+                      <button class="note-reply-delete" data-index="${i}" title="Usuń odpowiedź">×</button>
+                    </div>
+                    <div class="note-reply-text">${r.text}</div>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+          
+          <div class="note-add-reply note-add-reply-project">
+            <div class="note-reply-input-wrapper">
+              <input type="text" class="note-reply-input" placeholder="Dodaj szybką odpowiedź...">
+              <button class="note-reply-submit" title="Dodaj odpowiedź">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <line x1="22" y1="2" x2="11" y2="13"/>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div class="note-modal-actions">
+          ${mainComment || replies.length > 0 ? `
+            <button class="note-modal-delete" id="deleteProjectComment">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              Usuń
+            </button>
+          ` : '<div></div>'}
+          <div class="note-modal-actions-right">
+            <button class="note-modal-cancel">Anuluj</button>
+            <button class="note-modal-save">Zapisz</button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    const textarea = overlay.querySelector('.note-modal-textarea') as HTMLTextAreaElement;
+    textarea.focus();
+    
+    // Zamykanie
+    overlay.querySelector('.note-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.note-modal-cancel')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    
+    // Dodawanie szybkiej odpowiedzi
+    const replyInput = overlay.querySelector('.note-reply-input') as HTMLInputElement;
+    const submitReply = async () => {
+      const replyText = replyInput.value.trim();
+      if (!replyText) return;
+      
+      replies.push({
+        text: replyText,
+        date: new Date().toLocaleDateString('pl-PL'),
+        author: this.state.settings.userName || 'Użytkownik'
+      });
+      
+      // Zapisz natychmiast do bazy
+      const currentMainComment = (overlay.querySelector('#projectCommentText') as HTMLTextAreaElement).value.trim();
+      const newCommentText = currentMainComment + (replies.length > 0 ? '\n---REPLIES---\n' + JSON.stringify(replies) : '');
+      
+      const existing = this.state.projectComments.find((c: ProjectComment) =>
+        c.projectId === projectId && c.week === week
+      );
+      
+      if (existing) {
+        existing.comment = newCommentText;
+        existing.updatedAt = Date.now();
+        await db.put('projectComments', existing);
+      } else {
+        const newComment: ProjectComment = {
+          id: this.generateId(),
+          projectId,
+          week,
+          comment: newCommentText,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
+        this.state.projectComments.push(newComment);
+        await db.put('projectComments', newComment);
+      }
+      
+      // Odśwież modal
+      overlay.remove();
+      this.showProjectCommentModal(projectId, week, newCommentText);
+      this.showToast('Odpowiedź dodana', 'success');
+    };
+    
+    overlay.querySelector('.note-reply-submit')?.addEventListener('click', submitReply);
+    replyInput?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') submitReply();
+    });
+    
+    // Usuwanie odpowiedzi
+    overlay.querySelectorAll('.note-reply-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const index = parseInt((btn as HTMLElement).dataset.index || '0');
+        replies.splice(index, 1);
+        
+        // Zapisz natychmiast do bazy
+        const currentMainComment = (overlay.querySelector('#projectCommentText') as HTMLTextAreaElement).value.trim();
+        const newCommentText = currentMainComment + (replies.length > 0 ? '\n---REPLIES---\n' + JSON.stringify(replies) : '');
+        
+        const existing = this.state.projectComments.find((c: ProjectComment) =>
+          c.projectId === projectId && c.week === week
+        );
+        
         if (existing) {
-          existing.comment = text;
+          existing.comment = newCommentText || '';
+          existing.updatedAt = Date.now();
+          if (newCommentText) {
+            await db.put('projectComments', existing);
+          } else {
+            const idx = this.state.projectComments.indexOf(existing);
+            this.state.projectComments.splice(idx, 1);
+            await db.delete('projectComments', existing.id);
+          }
+        }
+        
+        overlay.remove();
+        if (newCommentText) {
+          this.showProjectCommentModal(projectId, week, newCommentText);
+        }
+        this.renderScheduleProjectsPanel();
+        this.showToast('Odpowiedź usunięta', 'success');
+      });
+    });
+    
+    // Usuwanie całego komentarza
+    overlay.querySelector('#deleteProjectComment')?.addEventListener('click', async () => {
+      const existing = this.state.projectComments.find((c: ProjectComment) =>
+        c.projectId === projectId && c.week === week
+      );
+      if (existing) {
+        const idx = this.state.projectComments.indexOf(existing);
+        this.state.projectComments.splice(idx, 1);
+        await db.delete('projectComments', existing.id);
+        this.showToast('Komentarz usunięty', 'success');
+      }
+      overlay.remove();
+      this.renderScheduleProjectsPanel();
+    });
+    
+    // Zapisywanie
+    overlay.querySelector('.note-modal-save')?.addEventListener('click', async () => {
+      const text = (overlay.querySelector('#projectCommentText') as HTMLTextAreaElement).value.trim();
+      const fullComment = text + (replies.length > 0 ? '\n---REPLIES---\n' + JSON.stringify(replies) : '');
+      
+      const existing = this.state.projectComments.find((c: ProjectComment) =>
+        c.projectId === projectId && c.week === week
+      );
+      
+      if (text || replies.length > 0) {
+        if (existing) {
+          existing.comment = fullComment;
           existing.updatedAt = Date.now();
           await db.put('projectComments', existing);
         } else {
@@ -9970,25 +11322,32 @@ class KappaApp {
             id: this.generateId(),
             projectId,
             week,
-            comment: text,
+            comment: fullComment,
             createdAt: Date.now(),
             updatedAt: Date.now()
           };
           this.state.projectComments.push(newComment);
           await db.put('projectComments', newComment);
         }
+        this.showToast('Komentarz zapisany', 'success');
       } else if (existing) {
-        // Remove if empty
         const idx = this.state.projectComments.indexOf(existing);
         this.state.projectComments.splice(idx, 1);
         await db.delete('projectComments', existing.id);
       }
       
-      this.hideModal();
+      overlay.remove();
       this.renderScheduleProjectsPanel();
-    };
+    });
     
-    modal.classList.add('active');
+    // Escape
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        document.removeEventListener('keydown', handleEscape);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
   }
   
   private async copyFromPreviousWeek(): Promise<void> {
@@ -10244,7 +11603,8 @@ class KappaApp {
       const colorEl = document.querySelector('.employee-color-option.selected') as HTMLElement;
       const color = colorEl?.dataset.color || EMPLOYEE_COLORS[0];
       const status = (document.getElementById('employeeStatus') as HTMLSelectElement).value as EmployeeStatus;
-      const shiftValue = (document.getElementById('employeeShift') as HTMLSelectElement).value;
+      const shiftSelect = document.getElementById('employeeShift') as HTMLSelectElement | null;
+      const shiftValue = shiftSelect?.value || '';
       const suggestedShift = shiftValue ? parseInt(shiftValue) as 1 | 2 | 3 : undefined;
       
       if (!firstName || !lastName) {
