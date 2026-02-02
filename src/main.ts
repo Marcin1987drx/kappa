@@ -5560,15 +5560,92 @@ class KappaApp {
   private scheduleShiftSystem: 1 | 2 | 3 = 2;
   private scheduleViewMode: 'week' | 'multi' | 'year' | 'compact' = 'week';
   private scheduleFilterEmployee: string = '';
+  private scheduleFilterProject: string = '';
+  private scheduleFilterTest: string = '';
+  private scheduleSortMode: 'default' | 'alpha' | 'coverage' = 'default';
+  private pinnedScheduleProjects: Set<string> = new Set();
   private draggedEmployeeId: string | null = null;
   private draggedEmployeeScope: 'project' | 'audit' | 'adhesion' | 'specific' = 'project';
   
+  private loadPinnedScheduleProjects(): void {
+    try {
+      const saved = localStorage.getItem('pinnedScheduleProjects');
+      if (saved) {
+        this.pinnedScheduleProjects = new Set(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.warn('Failed to load pinned schedule projects');
+    }
+  }
+  
+  private toggleScheduleProjectPin(groupKey: string): void {
+    if (this.pinnedScheduleProjects.has(groupKey)) {
+      this.pinnedScheduleProjects.delete(groupKey);
+    } else {
+      this.pinnedScheduleProjects.add(groupKey);
+    }
+    localStorage.setItem('pinnedScheduleProjects', JSON.stringify([...this.pinnedScheduleProjects]));
+    this.renderScheduleProjectsPanel();
+  }
+  
   private renderScheduleView(): void {
+    this.loadPinnedScheduleProjects();
     this.setupScheduleEventListeners();
+    this.renderScheduleFilters();
     this.renderScheduleWeekNav();
     this.renderScheduleEmployeePanel();
     this.renderScheduleAlerts();
     this.renderScheduleContent();
+  }
+  
+  private renderScheduleFilters(): void {
+    const filterEmployee = document.getElementById('filterEmployee') as HTMLSelectElement;
+    const filterProject = document.getElementById('filterProject') as HTMLSelectElement;
+    const filterTest = document.getElementById('filterTest') as HTMLSelectElement;
+    
+    if (filterEmployee) {
+      const currentValue = this.scheduleFilterEmployee;
+      filterEmployee.innerHTML = '<option value="">Wszyscy</option>' + 
+        this.state.employees
+          .filter(e => !e.status || e.status === 'available')
+          .map(e => `<option value="${e.id}" ${e.id === currentValue ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`)
+          .join('');
+    }
+    
+    if (filterProject) {
+      const currentValue = this.scheduleFilterProject;
+      const uniqueCustomers = new Map<string, string>();
+      this.state.projects.forEach(p => {
+        const customer = this.state.customers.find(c => c.id === p.customer_id);
+        if (customer && !uniqueCustomers.has(customer.id)) {
+          uniqueCustomers.set(customer.id, customer.name);
+        }
+      });
+      filterProject.innerHTML = '<option value="">Wszystkie projekty</option>' + 
+        Array.from(uniqueCustomers.entries())
+          .sort((a, b) => a[1].localeCompare(b[1]))
+          .map(([id, name]) => `<option value="${id}" ${id === currentValue ? 'selected' : ''}>${name}</option>`)
+          .join('');
+    }
+    
+    if (filterTest) {
+      const currentValue = this.scheduleFilterTest;
+      // Pobierz unikalne typy badań z projektów które mają SOLL > 0 w tym tygodniu
+      const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+      const testsInUse = new Set<string>();
+      this.state.projects.forEach(p => {
+        const weekData = p.weeks[weekKey];
+        if (weekData && weekData.soll > 0 && p.test_id) {
+          testsInUse.add(p.test_id);
+        }
+      });
+      
+      const testsToShow = this.state.tests.filter(t => testsInUse.has(t.id) || this.state.tests.length <= 10);
+      filterTest.innerHTML = '<option value="">Wszystkie badania</option>' + 
+        (testsToShow.length > 0 
+          ? testsToShow.map(t => `<option value="${t.id}" ${t.id === currentValue ? 'selected' : ''}>${t.name}</option>`).join('')
+          : this.state.tests.map(t => `<option value="${t.id}" ${t.id === currentValue ? 'selected' : ''}>${t.name}</option>`).join(''));
+    }
   }
   
   private renderScheduleContent(): void {
@@ -5645,6 +5722,33 @@ class KappaApp {
     });
     
     document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
+    
+    // Filtry
+    document.getElementById('filterEmployee')?.addEventListener('change', (e) => {
+      this.scheduleFilterEmployee = (e.target as HTMLSelectElement).value;
+      this.renderScheduleContent();
+    });
+    
+    document.getElementById('filterProject')?.addEventListener('change', (e) => {
+      this.scheduleFilterProject = (e.target as HTMLSelectElement).value;
+      this.renderScheduleContent();
+    });
+    
+    document.getElementById('filterTest')?.addEventListener('change', (e) => {
+      this.scheduleFilterTest = (e.target as HTMLSelectElement).value;
+      this.renderScheduleContent();
+    });
+    
+    // Sortowanie
+    document.querySelectorAll('.sched-sort-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sort = (btn as HTMLElement).dataset.sort as 'default' | 'alpha' | 'coverage';
+        this.scheduleSortMode = sort;
+        document.querySelectorAll('.sched-sort-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.renderScheduleContent();
+      });
+    });
     
     // Mini kalendarz
     document.getElementById('toggleMiniCalendar')?.addEventListener('click', () => this.toggleMiniCalendar());
@@ -6820,14 +6924,18 @@ class KappaApp {
       } else {
         absentList.innerHTML = absentEmployees.map(emp => {
           const isVacation = emp.status === 'vacation';
-          const icon = isVacation ? '🏖️' : '🤒';
+          const icon = isVacation 
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M21 15l-3-3m0 0l-3 3m3-3v9"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" width="18" height="18"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
           const label = isVacation ? 'Urlop' : 'L4';
           return `
-            <div class="sched-absent-card" data-employee-id="${emp.id}">
+            <div class="sched-absent-card" data-employee-id="${emp.id}" data-status="${emp.status}">
               <span class="sched-absent-icon">${icon}</span>
               <span class="sched-absent-name">${emp.firstName} ${emp.lastName}</span>
               <span class="sched-absent-badge ${emp.status}">${label}</span>
-              <button class="sched-absent-return" data-emp-id="${emp.id}" title="Przywróć">↩</button>
+              <button class="sched-absent-return" data-emp-id="${emp.id}" title="Przywróć">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+              </button>
             </div>
           `;
         }).join('');
@@ -8416,13 +8524,22 @@ class KappaApp {
     
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     
-    // Header z nowymi klasami
+    // Header z nowymi klasami i sortowaniem
     const shiftNames = [i18n.t('schedule.morning'), i18n.t('schedule.afternoon'), i18n.t('schedule.night')];
     const shiftHours = ['6:00-14:00', '14:00-22:00', '22:00-6:00'];
     
+    const sortIcon = this.scheduleSortMode === 'alpha' 
+      ? '<svg class="sort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="18 15 12 9 6 15"/></svg>'
+      : (this.scheduleSortMode === 'coverage' 
+        ? '<svg class="sort-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="6 9 12 15 18 9"/></svg>'
+        : '');
+    
     headerContainer.className = `sched-table-header shifts-${this.scheduleShiftSystem}`;
     headerContainer.innerHTML = `
-      <div class="sched-header-cell sched-project-col">${i18n.t('schedule.project')}</div>
+      <div class="sched-header-cell sched-project-col sortable ${this.scheduleSortMode !== 'default' ? 'sorted' : ''}" id="schedProjectColHeader">
+        <span>${i18n.t('schedule.project')}</span>
+        ${sortIcon}
+      </div>
       ${Array.from({ length: this.scheduleShiftSystem }, (_, i) => `
         <div class="sched-header-cell sched-shift-col shift-${i + 1}">
           <span class="sched-shift-num">${i + 1}</span>
@@ -8432,17 +8549,37 @@ class KappaApp {
       `).join('')}
     `;
     
-    // Pobierz projekty z SOLL > 0
-    const weekProjects = this.state.projects.filter(p => {
+    // Pobierz projekty z SOLL > 0 z uwzględnieniem filtrów
+    let weekProjects = this.state.projects.filter(p => {
       const weekData = p.weeks[weekKey];
-      return weekData && weekData.soll > 0 && !p.hidden;
+      if (!weekData || weekData.soll <= 0 || p.hidden) return false;
+      
+      // Filtr po projekcie (kliencie)
+      if (this.scheduleFilterProject && p.customer_id !== this.scheduleFilterProject) return false;
+      
+      // Filtr po teście
+      if (this.scheduleFilterTest && p.test_id !== this.scheduleFilterTest) return false;
+      
+      return true;
     });
+    
+    // Filtr po pracowniku - pokaż tylko projekty z tym pracownikiem
+    if (this.scheduleFilterEmployee) {
+      const employeeAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+        a.employeeId === this.scheduleFilterEmployee && a.week === weekKey
+      );
+      const projectIdsWithEmployee = new Set(employeeAssignments.map((a: ScheduleAssignment) => a.projectId));
+      weekProjects = weekProjects.filter(p => {
+        const groupKey = `${p.customer_id}-${p.type_id}`;
+        return projectIdsWithEmployee.has(p.id) || projectIdsWithEmployee.has(groupKey);
+      });
+    }
     
     if (weekProjects.length === 0) {
       projectsContainer.innerHTML = `
         <div class="sched-empty-table">
           <span class="sched-empty-icon">📋</span>
-          <p>${i18n.t('schedule.noProjectsThisWeek')}</p>
+          <p>${this.scheduleFilterEmployee || this.scheduleFilterProject || this.scheduleFilterTest ? 'Brak wyników dla wybranych filtrów' : i18n.t('schedule.noProjectsThisWeek')}</p>
           <span class="sched-empty-hint">${i18n.t('schedule.projectsWithSollAppear')}</span>
         </div>
       `;
@@ -8453,6 +8590,7 @@ class KappaApp {
     const projectGroups = new Map<string, {
       customerName: string;
       typeName: string;
+      customerId: string;
       items: typeof weekProjects;
     }>();
     
@@ -8465,15 +8603,42 @@ class KappaApp {
         projectGroups.set(groupKey, {
           customerName: customer?.name || '?',
           typeName: type?.name || '?',
+          customerId: p.customer_id,
           items: []
         });
       }
       projectGroups.get(groupKey)!.items.push(p);
     });
     
+    // Sortowanie grup - przypięte zawsze na górze
+    let sortedGroups = Array.from(projectGroups.entries());
+    
+    // Najpierw sortuj wg wybranego trybu
+    if (this.scheduleSortMode === 'alpha') {
+      sortedGroups.sort((a, b) => a[1].customerName.localeCompare(b[1].customerName));
+    } else if (this.scheduleSortMode === 'coverage') {
+      // Sortuj po ilości przypisań (rosnąco - najpierw nieobsadzone)
+      sortedGroups.sort((a, b) => {
+        const aAssignments = this.state.scheduleAssignments.filter((ass: ScheduleAssignment) =>
+          (ass.projectId === a[0] || a[1].items.some(item => item.id === ass.projectId)) && ass.week === weekKey
+        ).length;
+        const bAssignments = this.state.scheduleAssignments.filter((ass: ScheduleAssignment) =>
+          (ass.projectId === b[0] || b[1].items.some(item => item.id === ass.projectId)) && ass.week === weekKey
+        ).length;
+        return aAssignments - bAssignments;
+      });
+    }
+    
+    // Następnie przenieś przypięte na górę (zachowując kolejność sortowania wśród przypiętych i nieprzypiętych)
+    sortedGroups.sort((a, b) => {
+      const aPinned = this.pinnedScheduleProjects.has(a[0]) ? 0 : 1;
+      const bPinned = this.pinnedScheduleProjects.has(b[0]) ? 0 : 1;
+      return aPinned - bPinned;
+    });
+    
     projectsContainer.innerHTML = '';
     
-    projectGroups.forEach((group, groupKey) => {
+    sortedGroups.forEach(([groupKey, group]) => {
       const groupAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
         (a.projectId === groupKey || group.items.some(item => item.id === a.projectId)) &&
         a.week === weekKey
@@ -8484,13 +8649,54 @@ class KappaApp {
       projectRow.className = `sched-row shifts-${this.scheduleShiftSystem}`;
       projectRow.dataset.groupKey = groupKey;
       
-      // Komórka projektu
+      // Pobierz komentarz dla tego projektu
+      const projectComment = this.getProjectComment(groupKey, weekKey);
+      const isPinned = this.pinnedScheduleProjects?.has(groupKey) || false;
+      
+      // Komórka projektu z przyciskami akcji
       const projectCell = document.createElement('div');
-      projectCell.className = 'sched-project-cell';
+      projectCell.className = `sched-project-cell ${projectComment ? 'has-comment' : ''}`;
       projectCell.innerHTML = `
-        <span class="sched-project-customer">${group.customerName}</span>
-        <span class="sched-project-type">${group.typeName}</span>
+        <div class="sched-project-info">
+          <button class="sched-project-pin ${isPinned ? 'pinned' : ''}" data-group="${groupKey}" title="${isPinned ? 'Odepnij' : 'Przypnij'}">
+            <svg viewBox="0 0 24 24" fill="${isPinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+          </button>
+          <div class="sched-project-text">
+            <span class="sched-project-customer">${group.customerName}</span>
+            <span class="sched-project-type">${group.typeName}</span>
+            ${projectComment ? `<span class="sched-project-comment-preview" data-full-comment="${projectComment.replace(/"/g, '&quot;')}">${projectComment.length > 30 ? projectComment.slice(0, 30) + '...' : projectComment}</span>` : ''}
+          </div>
+        </div>
+        <button class="sched-project-comment-btn ${projectComment ? 'has-comment' : ''}" data-group="${groupKey}" title="${projectComment ? 'Edytuj komentarz' : 'Dodaj komentarz'}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        </button>
       `;
+      
+      // Event listeners dla przycisków
+      projectCell.querySelector('.sched-project-pin')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleScheduleProjectPin(groupKey);
+      });
+      
+      projectCell.querySelector('.sched-project-comment-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.showProjectCommentModal(groupKey, weekKey, projectComment);
+      });
+      
+      // Hover popup dla pełnego komentarza
+      const commentPreview = projectCell.querySelector('.sched-project-comment-preview');
+      if (commentPreview) {
+        commentPreview.addEventListener('mouseenter', (e) => {
+          const fullComment = (e.target as HTMLElement).dataset.fullComment || '';
+          if (fullComment.length > 30) {
+            this.showCommentPopup(e.target as HTMLElement, fullComment);
+          }
+        });
+        commentPreview.addEventListener('mouseleave', () => {
+          this.hideCommentPopup();
+        });
+      }
+      
       projectRow.appendChild(projectCell);
       
       // Kolumny zmian
@@ -8513,26 +8719,29 @@ class KappaApp {
           if (a.scope === 'adhesion') {
             scopeLabel = 'Przyczepność';
             scopeClass = 'scope-adhesion';
-            scopeIcon = '🧪';
+            scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
           } else if (a.scope === 'audit') {
             scopeLabel = 'Audyt';
             scopeClass = 'scope-audit';
-            scopeIcon = '🔍';
+            scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
           } else if (a.testId) {
             const test = this.state.tests.find(t => t.id === a.testId);
             scopeLabel = test?.name || 'Test';
             scopeClass = 'scope-test';
-            scopeIcon = '⚙️';
+            scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
           } else if (a.partId) {
             const part = this.state.parts.find(p => p.id === a.partId);
             scopeLabel = part?.name || 'Część';
             scopeClass = 'scope-part';
-            scopeIcon = '📦';
+            scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>';
           }
           
           const initials = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
           const fullName = `${emp.firstName} ${emp.lastName}`;
           const hasNote = a.note && a.note.trim().length > 0;
+          const noteText = a.note || '';
+          const notePreview = noteText.length > 20 ? noteText.slice(0, 20) + '...' : noteText;
+          const commentIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
           
           return `
             <div class="sched-chip ${hasNote ? 'has-note' : ''}" 
@@ -8545,9 +8754,12 @@ class KappaApp {
                 <div class="sched-chip-info">
                   <span class="sched-chip-name">${fullName}</span>
                   ${scopeLabel ? `<span class="sched-chip-badge ${scopeClass}">${scopeIcon} ${scopeLabel}</span>` : ''}
+                  ${hasNote ? `<span class="sched-chip-note-preview" data-full-note="${noteText.replace(/"/g, '&quot;')}">${notePreview}</span>` : ''}
                 </div>
               </div>
-              ${hasNote ? `<span class="sched-chip-note-icon" title="${a.note}">📝</span>` : ''}
+              <button class="sched-chip-comment-btn ${hasNote ? 'has-comment' : ''}" data-aid="${a.id}" title="${hasNote ? 'Edytuj komentarz' : 'Dodaj komentarz'}">
+                ${commentIcon}
+              </button>
               <button class="sched-chip-remove" data-aid="${a.id}">×</button>
             </div>
           `;
@@ -8557,14 +8769,30 @@ class KappaApp {
         
         // Kliknięcie na chip = otwórz modal pracownika
         shiftCell.querySelectorAll('.sched-chip').forEach(chip => {
+          // Kliknięcie na przycisk komentarza
+          chip.querySelector('.sched-chip-comment-btn')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const assignmentId = (e.target as HTMLElement).closest('.sched-chip-comment-btn')?.getAttribute('data-aid');
+            if (assignmentId) this.showAssignmentNoteModal(assignmentId);
+          });
+          
+          // Hover na podglądzie notatki - pokaż popup
+          const notePreview = chip.querySelector('.sched-chip-note-preview');
+          if (notePreview) {
+            notePreview.addEventListener('mouseenter', (e) => {
+              const fullNote = (e.target as HTMLElement).dataset.fullNote || '';
+              if (fullNote.length > 20) {
+                this.showCommentPopup(e.target as HTMLElement, fullNote);
+              }
+            });
+            notePreview.addEventListener('mouseleave', () => {
+              this.hideCommentPopup();
+            });
+          }
+          
           chip.addEventListener('click', (e) => {
             if ((e.target as HTMLElement).classList.contains('sched-chip-remove')) return;
-            if ((e.target as HTMLElement).classList.contains('sched-chip-note-icon')) {
-              // Kliknięcie na ikonę notatki - pokaż/edytuj notatkę
-              const assignmentId = (chip as HTMLElement).dataset.id;
-              if (assignmentId) this.showAssignmentNoteModal(assignmentId);
-              return;
-            }
+            if ((e.target as HTMLElement).closest('.sched-chip-comment-btn')) return;
             const empId = (chip as HTMLElement).dataset.employeeId;
             if (empId) this.showEmployeeModal(empId);
           });
@@ -8638,6 +8866,23 @@ class KappaApp {
           if (aid) await this.removeAssignment(aid);
         });
       });
+    });
+    
+    // Dodaj kliknięcie na nagłówek kolumny PROJECT aby cyklicznie zmieniać sortowanie
+    document.getElementById('schedProjectColHeader')?.addEventListener('click', () => {
+      // Cykliczne przełączanie: default -> alpha -> coverage -> default
+      if (this.scheduleSortMode === 'default') {
+        this.scheduleSortMode = 'alpha';
+      } else if (this.scheduleSortMode === 'alpha') {
+        this.scheduleSortMode = 'coverage';
+      } else {
+        this.scheduleSortMode = 'default';
+      }
+      // Zaktualizuj przyciski sortowania
+      document.querySelectorAll('.sched-sort-btn').forEach(b => {
+        b.classList.toggle('active', (b as HTMLElement).dataset.sort === this.scheduleSortMode);
+      });
+      this.renderScheduleProjectsPanel();
     });
   }
   
@@ -8756,11 +9001,19 @@ class KappaApp {
     const viewportHeight = window.innerHeight;
     const viewportWidth = window.innerWidth;
     
-    if (rect.bottom + pickerRect.height + 10 > viewportHeight) {
-      picker.style.top = `${rect.top - pickerRect.height - 4}px`;
+    // Inteligentne pozycjonowanie - preferuj dół, ale jeśli nie mieści się ani u dołu ani u góry, wyśrodkuj
+    let topPosition: number;
+    if (rect.bottom + pickerRect.height + 10 <= viewportHeight) {
+      // Mieści się na dole
+      topPosition = rect.bottom + 4;
+    } else if (rect.top - pickerRect.height - 4 >= 10) {
+      // Mieści się na górze
+      topPosition = rect.top - pickerRect.height - 4;
     } else {
-      picker.style.top = `${rect.bottom + 4}px`;
+      // Nie mieści się ani na górze ani na dole - wyśrodkuj w oknie
+      topPosition = Math.max(10, (viewportHeight - pickerRect.height) / 2);
     }
+    picker.style.top = `${topPosition}px`;
     
     if (rect.left + pickerRect.width > viewportWidth - 10) {
       picker.style.left = `${viewportWidth - pickerRect.width - 10}px`;
@@ -8870,11 +9123,19 @@ class KappaApp {
     const viewportHeight = window.innerHeight;
     const viewportWidth = window.innerWidth;
     
-    if (rect.bottom + pickerRect.height + 10 > viewportHeight) {
-      picker.style.top = `${rect.top - pickerRect.height - 4}px`;
+    // Inteligentne pozycjonowanie - preferuj dół, ale jeśli nie mieści się ani u dołu ani u góry, wyśrodkuj
+    let topPosition: number;
+    if (rect.bottom + pickerRect.height + 10 <= viewportHeight) {
+      // Mieści się na dole
+      topPosition = rect.bottom + 4;
+    } else if (rect.top - pickerRect.height - 4 >= 10) {
+      // Mieści się na górze
+      topPosition = rect.top - pickerRect.height - 4;
     } else {
-      picker.style.top = `${rect.bottom + 4}px`;
+      // Nie mieści się ani na górze ani na dole - wyśrodkuj w oknie
+      topPosition = Math.max(10, (viewportHeight - pickerRect.height) / 2);
     }
+    picker.style.top = `${topPosition}px`;
     
     if (rect.left + pickerRect.width > viewportWidth - 10) {
       picker.style.left = `${viewportWidth - pickerRect.width - 10}px`;
@@ -9624,6 +9885,52 @@ class KappaApp {
     return comment?.comment;
   }
   
+  // Popup dla pełnego komentarza przy hover
+  private commentPopup: HTMLElement | null = null;
+  
+  private showCommentPopup(target: HTMLElement, text: string): void {
+    this.hideCommentPopup();
+    
+    const popup = document.createElement('div');
+    popup.className = 'comment-hover-popup';
+    popup.innerHTML = `
+      <div class="comment-popup-content">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="flex-shrink:0;opacity:0.6">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span>${text}</span>
+      </div>
+    `;
+    
+    document.body.appendChild(popup);
+    this.commentPopup = popup;
+    
+    // Pozycjonowanie popup
+    const rect = target.getBoundingClientRect();
+    const popupRect = popup.getBoundingClientRect();
+    
+    let top = rect.bottom + 8;
+    let left = rect.left;
+    
+    // Sprawdź czy nie wychodzi poza ekran
+    if (top + popupRect.height > window.innerHeight) {
+      top = rect.top - popupRect.height - 8;
+    }
+    if (left + popupRect.width > window.innerWidth) {
+      left = window.innerWidth - popupRect.width - 8;
+    }
+    
+    popup.style.top = `${top}px`;
+    popup.style.left = `${left}px`;
+  }
+  
+  private hideCommentPopup(): void {
+    if (this.commentPopup) {
+      this.commentPopup.remove();
+      this.commentPopup = null;
+    }
+  }
+
   private showProjectCommentModal(projectId: string, week: string, existingComment?: string): void {
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;

@@ -8787,6 +8787,84 @@ textarea.form-control {
   padding: 2px;
 }
 
+/* === FILTRY I SORTOWANIE === */
+.sched-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sched-filter-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.sched-filter-item:hover {
+  border-color: var(--color-primary);
+}
+
+.sched-filter-item:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-subtle);
+}
+
+.sched-filter-item svg {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.sched-filter-select {
+  padding: 4px 4px 4px 0;
+  border: none;
+  background: transparent;
+  font-size: 0.75rem;
+  color: var(--color-text);
+  cursor: pointer;
+  min-width: 100px;
+  outline: none;
+}
+
+.sched-filter-select:focus {
+  outline: none;
+}
+
+.sched-sort-toggle {
+  display: flex;
+  background: var(--color-bg-secondary);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.sched-sort-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.sched-sort-btn:hover {
+  color: var(--color-text);
+}
+
+.sched-sort-btn.active {
+  background: white;
+  color: var(--color-primary);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
 .sched-shift-btn {
   padding: 4px 10px;
   border: none;
@@ -8950,9 +9028,9 @@ textarea.form-control {
   z-index: 10;
 }
 
-.sched-table-header.shifts-1 { grid-template-columns: 180px 1fr; }
-.sched-table-header.shifts-2 { grid-template-columns: 180px 1fr 1fr; }
-.sched-table-header.shifts-3 { grid-template-columns: 180px 1fr 1fr 1fr; }
+.sched-table-header.shifts-1 { grid-template-columns: 200px 1fr; }
+.sched-table-header.shifts-2 { grid-template-columns: 200px 1fr 1fr; }
+.sched-table-header.shifts-3 { grid-template-columns: 200px 1fr 1fr 1fr; }
 
 .sched-header-cell {
   padding: 12px 16px;
@@ -8970,6 +9048,26 @@ textarea.form-control {
   border-right: 2px solid var(--color-border);
   font-size: 0.75rem;
   color: var(--color-text);
+}
+
+.sched-header-cell.sched-project-col.sortable {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sched-header-cell.sched-project-col.sortable:hover {
+  background: rgba(59, 130, 246, 0.05);
+  color: var(--color-primary);
+}
+
+.sched-header-cell.sched-project-col.sorted {
+  color: var(--color-primary);
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.sched-header-cell .sort-icon {
+  margin-left: 4px;
+  opacity: 0.7;
 }
 
 .sched-header-cell.sched-shift-col {
@@ -9058,11 +9156,12 @@ textarea.form-control {
 
 /* Komórka projektu - elegancka */
 .sched-project-cell {
-  padding: 12px 16px;
+  padding: 10px 12px;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   border-right: 2px solid var(--color-border);
   background: linear-gradient(90deg, rgba(248, 250, 252, 0.8) 0%, transparent 100%);
   position: relative;
@@ -9083,6 +9182,175 @@ textarea.form-control {
 
 .sched-row:hover .sched-project-cell::before {
   opacity: 1;
+}
+
+.sched-project-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.sched-project-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sched-project-pin {
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.3;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sched-project-pin:hover {
+  opacity: 1;
+  background: var(--color-bg-secondary);
+}
+
+.sched-project-pin.pinned {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+/* Przycisk komentarza projektu */
+.sched-project-comment-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sched-row:hover .sched-project-comment-btn {
+  opacity: 0.5;
+}
+
+.sched-project-comment-btn:hover {
+  opacity: 1;
+  background: var(--color-bg-secondary);
+}
+
+.sched-project-comment-btn.has-comment {
+  opacity: 1;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.sched-project-comment-btn.has-comment:hover {
+  background: rgba(59, 130, 246, 0.2);
+}
+
+/* Podgląd komentarza projektu */
+.sched-project-comment-preview {
+  font-size: 0.68rem;
+  color: #3b82f6;
+  font-style: italic;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+  padding: 2px 6px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 4px;
+  margin-top: 2px;
+  border-left: 2px solid #3b82f6;
+}
+
+/* Komórka projektu z komentarzem - niebieska ramka */
+.sched-project-cell.has-comment {
+  border-left: 3px solid #3b82f6;
+  padding-left: 8px;
+}
+
+/* Popup komentarza przy hover */
+.comment-hover-popup {
+  position: fixed;
+  z-index: 9999;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  padding: 10px 14px;
+  max-width: 320px;
+  animation: popupFadeIn 0.15s ease;
+}
+
+.comment-popup-content {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+
+@keyframes popupFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Stary styl .sched-project-comment - zostawiamy dla kompatybilności */
+.sched-project-comment {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sched-row:hover .sched-project-comment {
+  opacity: 0.5;
+}
+
+.sched-project-comment:hover {
+  opacity: 1;
+  background: var(--color-bg-secondary);
+}
+
+.sched-project-comment.has-comment {
+  opacity: 1;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.sched-project-comment.has-comment:hover {
+  background: rgba(59, 130, 246, 0.2);
 }
 
 .sched-project-customer {
@@ -9193,6 +9461,28 @@ textarea.form-control {
   transform: scale(0.98);
 }
 
+/* Chip z komentarzem - niebieska obwódka jak w Kappie */
+.sched-chip.has-note {
+  border: 2px solid #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15), 0 2px 8px rgba(59, 130, 246, 0.2);
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, var(--color-surface) 100%);
+}
+
+.sched-chip.has-note:hover {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25), 0 4px 16px rgba(59, 130, 246, 0.3);
+  transform: translateY(-2px) scale(1.02);
+}
+
+.sched-chip-note-icon {
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.sched-chip-note-icon:hover {
+  transform: scale(1.3);
+}
+
 /* Główna część chipa */
 .sched-chip-main {
   display: flex;
@@ -9269,6 +9559,53 @@ textarea.form-control {
 .sched-chip-badge.scope-part {
   background: rgba(249, 115, 22, 0.15);
   color: #f97316;
+}
+
+/* Podgląd notatki w chipie */
+.sched-chip-note-preview {
+  font-size: 0.7rem;
+  color: #f59e0b;
+  font-style: italic;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+  padding: 1px 4px;
+  background: rgba(245, 158, 11, 0.1);
+  border-radius: 3px;
+  margin-top: 2px;
+}
+
+/* Przycisk komentarza w chipie */
+.sched-chip-comment-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.sched-chip-comment-btn:hover {
+  background: var(--color-bg-secondary);
+  color: #3b82f6;
+}
+
+.sched-chip-comment-btn.has-comment {
+  opacity: 1;
+  color: #3b82f6;
+}
+
+.sched-chip:hover .sched-chip-comment-btn {
+  opacity: 1;
 }
 
 /* Przycisk usuwania - widoczny na hover */
@@ -10523,13 +10860,14 @@ textarea.form-control {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
-  border-radius: 8px;
-  margin-bottom: 6px;
+  border-radius: 10px;
+  margin-bottom: 8px;
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
+  position: relative;
 }
 
 .sched-absent-card:last-child {
@@ -10538,14 +10876,76 @@ textarea.form-control {
 
 .sched-absent-card:hover {
   background: var(--color-bg-secondary);
+  transform: translateX(3px);
 }
 
-.sched-absent-card.vacation {
-  border-left: 3px solid #f59e0b;
+.sched-absent-card[data-status="vacation"] {
+  border-left: 4px solid #f59e0b;
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.08) 0%, transparent 30%);
 }
 
-.sched-absent-card.sick {
-  border-left: 3px solid #ef4444;
+.sched-absent-card[data-status="sick"] {
+  border-left: 4px solid #ef4444;
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.08) 0%, transparent 30%);
+}
+
+.sched-absent-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.sched-absent-name {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sched-absent-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.sched-absent-badge.vacation {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(245, 158, 11, 0.1) 100%);
+  color: #d97706;
+}
+
+.sched-absent-badge.sick {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%);
+  color: #dc2626;
+}
+
+.sched-absent-return {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: var(--color-bg-tertiary);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sched-absent-card:hover .sched-absent-return {
+  opacity: 1;
+}
+
+.sched-absent-return:hover {
+  background: var(--color-success);
+  color: white;
 }
 
 .sched-absent-status {
