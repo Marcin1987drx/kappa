@@ -1,21 +1,7 @@
 import type { Customer, Type, Part, Test, Project, AppSettings } from '../types';
 
-// Automatyczne wykrywanie URL API - dla Codespace używa odpowiedniego URL
-function getApiBaseUrl(): string {
-  const hostname = window.location.hostname;
-  
-  // Jeśli uruchomione w GitHub Codespaces
-  if (hostname.includes('.app.github.dev')) {
-    // Zamień port 5173 na 3001 w URL Codespaces
-    const codespaceUrl = hostname.replace('-5173.', '-3001.');
-    return `https://${codespaceUrl}/api`;
-  }
-  
-  // Lokalnie
-  return 'http://localhost:3001/api';
-}
-
-const API_BASE_URL = getApiBaseUrl();
+// Używamy relatywnych ścieżek - Vite proxy przekieruje do backendu
+const API_BASE_URL = '/api';
 
 class ApiClient {
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
