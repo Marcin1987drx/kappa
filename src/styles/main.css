@@ -754,34 +754,25 @@ body.dark-theme .btn-toolbar .icon-moon {
 
 /* ==================== Focus/Advanced Mode ==================== */
 
-/* Mode Toggle Button */
-.planning-mode-toggle {
-  position: fixed;
-  top: 70px;
-  right: 20px;
-  z-index: 100;
-}
-
+/* Mode Toggle Button - in toolbar */
 .mode-toggle-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  background: var(--color-bg-elevated);
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
-  border-radius: 20px;
+  border-radius: 16px;
   color: var(--color-text);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 }
 
 .mode-toggle-btn:hover {
-  background: var(--color-bg-secondary);
+  background: var(--color-bg-elevated);
   border-color: var(--color-primary);
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 
 .mode-toggle-btn .mode-icon {
@@ -809,7 +800,7 @@ body.dark-theme .btn-toolbar .icon-moon {
 /* Planning Layout with Stats Panel */
 .planning-layout {
   display: flex;
-  height: calc(100vh - 56px - 52px);
+  height: calc(100vh - 56px - 48px); /* header + toolbar */
   position: relative;
 }
 
@@ -819,7 +810,11 @@ body.dark-theme .btn-toolbar .icon-moon {
   min-width: 0;
 }
 
-/* Focus Mode - full width grid */
+/* Focus Mode - hide toolbar, full height */
+#planningView:not(.advanced-mode) .planning-toolbar {
+  display: none;
+}
+
 #planningView:not(.advanced-mode) .planning-layout {
   height: calc(100vh - 56px);
 }
@@ -1055,11 +1050,6 @@ body.dark-theme .btn-toolbar .icon-moon {
 .priority-customer {
   font-size: 0.75rem;
   color: var(--color-text-secondary);
-}
-
-/* Focus Mode - Hide toolbar */
-#planningView:not(.advanced-mode) .planning-toolbar {
-  display: none;
 }
 
 /* Stats Section */

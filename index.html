@@ -107,25 +107,6 @@
     <main class="app-main">
       <!-- Planning View -->
       <div id="planningView" class="view active">
-        <!-- Mode Toggle Button -->
-        <div class="planning-mode-toggle">
-          <button class="mode-toggle-btn" id="modeToggleBtn" title="Przełącz tryb (F)">
-            <span class="mode-icon focus-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="10"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </span>
-            <span class="mode-icon advanced-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-              </svg>
-            </span>
-            <span class="mode-label" id="modeLabelText">Focus</span>
-          </button>
-        </div>
-
         <!-- Compact Collapsible Toolbar -->
         <div class="planning-toolbar" id="planningToolbar">
           <div class="toolbar-main">
@@ -156,6 +137,23 @@
               </div>
             </div>
             <div class="toolbar-right">
+              <!-- Mode Toggle -->
+              <button class="mode-toggle-btn" id="modeToggleBtn" title="Przełącz tryb (F)">
+                <span class="mode-icon focus-icon">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </span>
+                <span class="mode-icon advanced-icon">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                    <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                  </svg>
+                </span>
+                <span class="mode-label" id="modeLabelText">Focus</span>
+              </button>
+              <div class="toolbar-divider"></div>
               <!-- Legend Dropdown -->
               <div class="legend-dropdown">
                 <button class="btn-toolbar-compact" id="legendToggle" title="Legend">
