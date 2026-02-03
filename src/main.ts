@@ -406,6 +406,52 @@ class KappaApp {
       }
     });
 
+    // Focus/Advanced Mode Toggle
+    document.getElementById('modeToggleBtn')?.addEventListener('click', async () => {
+      this.togglePlanningMode();
+    });
+
+    // Restore planning mode from database
+    db.getPreference('planningAdvancedMode').then(advanced => {
+      if (advanced === true) {
+        document.getElementById('planningView')?.classList.add('advanced-mode');
+        document.getElementById('modeLabelText')!.textContent = 'Advanced';
+        this.updateStatsPanel();
+      }
+    });
+
+    // Keyboard shortcut for mode toggle (F key)
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'f' || e.key === 'F') {
+        const activeElement = document.activeElement;
+        const isInputFocused = activeElement?.tagName === 'INPUT' || 
+                              activeElement?.tagName === 'TEXTAREA' || 
+                              activeElement?.tagName === 'SELECT';
+        if (!isInputFocused) {
+          this.togglePlanningMode();
+        }
+      }
+    });
+
+    // Quick action buttons
+    document.getElementById('quickAddProject')?.addEventListener('click', () => {
+      this.showAddModal('project');
+    });
+
+    document.getElementById('quickWeekReport')?.addEventListener('click', () => {
+      this.showWeeklyReport();
+    });
+
+    document.getElementById('quickExport')?.addEventListener('click', () => {
+      this.exportData();
+    });
+
+    // Stats panel collapse button
+    document.getElementById('statsPanelCollapse')?.addEventListener('click', () => {
+      const statsPanel = document.getElementById('planningStatsPanel');
+      statsPanel?.classList.toggle('collapsed');
+    });
+
     // Projects view buttons
     document.getElementById('addCustomer')?.addEventListener('click', () => this.showAddModal('customer'));
     document.getElementById('addType')?.addEventListener('click', () => this.showAddModal('type'));
@@ -827,6 +873,158 @@ class KappaApp {
     const diff = now.getTime() - start.getTime();
     const oneWeek = 1000 * 60 * 60 * 24 * 7;
     return Math.floor(diff / oneWeek) + 1;
+  }
+
+  // ==================== Focus/Advanced Mode ====================
+  private async togglePlanningMode(): Promise<void> {
+    const planningView = document.getElementById('planningView');
+    const modeLabel = document.getElementById('modeLabelText');
+    
+    if (planningView && modeLabel) {
+      const isAdvanced = planningView.classList.toggle('advanced-mode');
+      modeLabel.textContent = isAdvanced ? 'Advanced' : 'Focus';
+      
+      // Save preference
+      await db.setPreference('planningAdvancedMode', isAdvanced);
+      
+      // Update stats panel if in advanced mode
+      if (isAdvanced) {
+        this.updateStatsPanel();
+      }
+    }
+  }
+
+  private updateStatsPanel(): void {
+    // Projects stats
+    const totalProjects = this.state.projects.length;
+    const activeProjects = this.state.projects.filter(p => {
+      const weeks = Object.keys(p.weeks || {});
+      return weeks.length > 0;
+    }).length;
+    
+    // Calculate hours for current week
+    const currentWeekKey = `${new Date().getFullYear()}-KW${String(this.getCurrentWeek()).padStart(2, '0')}`;
+    let totalIst = 0;
+    let totalSoll = 0;
+    
+    this.state.projects.forEach(p => {
+      const weekData = p.weeks?.[currentWeekKey];
+      if (weekData) {
+        totalIst += weekData.ist || 0;
+        totalSoll += weekData.soll || 0;
+      }
+    });
+
+    const progressPercent = totalSoll > 0 ? Math.round((totalIst / totalSoll) * 100) : 0;
+
+    // Count alerts (projects behind schedule)
+    let delayedProjects = 0;
+    let unassignedProjects = 0;
+    let completedProjects = 0;
+    
+    this.state.projects.forEach(p => {
+      const weekData = p.weeks?.[currentWeekKey];
+      if (weekData) {
+        if (weekData.ist >= weekData.soll && weekData.soll > 0) {
+          completedProjects++;
+        } else if (weekData.ist < weekData.soll * 0.5) {
+          delayedProjects++;
+        }
+      }
+      // Check for unassigned (no schedule assignments)
+      const assignments = this.state.scheduleAssignments.filter(a => a.projectId === p.id);
+      if (assignments.length === 0) {
+        unassignedProjects++;
+      }
+    });
+
+    // Update existing HTML elements
+    const statTotal = document.getElementById('statTotalProjects');
+    const statActive = document.getElementById('statActiveProjects');
+    const statCompleted = document.getElementById('statCompletedProjects');
+    const statDelayed = document.getElementById('statDelayedProjects');
+    const weeklyDone = document.getElementById('weeklyHoursDone');
+    const weeklyTotal = document.getElementById('weeklyHoursTotal');
+    const weeklyProgress = document.getElementById('weeklyProgressBar');
+    const weeklyPercent = document.getElementById('weeklyProgressPercent');
+    const alertsList = document.getElementById('alertsList');
+    const teamWorkload = document.getElementById('teamWorkload');
+
+    if (statTotal) statTotal.textContent = String(totalProjects);
+    if (statActive) statActive.textContent = String(activeProjects);
+    if (statCompleted) statCompleted.textContent = String(completedProjects);
+    if (statDelayed) statDelayed.textContent = String(delayedProjects);
+    if (weeklyDone) weeklyDone.textContent = String(totalIst);
+    if (weeklyTotal) weeklyTotal.textContent = String(totalSoll);
+    if (weeklyProgress) weeklyProgress.style.width = `${Math.min(progressPercent, 100)}%`;
+    if (weeklyPercent) weeklyPercent.textContent = `${progressPercent}%`;
+
+    // Update alerts
+    if (alertsList) {
+      let alertsHtml = '';
+      if (delayedProjects > 0) {
+        alertsHtml += `<div class="alert-item alert-danger">
+          <span class="alert-icon">🔴</span>
+          <span class="alert-text">${delayedProjects} projekt${delayedProjects > 1 ? 'y' : ''} opóźnion${delayedProjects > 1 ? 'e' : 'y'}</span>
+        </div>`;
+      }
+      if (unassignedProjects > 0) {
+        alertsHtml += `<div class="alert-item alert-warning">
+          <span class="alert-icon">⚠️</span>
+          <span class="alert-text">${unassignedProjects} bez przypisania</span>
+        </div>`;
+      }
+      if (delayedProjects === 0 && unassignedProjects === 0) {
+        alertsHtml = `<div class="alert-item alert-success">
+          <span class="alert-icon">✅</span>
+          <span class="alert-text">Wszystko w porządku!</span>
+        </div>`;
+      }
+      alertsList.innerHTML = alertsHtml;
+    }
+
+    // Update team workload
+    if (teamWorkload) {
+      const employeeWorkload = this.state.employees.slice(0, 5).map(emp => {
+        const assignments = this.state.scheduleAssignments.filter(a => a.employeeId === emp.id);
+        const workload = Math.min((assignments.length / 5) * 100, 100);
+        const empName = `${emp.firstName} ${emp.lastName}`;
+        return `<div class="workload-item">
+          <span class="workload-name">${empName}</span>
+          <div class="workload-bar-container">
+            <div class="workload-bar-fill" style="width: ${workload}%; background: ${workload > 80 ? '#ef4444' : workload > 50 ? '#f59e0b' : '#10b981'}"></div>
+          </div>
+          <span class="workload-percent">${Math.round(workload)}%</span>
+        </div>`;
+      }).join('');
+      teamWorkload.innerHTML = employeeWorkload || '<div style="color: var(--color-text-secondary); font-size: 0.85rem;">Brak pracowników</div>';
+    }
+  }
+
+  private getTopPriorityProjects(): Project[] {
+    const currentWeekKey = `${new Date().getFullYear()}-KW${String(this.getCurrentWeek()).padStart(2, '0')}`;
+    
+    // Sort by how behind they are
+    return [...this.state.projects]
+      .filter(p => p.weeks && Object.keys(p.weeks).length > 0)
+      .sort((a, b) => {
+        const aWeek = a.weeks?.[currentWeekKey];
+        const bWeek = b.weeks?.[currentWeekKey];
+        const aRatio = aWeek ? (aWeek.ist / (aWeek.soll || 1)) : 1;
+        const bRatio = bWeek ? (bWeek.ist / (bWeek.soll || 1)) : 1;
+        return aRatio - bRatio;
+      })
+      .slice(0, 3);
+  }
+
+  private highlightProject(projectId: string): void {
+    // Scroll to project and highlight it
+    const projectRow = document.querySelector(`[data-project-id="${projectId}"]`);
+    if (projectRow) {
+      projectRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      projectRow.classList.add('highlighted');
+      setTimeout(() => projectRow.classList.remove('highlighted'), 2000);
+    }
   }
 
   private renderPlanningGrid(): void {
@@ -4116,6 +4314,82 @@ class KappaApp {
 
   private hideModal(): void {
     document.getElementById('modal')?.classList.remove('active');
+  }
+
+  private async showWeeklyReport(): Promise<void> {
+    try {
+      const currentWeek = this.getCurrentWeek();
+      const currentYear = new Date().getFullYear();
+      const weekKey = `${currentYear}-KW${String(currentWeek).padStart(2, '0')}`;
+      
+      // Get assignments for current week
+      const assignments = await db.getScheduleAssignments();
+      const weekAssignments = assignments.filter((a: ScheduleAssignment) => 
+        a.week === weekKey
+      );
+      
+      // Calculate stats
+      const employees = [...new Set(weekAssignments.map(a => a.employeeId))];
+      const projects = [...new Set(weekAssignments.map(a => a.projectId))];
+      const shifts = weekAssignments.reduce((acc, a) => {
+        acc[String(a.shift)] = (acc[String(a.shift)] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const totalHours = weekAssignments.reduce((sum, a) => {
+        // Shift is 1, 2, or 3, each is 8 hours
+        return sum + 8;
+      }, 0);
+      
+      const content = `
+        <h3 style="margin-bottom: 20px;">📊 Weekly Report - KW ${currentWeek}/${currentYear}</h3>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;">
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: var(--color-primary);">${weekAssignments.length}</div>
+            <div style="color: var(--color-text-secondary);">Total Assignments</div>
+          </div>
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: #10b981;">${employees.length}</div>
+            <div style="color: var(--color-text-secondary);">Active Employees</div>
+          </div>
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: #3b82f6;">${projects.length}</div>
+            <div style="color: var(--color-text-secondary);">Active Projects</div>
+          </div>
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: #f59e0b;">${totalHours}h</div>
+            <div style="color: var(--color-text-secondary);">Total Hours</div>
+          </div>
+        </div>
+        <h4 style="margin-bottom: 12px;">Shift Distribution</h4>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          ${Object.entries(shifts).map(([shift, count]) => `
+            <span style="background: var(--color-bg-tertiary); padding: 6px 12px; border-radius: 4px;">
+              ${shift}: <strong>${count}</strong>
+            </span>
+          `).join('')}
+        </div>
+      `;
+      
+      const modal = document.getElementById('modal')!;
+      const modalContent = modal.querySelector('.modal-content')!;
+      modalContent.innerHTML = `
+        <div class="modal-header">
+          <h3>📊 Weekly Report</h3>
+          <button class="modal-close" onclick="document.getElementById('modal').classList.remove('active')">×</button>
+        </div>
+        <div class="modal-body">
+          ${content}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="document.getElementById('modal').classList.remove('active')">Close</button>
+        </div>
+      `;
+      modal.classList.add('active');
+    } catch (error) {
+      console.error('Error generating weekly report:', error);
+      this.showToast('Error generating weekly report', 'error');
+    }
   }
 
   private async exportData(): Promise<void> {

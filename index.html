@@ -107,6 +107,25 @@
     <main class="app-main">
       <!-- Planning View -->
       <div id="planningView" class="view active">
+        <!-- Mode Toggle Button -->
+        <div class="planning-mode-toggle">
+          <button class="mode-toggle-btn" id="modeToggleBtn" title="Przełącz tryb (F)">
+            <span class="mode-icon focus-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </span>
+            <span class="mode-icon advanced-icon">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+              </svg>
+            </span>
+            <span class="mode-label" id="modeLabelText">Focus</span>
+          </button>
+        </div>
+
         <!-- Compact Collapsible Toolbar -->
         <div class="planning-toolbar" id="planningToolbar">
           <div class="toolbar-main">
@@ -195,15 +214,115 @@
           </div>
         </div>
 
-        <div class="planning-grid-wrapper">
-          <div class="planning-grid-container">
-            <div id="planningGridHeader" class="planning-grid-header">
-              <!-- Header will be generated dynamically -->
+        <!-- Planning Layout with Stats Panel -->
+        <div class="planning-layout">
+          <!-- Main Grid Area -->
+          <div class="planning-grid-wrapper">
+            <div class="planning-grid-container">
+              <div id="planningGridHeader" class="planning-grid-header">
+                <!-- Header will be generated dynamically -->
             </div>
             <div id="planningGrid" class="planning-grid">
               <!-- Grid will be generated dynamically -->
             </div>
           </div>
+          </div>
+
+          <!-- Stats Panel (Advanced Mode) -->
+          <aside class="planning-stats-panel" id="planningStatsPanel">
+            <div class="stats-panel-header">
+              <h3>📊 Statystyki</h3>
+              <button class="stats-panel-collapse" id="collapseStatsPanel" title="Zwiń panel">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 18l6-6-6-6"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- Projects Summary -->
+            <div class="stats-section">
+              <div class="stats-section-title">Projekty</div>
+              <div class="stats-grid">
+                <div class="stat-mini-card">
+                  <span class="stat-mini-value" id="statTotalProjects">0</span>
+                  <span class="stat-mini-label">Wszystkie</span>
+                </div>
+                <div class="stat-mini-card stat-active">
+                  <span class="stat-mini-value" id="statActiveProjects">0</span>
+                  <span class="stat-mini-label">Aktywne</span>
+                </div>
+                <div class="stat-mini-card stat-completed">
+                  <span class="stat-mini-value" id="statCompletedProjects">0</span>
+                  <span class="stat-mini-label">Ukończone</span>
+                </div>
+                <div class="stat-mini-card stat-delayed">
+                  <span class="stat-mini-value" id="statDelayedProjects">0</span>
+                  <span class="stat-mini-label">Opóźnione</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Weekly Progress -->
+            <div class="stats-section">
+              <div class="stats-section-title">Ten tydzień</div>
+              <div class="weekly-progress">
+                <div class="progress-info">
+                  <span id="weeklyHoursDone">0</span> / <span id="weeklyHoursTotal">0</span> h
+                </div>
+                <div class="progress-bar-container">
+                  <div class="progress-bar-fill" id="weeklyProgressBar"></div>
+                </div>
+                <div class="progress-percent" id="weeklyProgressPercent">0%</div>
+              </div>
+            </div>
+
+            <!-- Alerts -->
+            <div class="stats-section">
+              <div class="stats-section-title">⚠️ Alerty</div>
+              <div class="alerts-list" id="alertsList">
+                <div class="alert-item alert-warning">
+                  <span class="alert-icon">⏰</span>
+                  <span class="alert-text">Ładowanie...</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Team Workload -->
+            <div class="stats-section">
+              <div class="stats-section-title">👥 Obciążenie zespołu</div>
+              <div class="team-workload" id="teamWorkload">
+                <!-- Generated dynamically -->
+              </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="stats-section">
+              <div class="stats-section-title">⚡ Szybkie akcje</div>
+              <div class="quick-actions">
+                <button class="quick-action-btn" id="quickAddProject">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                  </svg>
+                  Nowy projekt
+                </button>
+                <button class="quick-action-btn" id="quickWeekReport">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                  </svg>
+                  Raport tygodnia
+                </button>
+                <button class="quick-action-btn" id="quickExport">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  Eksportuj
+                </button>
+              </div>
+            </div>
+          </aside>
         </div>
       </div>
 
