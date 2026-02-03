@@ -21,8 +21,17 @@ import { initDatabase } from './database/db.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware
-app.use(cors());
+// Middleware - CORS dla Codespaces i lokalnego dev
+app.use(cors({
+  origin: true, // Pozwala na wszystkie originy
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+}));
+
+// Obsługa preflight dla wszystkich tras
+app.options('*', cors());
+
 app.use(express.json({ limit: '50mb' }));
 
 // Health check
