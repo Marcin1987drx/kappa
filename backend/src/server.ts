@@ -21,22 +21,18 @@ import { initDatabase } from './database/db.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// Middleware - CORS dla Codespaces i lokalnego dev
+// Middleware
 app.use(cors({
-  origin: true, // Pozwala na wszystkie originy
+  origin: true,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-// Obsługa preflight dla wszystkich tras
-app.options('*', cors());
-
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json());
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: Date.now() });
+  res.json({ status: 'ok' });
 });
 
 // Routes
