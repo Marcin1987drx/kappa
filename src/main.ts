@@ -149,6 +149,21 @@ interface Comment {
   createdAt: number;
 }
 
+// ==================== Schedule Change Log Interface ====================
+interface ScheduleChangeLog {
+  id: string;
+  timestamp: number;
+  userName: string;
+  actionType: 'add' | 'remove' | 'move' | 'status_change';
+  employeeName: string;
+  projectName: string;
+  customerName: string;
+  typeName: string;
+  week: string;
+  shift?: number;
+  details?: string;
+}
+
 // ==================== Main Application ====================
 class KappaApp {
   private state: AppState = {
@@ -179,6 +194,7 @@ class KappaApp {
 
   private comments: Comment[] = [];
   private logs: ActivityLog[] = [];
+  private scheduleChangeLogs: ScheduleChangeLog[] = [];
   private weeklyChart: Chart | null = null;
   private testChart: Chart | null = null;
   private trendChart: Chart | null = null;
@@ -560,6 +576,16 @@ class KappaApp {
     // Logs view buttons
     document.getElementById('exportLogs')?.addEventListener('click', () => this.exportLogs());
     document.getElementById('clearLogs')?.addEventListener('click', () => this.clearLogs());
+    
+    // Open logs from settings
+    document.getElementById('openLogsView')?.addEventListener('click', () => {
+      this.switchView('logs');
+    });
+    
+    // Back to settings from logs
+    document.getElementById('backToSettings')?.addEventListener('click', () => {
+      this.switchView('settings');
+    });
 
     // Modal close
     document.querySelector('.modal-close')?.addEventListener('click', () => this.hideModal());
@@ -5596,6 +5622,8 @@ class KappaApp {
     this.renderScheduleEmployeePanel();
     this.renderScheduleAlerts();
     this.renderScheduleContent();
+    this.renderScheduleStats();
+    this.renderScheduleHistory();
   }
   
   private renderScheduleFilters(): void {
@@ -7196,6 +7224,389 @@ class KappaApp {
     this.renderScheduleEmployeePanel();
   }
   
+  // ==================== Schedule Statistics ====================
+  private renderScheduleStats(): void {
+    const container = document.getElementById('scheduleStatsPanel');
+    if (!container) return;
+    
+    const stats: Array<{ type: 'warning' | 'info' | 'success'; icon: string; text: string }> = [];
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const currentYear = this.scheduleCurrentYear;
+    
+    // Analiza pracowników
+    this.state.employees.forEach(emp => {
+      if (emp.status && emp.status !== 'available') return;
+      
+      // Sprawdź ile tygodni z rzędu pracownik ma ten sam projekt
+      let consecutiveWeeks = 0;
+      let lastProjectId: string | null = null;
+      
+      for (let w = this.scheduleCurrentWeek; w >= Math.max(1, this.scheduleCurrentWeek - 12); w--) {
+        const wk = `${currentYear}-KW${w.toString().padStart(2, '0')}`;
+        const assignments = this.state.scheduleAssignments.filter(
+          (a: ScheduleAssignment) => a.employeeId === emp.id && a.week === wk
+        );
+        
+        if (assignments.length === 0) break;
+        
+        const projectIds = [...new Set(assignments.map((a: ScheduleAssignment) => a.projectId))];
+        const mainProject = projectIds[0];
+        
+        if (lastProjectId === null) {
+          lastProjectId = mainProject;
+          consecutiveWeeks = 1;
+        } else if (mainProject === lastProjectId) {
+          consecutiveWeeks++;
+        } else {
+          break;
+        }
+      }
+      
+      if (consecutiveWeeks >= 3 && lastProjectId) {
+        const project = this.state.projects.find(p => p.id === lastProjectId || `${p.customer_id}-${p.type_id}` === lastProjectId);
+        const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+        stats.push({
+          type: 'warning',
+          icon: '🔄',
+          text: `<strong>${emp.firstName}</strong> pracuje przy <strong>${customer?.name || '?'}</strong> od ${consecutiveWeeks} tygodni - rozważ rotację`
+        });
+      }
+      
+      // Statystyki roczne - ile razy dany projekt/test
+      const yearAssignments = this.state.scheduleAssignments.filter(
+        (a: ScheduleAssignment) => a.employeeId === emp.id && a.week.startsWith(`${currentYear}-`)
+      );
+      
+      const projectCounts = new Map<string, number>();
+      yearAssignments.forEach((a: ScheduleAssignment) => {
+        const count = projectCounts.get(a.projectId) || 0;
+        projectCounts.set(a.projectId, count + 1);
+      });
+      
+      // Znajdź projekt z największą liczbą przypisań
+      let maxProject = '';
+      let maxCount = 0;
+      projectCounts.forEach((count, projectId) => {
+        if (count > maxCount) {
+          maxCount = count;
+          maxProject = projectId;
+        }
+      });
+      
+      if (maxCount >= 10) {
+        const project = this.state.projects.find(p => p.id === maxProject || `${p.customer_id}-${p.type_id}` === maxProject);
+        const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+        stats.push({
+          type: 'info',
+          icon: '📊',
+          text: `<strong>${emp.firstName}</strong> był przypisany do <strong>${customer?.name || '?'}</strong> już ${maxCount}× w tym roku`
+        });
+      }
+    });
+    
+    // Porównanie z innymi pracownikami - kto ma mniej doświadczenia z danym projektem
+    const currentWeekAssignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.week === weekKey
+    );
+    
+    const projectsThisWeek = [...new Set(currentWeekAssignments.map((a: ScheduleAssignment) => a.projectId))];
+    
+    projectsThisWeek.forEach(projectId => {
+      const assignedEmps = currentWeekAssignments
+        .filter((a: ScheduleAssignment) => a.projectId === projectId)
+        .map((a: ScheduleAssignment) => a.employeeId);
+      
+      // Dla każdego przypisanego sprawdź ilu ma doświadczenia
+      const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
+      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+      
+      const allYearAssignments = this.state.scheduleAssignments.filter(
+        (a: ScheduleAssignment) => a.projectId === projectId && a.week.startsWith(`${currentYear}-`)
+      );
+      
+      const empExperience = new Map<string, number>();
+      allYearAssignments.forEach((a: ScheduleAssignment) => {
+        const count = empExperience.get(a.employeeId) || 0;
+        empExperience.set(a.employeeId, count + 1);
+      });
+      
+      // Znajdź kto ma najmniej doświadczenia
+      this.state.employees
+        .filter(e => !e.status || e.status === 'available')
+        .forEach(emp => {
+          const myExp = empExperience.get(emp.id) || 0;
+          const assignedExp = assignedEmps.map(id => empExperience.get(id) || 0);
+          const maxAssignedExp = Math.max(...assignedExp, 0);
+          
+          if (myExp === 0 && maxAssignedExp >= 5 && !assignedEmps.includes(emp.id)) {
+            // Ten pracownik nigdy nie robił tego projektu
+            stats.push({
+              type: 'info',
+              icon: '💡',
+              text: `<strong>${emp.firstName}</strong> jeszcze nigdy nie pracował przy <strong>${customer?.name || '?'}</strong> - świetna okazja do szkolenia`
+            });
+          }
+        });
+    });
+    
+    // Limit do 5 najbardziej istotnych
+    const displayStats = stats.slice(0, 5);
+    
+    if (displayStats.length === 0) {
+      container.innerHTML = '<div class="sched-stats-empty">Brak sugestii w tym tygodniu ✓</div>';
+    } else {
+      container.innerHTML = displayStats.map(stat => `
+        <div class="sched-stat-item ${stat.type}">
+          <span class="sched-stat-icon">${stat.icon}</span>
+          <span class="sched-stat-text">${stat.text}</span>
+        </div>
+      `).join('');
+    }
+    
+    // Event listener dla przycisku rozwijania
+    document.getElementById('openStatsModal')?.addEventListener('click', () => {
+      this.showScheduleStatsModal(stats);
+    });
+  }
+  
+  private showScheduleStatsModal(stats: Array<{ type: string; icon: string; text: string }>): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    modalTitle.innerHTML = '📊 Statystyki i Sugestie';
+    modalBody.innerHTML = `
+      <div class="stats-modal-content" style="max-height: 400px; overflow-y: auto;">
+        ${stats.length === 0 ? '<p style="text-align: center; color: var(--color-text-muted);">Brak sugestii</p>' : stats.map(stat => `
+          <div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 8px; border-left: 3px solid ${stat.type === 'warning' ? '#f59e0b' : stat.type === 'info' ? '#3b82f6' : '#10b981'};">
+            <span style="font-size: 18px;">${stat.icon}</span>
+            <span style="flex: 1; font-size: 0.875rem; line-height: 1.5;">${stat.text}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
+    cancelBtn.style.display = 'none';
+    confirmBtn.textContent = 'Zamknij';
+    confirmBtn.onclick = () => this.hideModal();
+    
+    modal.classList.add('active');
+  }
+  
+  // ==================== Schedule Change History ====================
+  private logScheduleChange(
+    actionType: 'add' | 'remove' | 'move' | 'status_change' | 'added' | 'removed' | 'modified',
+    employeeName: string,
+    customerName: string,
+    typeName: string,
+    shift?: number,
+    details?: string
+  ): void {
+    // Normalizuj typ akcji
+    let normalizedAction: 'add' | 'remove' | 'move' | 'status_change';
+    switch (actionType) {
+      case 'added': normalizedAction = 'add'; break;
+      case 'removed': normalizedAction = 'remove'; break;
+      case 'modified': normalizedAction = 'move'; break;
+      default: normalizedAction = actionType;
+    }
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    const log: ScheduleChangeLog = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      timestamp: Date.now(),
+      userName: this.state.settings.userName || 'System',
+      actionType: normalizedAction,
+      employeeName: employeeName,
+      projectName: `${customerName} - ${typeName}`,
+      customerName: customerName,
+      typeName: typeName,
+      week: weekKey,
+      shift: shift,
+      details: details
+    };
+    
+    this.scheduleChangeLogs.unshift(log);
+    
+    // Zachowaj tylko ostatnie 100 wpisów
+    if (this.scheduleChangeLogs.length > 100) {
+      this.scheduleChangeLogs = this.scheduleChangeLogs.slice(0, 100);
+    }
+    
+    // Zapisz do localStorage
+    localStorage.setItem('scheduleChangeLogs', JSON.stringify(this.scheduleChangeLogs));
+    
+    // Odśwież widok historii
+    this.renderScheduleHistory();
+  }
+  
+  private loadScheduleChangeLogs(): void {
+    try {
+      const saved = localStorage.getItem('scheduleChangeLogs');
+      if (saved) {
+        this.scheduleChangeLogs = JSON.parse(saved);
+      }
+    } catch (e) {
+      console.warn('Failed to load schedule change logs:', e);
+      this.scheduleChangeLogs = [];
+    }
+  }
+  
+  private renderScheduleHistory(): void {
+    const container = document.getElementById('scheduleHistoryPanel');
+    if (!container) return;
+    
+    // Załaduj logi jeśli jeszcze nie załadowane
+    if (this.scheduleChangeLogs.length === 0) {
+      this.loadScheduleChangeLogs();
+    }
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Filtruj logi dla bieżącego tygodnia lub ostatnich 24h
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const allRelevantLogs = this.scheduleChangeLogs.filter(log => 
+      log.week === weekKey || log.timestamp > oneDayAgo
+    );
+    const relevantLogs = allRelevantLogs.slice(0, 10);
+    const hasMore = allRelevantLogs.length > 10;
+    
+    if (relevantLogs.length === 0) {
+      container.innerHTML = '<div class="sched-history-empty">Brak zmian w tym tygodniu</div>';
+    } else {
+      container.innerHTML = relevantLogs.map(log => {
+        const time = new Date(log.timestamp);
+        const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
+        const dateStr = `${time.getDate().toString().padStart(2, '0')}.${(time.getMonth() + 1).toString().padStart(2, '0')}`;
+        
+        let actionClass = '';
+        let actionIcon = '';
+        switch (log.actionType) {
+          case 'add':
+            actionClass = 'add';
+            actionIcon = '+';
+            break;
+          case 'remove':
+            actionClass = 'remove';
+            actionIcon = '−';
+            break;
+          case 'move':
+            actionClass = 'move';
+            actionIcon = '↔';
+            break;
+          case 'status_change':
+            actionClass = 'move';
+            actionIcon = '⟳';
+            break;
+        }
+        
+        // Buduj czytelną informację o projekcie
+        const customerName = log.customerName || '';
+        const typeName = log.typeName || '';
+        const projectDisplay = customerName && typeName ? `${customerName} · ${typeName}` : (log.projectName || '');
+        const shiftDisplay = log.shift ? `Z${log.shift}` : '';
+        
+        return `
+          <div class="sched-history-item ${actionClass}">
+            <span class="sched-history-badge ${actionClass}">${actionIcon}</span>
+            <div class="sched-history-body">
+              <div class="sched-history-main">
+                <span class="sched-history-emp">${log.employeeName}</span>
+                ${projectDisplay ? `<span class="sched-history-arrow">→</span><span class="sched-history-proj">${projectDisplay}</span>` : ''}
+                ${shiftDisplay ? `<span class="sched-history-shift">${shiftDisplay}</span>` : ''}
+              </div>
+              <div class="sched-history-meta">
+                <span>${dateStr} ${timeStr}</span>
+                ${log.details && !log.details.includes('przeniesiono do innego') ? `<span>· ${log.details}</span>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+      
+      if (hasMore) {
+        container.innerHTML += `
+          <div class="sched-history-more" id="showMoreHistory">
+            Pokaż więcej (+${allRelevantLogs.length - 10})
+          </div>
+        `;
+      }
+    }
+    
+    // Event listener dla przycisku rozwijania
+    document.getElementById('openHistoryModal')?.addEventListener('click', () => {
+      this.showScheduleHistoryModal();
+    });
+    
+    // Event listener dla "pokaż więcej"
+    document.getElementById('showMoreHistory')?.addEventListener('click', () => {
+      this.showScheduleHistoryModal();
+    });
+  }
+  
+  private showScheduleHistoryModal(): void {
+    const allLogs = this.scheduleChangeLogs.slice(0, 50);
+    
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    modalTitle.innerHTML = '📋 Historia zmian grafiku';
+    modalBody.innerHTML = `
+      <div class="history-modal-content" style="max-height: 400px; overflow-y: auto;">
+        ${allLogs.length === 0 ? '<p style="text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>' : allLogs.map(log => {
+          const time = new Date(log.timestamp);
+          const dateTimeStr = `${time.getDate().toString().padStart(2, '0')}.${(time.getMonth() + 1).toString().padStart(2, '0')}.${time.getFullYear()} ${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
+          
+          let actionLabel = '';
+          let actionColor = '';
+          switch (log.actionType) {
+            case 'add': actionLabel = '➕ Dodano'; actionColor = '#10b981'; break;
+            case 'remove': actionLabel = '➖ Usunięto'; actionColor = '#ef4444'; break;
+            case 'move': actionLabel = '↔️ Przeniesiono'; actionColor = '#3b82f6'; break;
+            case 'status_change': actionLabel = '🔄 Zmiana statusu'; actionColor = '#f59e0b'; break;
+          }
+          
+          // Buduj czytelną informację o projekcie
+          const customerName = log.customerName || '';
+          const typeName = log.typeName || '';
+          const projectDisplay = customerName && typeName ? `${customerName} (${typeName})` : log.projectName;
+          
+          return `
+            <div style="padding: 12px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 8px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <strong style="color: ${actionColor};">${actionLabel}</strong>
+                <small style="color: var(--color-text-muted);">${dateTimeStr}</small>
+              </div>
+              <div style="margin-bottom: 4px;">
+                <span style="color: var(--color-primary); font-weight: 600;">${log.employeeName}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <span style="font-size: 0.85rem;">→</span>
+                <span style="font-weight: 500; color: var(--color-text);">${projectDisplay}</span>
+                ${log.shift ? `<span style="background: var(--color-info-bg); color: var(--color-info); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Zmiana ${log.shift}</span>` : ''}
+                <span style="color: var(--color-text-muted); font-size: 0.75rem;">${log.week}</span>
+              </div>
+              ${log.details ? `<div style="margin-top: 6px; font-size: 0.8rem; color: var(--color-text-secondary); padding-left: 16px; border-left: 2px solid var(--color-border);">${log.details}</div>` : ''}
+              ${log.userName ? `<div style="margin-top: 4px; font-size: 0.7rem; color: var(--color-text-muted);">przez ${log.userName}</div>` : ''}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
+    cancelBtn.style.display = 'none';
+    confirmBtn.textContent = 'Zamknij';
+    confirmBtn.onclick = () => this.hideModal();
+    
+    modal.classList.add('active');
+  }
+  
   // Popup z detalami przypisań pracownika
   private showEmployeeHoverPopup(event: MouseEvent, employeeId: string): void {
     this.hideEmployeeHoverPopup();
@@ -7829,7 +8240,7 @@ class KappaApp {
       }
     }
     
-    this.logScheduleChange('added', `${copied} przypisań`, `skopiowano z ${sourceWeekKey}`);
+    this.logScheduleChange('added', `${copied} przypisań`, 'Kopiowanie', sourceWeekKey, undefined, `skopiowano z ${sourceWeekKey}`);
     this.showToast(`Skopiowano ${copied} przypisań z ${sourceWeekKey}`, 'success');
     this.renderScheduleContent();
     this.renderScheduleEmployeePanel();
@@ -8862,11 +9273,25 @@ class KappaApp {
     const oldShift = assignment.shift;
     const oldProjectId = assignment.projectId;
     
+    // Pobierz informacje o starym projekcie
+    const oldProject = this.state.projects.find(p => p.id === oldProjectId || `${p.customer_id}-${p.type_id}` === oldProjectId);
+    const oldCustomer = oldProject ? this.state.customers.find(c => c.id === oldProject.customer_id) : null;
+    const oldType = oldProject ? this.state.types.find(t => t.id === oldProject.type_id) : null;
+    
     // Sprawdź czy coś się zmienia
     const shiftChanged = assignment.shift !== newShift;
     const projectChanged = newProjectId && assignment.projectId !== newProjectId;
     
     if (!shiftChanged && !projectChanged) return;
+    
+    // Pobierz informacje o nowym projekcie jeśli się zmienił
+    let newCustomer = oldCustomer;
+    let newType = oldType;
+    if (projectChanged && newProjectId) {
+      const newProject = this.state.projects.find(p => p.id === newProjectId || `${p.customer_id}-${p.type_id}` === newProjectId);
+      newCustomer = newProject ? this.state.customers.find(c => c.id === newProject.customer_id) : null;
+      newType = newProject ? this.state.types.find(t => t.id === newProject.type_id) : null;
+    }
     
     if (shiftChanged) {
       assignment.shift = newShift;
@@ -8880,13 +9305,13 @@ class KappaApp {
     
     // Log zmiany
     if (projectChanged && shiftChanged) {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono do innego projektu i Z${oldShift} → Z${newShift}`);
-      this.showToast(`Przeniesiono do innego projektu na zmianę ${newShift}`, 'success');
+      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, newCustomer?.name || '?', newType?.name || '?', newShift, `z ${oldCustomer?.name || '?'} Z${oldShift} → ${newCustomer?.name || '?'} Z${newShift}`);
+      this.showToast(`Przeniesiono do ${newCustomer?.name || 'innego projektu'} na zmianę ${newShift}`, 'success');
     } else if (projectChanged) {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono do innego projektu`);
-      this.showToast(`Przeniesiono do innego projektu`, 'success');
+      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, newCustomer?.name || '?', newType?.name || '?', newShift, `z ${oldCustomer?.name || '?'} → ${newCustomer?.name || '?'}`);
+      this.showToast(`Przeniesiono do ${newCustomer?.name || 'innego projektu'}`, 'success');
     } else {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, `przeniesiono Z${oldShift} → Z${newShift}`);
+      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, oldCustomer?.name || '?', oldType?.name || '?', newShift, `Z${oldShift} → Z${newShift}`);
       this.showToast(`Przeniesiono na zmianę ${newShift}`, 'success');
     }
     
@@ -9408,7 +9833,8 @@ class KappaApp {
     const emp = this.state.employees.find(e => e.id === employeeId);
     const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
     const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${shift}`);
+    const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, customer?.name || '?', type?.name || '?', shift);
     
     this.renderScheduleProjectsPanel();
     this.renderScheduleAlerts();
@@ -9417,30 +9843,6 @@ class KappaApp {
     
     const scopeText = scope === 'project' ? i18n.t('schedule.wholeProject') : (testId ? 'test' : 'część');
     this.showToast(`${i18n.t('schedule.assignedTo')} ${shift} (${scopeText})`, 'success');
-  }
-  
-  private logScheduleChange(action: 'added' | 'removed' | 'modified', employee: string, details: string): void {
-    const historyJson = localStorage.getItem('kappa_schedule_history') || '[]';
-    let history: Array<{action: string; type: string; details: string; timestamp: number}> = [];
-    try {
-      history = JSON.parse(historyJson);
-    } catch (e) {
-      history = [];
-    }
-    
-    history.push({
-      action,
-      type: 'Assignment',
-      details: `${action === 'added' ? 'Przypisano' : action === 'removed' ? 'Usunięto' : 'Zmieniono'} <strong>${employee}</strong> → ${details}`,
-      timestamp: Date.now()
-    });
-    
-    // Zachowaj tylko ostatnie 100 wpisów
-    if (history.length > 100) {
-      history = history.slice(-100);
-    }
-    
-    localStorage.setItem('kappa_schedule_history', JSON.stringify(history));
   }
 
   // Picker pracownika - krok 1
@@ -10489,13 +10891,14 @@ class KappaApp {
       const emp = this.state.employees.find(e => e.id === assignment.employeeId);
       const project = this.state.projects.find(p => p.id === assignment.projectId || `${p.customer_id}-${p.type_id}` === assignment.projectId);
       const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+      const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
       
       this.state.scheduleAssignments.splice(idx, 1);
       await db.delete('scheduleAssignments', assignmentId);
       await this.addLog('deleted', 'Assignment', assignmentId);
       
       // Loguj do historii
-      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${assignment.shift}`);
+      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, customer?.name || '?', type?.name || '?', assignment.shift);
       
       this.renderScheduleProjectsPanel();
       this.renderScheduleEmployeePanel();
@@ -10732,7 +11135,7 @@ class KappaApp {
       const newNoteContent = existingNote + '---REPLIES---' + JSON.stringify(existingReplies);
       
       // Aktualizuj w bazie
-      await this.database.put('scheduleAssignments', {
+      await db.put('scheduleAssignments', {
         ...assignment,
         note: newNoteContent
       });

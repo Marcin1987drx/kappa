@@ -9073,7 +9073,8 @@ textarea.form-control {
   grid-template-columns: 1fr 300px;
   gap: 16px;
   min-height: calc(100vh - 180px);
-  overflow: hidden;
+  overflow-y: auto;
+  align-items: start;
 }
 
 /* === TABELA GRAFIKU - ELEGANCKI KORPO LOOK === */
@@ -9081,17 +9082,16 @@ textarea.form-control {
   background: var(--color-surface);
   border-radius: 16px;
   border: 1px solid var(--color-border);
-  overflow: auto;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  height: fit-content;
 }
 
 .sched-table-wrapper {
-  flex: 1;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
 }
 
 /* Header tabeli - elegancki */
@@ -9182,8 +9182,7 @@ textarea.form-control {
 
 /* Body tabeli */
 .sched-table-body {
-  flex: 1;
-  overflow-y: auto;
+  /* Bez scrollu wewnętrznego - scroll na głównym kontenerze */
 }
 
 /* Wiersze projektów */
@@ -10946,6 +10945,7 @@ textarea.form-control {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  height: fit-content;
 }
 
 .sched-panel {
@@ -11068,6 +11068,260 @@ textarea.form-control {
 .sched-panel-header-purple .sched-panel-icon {
   background: rgba(168, 85, 247, 0.15);
   color: #a855f7;
+}
+
+/* === Panele - Blue (Statystyki) === */
+.sched-panel-header-blue {
+  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%);
+}
+.sched-panel-header-blue h3 { 
+  color: #1d4ed8;
+}
+.sched-panel-header-blue .sched-panel-count {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+}
+.sched-panel-header-blue .sched-panel-icon {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+/* === Panele - Gray (Historia) === */
+.sched-panel-header-gray {
+  background: linear-gradient(180deg, #f9fafb 0%, #e5e7eb 100%);
+}
+.sched-panel-header-gray h3 { 
+  color: #4b5563;
+}
+.sched-panel-header-gray .sched-panel-count {
+  background: linear-gradient(135deg, #6b7280 0%, #4b5563 100%);
+  color: white;
+  box-shadow: 0 2px 8px rgba(107, 114, 128, 0.35);
+}
+.sched-panel-header-gray .sched-panel-icon {
+  background: rgba(107, 114, 128, 0.15);
+  color: #6b7280;
+}
+
+/* === Panel Button (rozwiń) === */
+.sched-panel-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: rgba(255,255,255,0.5);
+  border-radius: 6px;
+  color: currentColor;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: all 0.15s ease;
+}
+
+.sched-panel-btn:hover {
+  opacity: 1;
+  background: rgba(255,255,255,0.8);
+  transform: scale(1.1);
+}
+
+/* === Statystyki Content === */
+.sched-stats-content {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sched-stat-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--color-bg-secondary);
+  border-radius: 10px;
+  border-left: 3px solid var(--color-primary);
+  transition: all 0.15s ease;
+}
+
+.sched-stat-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.sched-stat-item.warning {
+  border-left-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.sched-stat-item.info {
+  border-left-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.sched-stat-item.success {
+  border-left-color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.sched-stat-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.sched-stat-text {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.sched-stat-text strong {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.sched-stats-empty {
+  text-align: center;
+  padding: 20px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+}
+
+/* === Historia Content === */
+.sched-history-content {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 450px;
+  overflow-y: auto;
+}
+
+/* Historia zmian - kompaktowy styl */
+.sched-history-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  transition: all 0.15s ease;
+}
+
+.sched-history-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.sched-history-item.add {
+  border-left: 3px solid #10b981;
+}
+
+.sched-history-item.remove {
+  border-left: 3px solid #ef4444;
+}
+
+.sched-history-item.move {
+  border-left: 3px solid #3b82f6;
+}
+
+.sched-history-badge {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.sched-history-badge.add {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+}
+
+.sched-history-badge.remove {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.sched-history-badge.move {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.sched-history-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sched-history-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.sched-history-emp {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.sched-history-arrow {
+  color: var(--color-text-muted);
+  font-size: 0.65rem;
+}
+
+.sched-history-proj {
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+.sched-history-shift {
+  font-size: 0.6rem;
+  padding: 1px 5px;
+  background: var(--color-info-bg);
+  color: var(--color-info);
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.sched-history-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.62rem;
+  color: var(--color-text-muted);
+}
+
+.sched-history-more {
+  padding: 8px;
+  font-size: 0.7rem;
+  color: var(--color-primary);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: all 0.15s ease;
+  font-weight: 500;
+  text-align: center;
+}
+
+.sched-history-more:hover {
+  background: var(--color-primary-subtle);
+}
+
+.sched-history-empty {
+  text-align: center;
+  padding: 16px;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
 }
 
 /* === Filtr pracownika === */
