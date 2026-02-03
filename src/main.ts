@@ -406,30 +406,27 @@ class KappaApp {
       }
     });
 
-    // Focus/Advanced Mode Toggle
-    document.getElementById('modeToggleBtn')?.addEventListener('click', async () => {
-      this.togglePlanningMode();
+    // Sliding Stats Panel - Tab toggle
+    document.getElementById('statsPanelTab')?.addEventListener('click', () => {
+      const panel = document.getElementById('statsSlidePanel');
+      panel?.classList.add('open');
+      this.updateStatsPanel();
     });
 
-    // Restore planning mode from database
-    db.getPreference('planningAdvancedMode').then(advanced => {
-      if (advanced === true) {
-        document.getElementById('planningView')?.classList.add('advanced-mode');
-        document.getElementById('modeLabelText')!.textContent = 'Advanced';
-        this.updateStatsPanel();
-      }
+    // Sliding Stats Panel - Close button
+    document.getElementById('statsPanelClose')?.addEventListener('click', () => {
+      const panel = document.getElementById('statsSlidePanel');
+      panel?.classList.remove('open');
     });
 
-    // Keyboard shortcut for mode toggle (F key)
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'f' || e.key === 'F') {
-        const activeElement = document.activeElement;
-        const isInputFocused = activeElement?.tagName === 'INPUT' || 
-                              activeElement?.tagName === 'TEXTAREA' || 
-                              activeElement?.tagName === 'SELECT';
-        if (!isInputFocused) {
-          this.togglePlanningMode();
-        }
+    // Click outside to close panel
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('statsSlidePanel');
+      const target = e.target as HTMLElement;
+      if (panel?.classList.contains('open') && 
+          !panel.contains(target) && 
+          !target.closest('#statsPanelTab')) {
+        panel.classList.remove('open');
       }
     });
 
@@ -444,12 +441,6 @@ class KappaApp {
 
     document.getElementById('quickAnalytics')?.addEventListener('click', () => {
       this.showAnalyticsModal();
-    });
-
-    // Stats panel collapse button
-    document.getElementById('statsPanelCollapse')?.addEventListener('click', () => {
-      const statsPanel = document.getElementById('planningStatsPanel');
-      statsPanel?.classList.toggle('collapsed');
     });
 
     // Projects view buttons

@@ -752,52 +752,9 @@ body.dark-theme .btn-toolbar .icon-moon {
   padding: 6px !important;
 }
 
-/* ==================== Focus/Advanced Mode ==================== */
+/* ==================== Sliding Stats Panel ==================== */
 
-/* Mode Toggle Button - in toolbar */
-.mode-toggle-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: 16px;
-  color: var(--color-text);
-  font-size: 0.8rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.mode-toggle-btn:hover {
-  background: var(--color-bg-elevated);
-  border-color: var(--color-primary);
-}
-
-.mode-toggle-btn .mode-icon {
-  display: none;
-}
-
-.mode-toggle-btn .focus-icon {
-  display: flex;
-}
-
-#planningView.advanced-mode .mode-toggle-btn .focus-icon {
-  display: none;
-}
-
-#planningView.advanced-mode .mode-toggle-btn .advanced-icon {
-  display: flex;
-}
-
-#planningView.advanced-mode .mode-toggle-btn {
-  background: var(--color-primary);
-  border-color: var(--color-primary);
-  color: white;
-}
-
-/* Planning Layout with Stats Panel */
+/* Planning Layout */
 .planning-layout {
   display: flex;
   height: calc(100vh - 56px - 48px); /* header + toolbar */
@@ -810,62 +767,153 @@ body.dark-theme .btn-toolbar .icon-moon {
   min-width: 0;
 }
 
-/* Focus Mode - hide toolbar, full height */
-#planningView:not(.advanced-mode) .planning-toolbar {
-  display: none;
-}
-
-#planningView:not(.advanced-mode) .planning-layout {
+/* Sliding Panel Container */
+.stats-slide-panel {
+  position: fixed;
+  top: 56px; /* below header */
+  right: 0;
   height: calc(100vh - 56px);
+  z-index: 200;
+  display: flex;
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
 }
 
-#planningView:not(.advanced-mode) .planning-layout > .planning-grid-wrapper {
-  width: 100%;
+.stats-slide-panel.open {
+  transform: translateX(0);
 }
 
-/* Stats Panel */
-.planning-stats-panel {
-  width: 280px;
-  min-width: 280px;
-  max-width: 280px;
-  overflow-y: auto;
-  overflow-x: hidden;
-  background: var(--color-bg-elevated);
-  border-left: 1px solid var(--color-border);
-  transition: all 0.3s ease;
+/* Tab/Handle Button */
+.stats-panel-tab {
+  position: absolute;
+  left: -44px;
+  top: 100px;
+  width: 44px;
+  height: 100px;
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+  border: none;
+  border-radius: 8px 0 0 8px;
+  color: white;
+  cursor: pointer;
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: -2px 2px 8px rgba(0,0,0,0.15);
+  transition: all 0.2s ease;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
 }
 
-#planningView:not(.advanced-mode) .planning-stats-panel {
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  padding: 0;
-  border: none;
+.stats-panel-tab:hover {
+  left: -48px;
+  width: 48px;
+  background: linear-gradient(135deg, var(--color-primary-dark) 0%, var(--color-primary) 100%);
+}
+
+.stats-panel-tab span {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.stats-panel-tab svg {
+  transform: rotate(90deg);
+}
+
+.stats-slide-panel.open .stats-panel-tab {
   opacity: 0;
+  pointer-events: none;
 }
 
-#planningView.advanced-mode .planning-stats-panel {
-  opacity: 1;
+/* Panel Content */
+.stats-panel-content {
+  width: 300px;
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.1);
 }
 
 .stats-panel-header {
   padding: 16px;
   background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .stats-panel-header h3 {
   margin: 0;
   font-size: 1rem;
   font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.stats-panel-content {
+.stats-panel-close {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  border-radius: 6px;
+  padding: 6px;
+  cursor: pointer;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.stats-panel-close:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+/* Analytics Button - prominent */
+.analytics-panel-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px 16px 16px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  border: none;
+  border-radius: 12px;
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.analytics-panel-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
+  background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+}
+
+.analytics-panel-btn svg:first-child {
+  flex-shrink: 0;
+}
+
+.analytics-panel-btn span {
+  flex: 1;
+  text-align: left;
+}
+
+.analytics-panel-btn .arrow-icon {
+  opacity: 0.7;
+  transition: transform 0.2s;
+}
+
+.analytics-panel-btn:hover .arrow-icon {
+  transform: translateX(4px);
+  opacity: 1;
+}
+
+.stats-panel-body {
   flex: 1;
   overflow-y: auto;
   padding: 16px;
