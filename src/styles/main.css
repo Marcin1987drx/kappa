@@ -14425,6 +14425,7 @@ textarea.form-control {
   background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   border-radius: 12px;
   color: white;
+  flex-shrink: 0;
 }
 
 .absence-year-nav {
@@ -14456,6 +14457,8 @@ textarea.form-control {
   background: var(--color-bg-secondary);
   border-radius: 12px;
   overflow: hidden;
+  flex-shrink: 0;
+  height: auto;
 }
 
 .absence-panel-header {
@@ -14538,7 +14541,7 @@ textarea.form-control {
   font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
-  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .absence-settings-btn:hover {
