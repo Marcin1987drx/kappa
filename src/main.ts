@@ -1,4 +1,6 @@
 import { i18n } from './i18n';
+import { api } from './api/client';
+import { db } from './database';
 import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus } from './types';
 import { Chart, registerables } from 'chart.js';
 import ExcelJS from 'exceljs';
@@ -31,115 +33,6 @@ const EMPLOYEE_COLORS = [
   '#607D8B', '#F44336'
 ];
 
-// ==================== IndexedDB Database ====================
-class Database {
-  private db: IDBDatabase | null = null;
-  private readonly DB_NAME = 'KappaPlannungDB';
-  private readonly DB_VERSION = 5;
-
-  async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-        
-        if (!db.objectStoreNames.contains('customers')) {
-          db.createObjectStore('customers', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('types')) {
-          db.createObjectStore('types', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('parts')) {
-          db.createObjectStore('parts', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('tests')) {
-          db.createObjectStore('tests', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('projects')) {
-          db.createObjectStore('projects', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('settings')) {
-          db.createObjectStore('settings', { keyPath: 'key' });
-        }
-        if (!db.objectStoreNames.contains('comments')) {
-          db.createObjectStore('comments', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('logs')) {
-          db.createObjectStore('logs', { keyPath: 'id' });
-        }
-        // New stores for Schedule module
-        if (!db.objectStoreNames.contains('employees')) {
-          db.createObjectStore('employees', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('scheduleEntries')) {
-          db.createObjectStore('scheduleEntries', { keyPath: 'id' });
-        }
-        // New stores for enhanced Schedule (v5)
-        if (!db.objectStoreNames.contains('scheduleAssignments')) {
-          db.createObjectStore('scheduleAssignments', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('projectComments')) {
-          db.createObjectStore('projectComments', { keyPath: 'id' });
-        }
-      };
-    });
-  }
-
-  private getStore(storeName: string, mode: IDBTransactionMode = 'readonly'): IDBObjectStore {
-    if (!this.db) throw new Error('Database not initialized');
-    return this.db.transaction(storeName, mode).objectStore(storeName);
-  }
-
-  async getAll<T>(storeName: string): Promise<T[]> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName).getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async get<T>(storeName: string, key: string): Promise<T | undefined> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName).get(key);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async put<T>(storeName: string, item: T): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName, 'readwrite').put(item);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async delete(storeName: string, key: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName, 'readwrite').delete(key);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async clear(storeName: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName, 'readwrite').clear();
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-}
-
-const db = new Database();
-
 // ==================== Comment Interface ====================
 interface Comment {
   id: string;
@@ -147,21 +40,6 @@ interface Comment {
   week: string;
   text: string;
   createdAt: number;
-}
-
-// ==================== Schedule Change Log Interface ====================
-interface ScheduleChangeLog {
-  id: string;
-  timestamp: number;
-  userName: string;
-  actionType: 'add' | 'remove' | 'move' | 'status_change';
-  employeeName: string;
-  projectName: string;
-  customerName: string;
-  typeName: string;
-  week: string;
-  shift?: number;
-  details?: string;
 }
 
 // ==================== Main Application ====================
@@ -194,7 +72,6 @@ class KappaApp {
 
   private comments: Comment[] = [];
   private logs: ActivityLog[] = [];
-  private scheduleChangeLogs: ScheduleChangeLog[] = [];
   private weeklyChart: Chart | null = null;
   private testChart: Chart | null = null;
   private trendChart: Chart | null = null;
@@ -212,16 +89,29 @@ class KappaApp {
   // Active cell for keyboard navigation
   private activeCell: { projectId: string; week: number; type: 'ist' | 'soll' } | null = null;
 
+  // Absence module state
+  private absenceYear: number = new Date().getFullYear();
+  private absenceViewMode: 'calendar' | 'list' | 'heatmap' | 'employees' = 'calendar';
+  private absenceCalendarMonth: number = new Date().getMonth();
+  private absenceFilterEmployee: string = '';
+  private absenceFilterType: string = '';
+  private absenceFilterMonth: string = '';
+  private absenceTypes: any[] = [];
+  private absences: any[] = [];
+  private absenceLimits: any[] = [];
+  private holidays: any[] = [];
+  private absenceEventsInitialized: boolean = false;
+
   async init(): Promise<void> {
     try {
       await db.init();
       await this.loadData();
       
-      // Load pinned projects from localStorage
-      this.loadPinnedProjects();
+      // Load pinned projects from database
+      await this.loadPinnedProjects();
       
-      // Load item tags from localStorage
-      this.loadItemTags();
+      // Load item tags from database
+      await this.loadItemTags();
       
       // Load example data if database is empty
       if (this.state.projects.length === 0 && this.state.customers.length === 0) {
@@ -500,20 +390,21 @@ class KappaApp {
     document.getElementById('importData')?.addEventListener('click', () => this.importData());
 
     // Toolbar collapse toggle
-    document.getElementById('toggleToolbarExpand')?.addEventListener('click', () => {
+    document.getElementById('toggleToolbarExpand')?.addEventListener('click', async () => {
       const toolbar = document.getElementById('planningToolbar');
       if (toolbar) {
         toolbar.classList.toggle('collapsed');
-        // Save preference
-        localStorage.setItem('toolbarCollapsed', toolbar.classList.contains('collapsed') ? 'true' : 'false');
+        // Save preference to database
+        await db.setPreference('toolbarCollapsed', toolbar.classList.contains('collapsed'));
       }
     });
 
-    // Restore toolbar state
-    const toolbarCollapsed = localStorage.getItem('toolbarCollapsed');
-    if (toolbarCollapsed === 'true') {
-      document.getElementById('planningToolbar')?.classList.add('collapsed');
-    }
+    // Restore toolbar state from database
+    db.getPreference('toolbarCollapsed').then(collapsed => {
+      if (collapsed === true) {
+        document.getElementById('planningToolbar')?.classList.add('collapsed');
+      }
+    });
 
     // Projects view buttons
     document.getElementById('addCustomer')?.addEventListener('click', () => this.showAddModal('customer'));
@@ -576,16 +467,8 @@ class KappaApp {
     // Logs view buttons
     document.getElementById('exportLogs')?.addEventListener('click', () => this.exportLogs());
     document.getElementById('clearLogs')?.addEventListener('click', () => this.clearLogs());
-    
-    // Open logs from settings
-    document.getElementById('openLogsView')?.addEventListener('click', () => {
-      this.switchView('logs');
-    });
-    
-    // Back to settings from logs
-    document.getElementById('backToSettings')?.addEventListener('click', () => {
-      this.switchView('settings');
-    });
+    document.getElementById('openLogsView')?.addEventListener('click', () => this.switchView('logs'));
+    document.getElementById('backToSettings')?.addEventListener('click', () => this.switchView('settings'));
 
     // Modal close
     document.querySelector('.modal-close')?.addEventListener('click', () => this.hideModal());
@@ -621,23 +504,23 @@ class KappaApp {
   }
   
   // Toggle project pin status
-  private togglePin(projectId: string): void {
+  private async togglePin(projectId: string): Promise<void> {
     if (this.pinnedProjects.has(projectId)) {
       this.pinnedProjects.delete(projectId);
     } else {
       this.pinnedProjects.add(projectId);
     }
-    // Save pinned projects to localStorage
-    localStorage.setItem('pinnedProjects', JSON.stringify([...this.pinnedProjects]));
+    // Save pinned projects to database
+    await db.setPreference('pinnedProjects', [...this.pinnedProjects]);
     this.renderPlanningGrid();
   }
   
-  // Load pinned projects from localStorage
-  private loadPinnedProjects(): void {
+  // Load pinned projects from database
+  private async loadPinnedProjects(): Promise<void> {
     try {
-      const saved = localStorage.getItem('pinnedProjects');
-      if (saved) {
-        this.pinnedProjects = new Set(JSON.parse(saved));
+      const saved = await db.getPreference('pinnedProjects');
+      if (saved && Array.isArray(saved)) {
+        this.pinnedProjects = new Set(saved);
       }
     } catch (e) {
       console.warn('Failed to load pinned projects:', e);
@@ -925,6 +808,9 @@ class KappaApp {
         break;
       case 'schedule':
         this.renderScheduleView();
+        break;
+      case 'absences':
+        this.renderAbsencesView();
         break;
       case 'logs':
         this.renderLogsView();
@@ -2575,15 +2461,15 @@ class KappaApp {
     }, 10);
   }
   
-  private saveItemTags(): void {
-    localStorage.setItem('itemTags', JSON.stringify([...this.itemTags]));
+  private async saveItemTags(): Promise<void> {
+    await db.setPreference('itemTags', [...this.itemTags]);
   }
   
-  private loadItemTags(): void {
+  private async loadItemTags(): Promise<void> {
     try {
-      const saved = localStorage.getItem('itemTags');
-      if (saved) {
-        this.itemTags = new Map(JSON.parse(saved));
+      const saved = await db.getPreference('itemTags');
+      if (saved && Array.isArray(saved)) {
+        this.itemTags = new Map(saved);
       }
     } catch (e) {
       console.warn('Failed to load item tags:', e);
@@ -3134,10 +3020,16 @@ class KappaApp {
 
   // Helper to get week data with year-aware key lookup
   private getWeekData(project: Project, weekKey: string): { ist: number; soll: number; stoppage?: boolean; productionLack?: boolean } {
-    // Use ONLY year-prefixed key (e.g., "2026-KW05") - no fallback to old keys
-    // This ensures each year has its own separate data
+    // Try year-prefixed key first (e.g., "2026-KW05")
     const yearWeekKey = `${this.state.selectedYear}-${weekKey}`;
-    return project.weeks[yearWeekKey] || { ist: 0, soll: 0 };
+    if (project.weeks[yearWeekKey]) {
+      return project.weeks[yearWeekKey];
+    }
+    // Fallback to old format (KW05) for backwards compatibility with unmigrated data
+    if (project.weeks[weekKey]) {
+      return project.weeks[weekKey];
+    }
+    return { ist: 0, soll: 0 };
   }
 
   // Helper to iterate over all weeks of a project for the selected year
@@ -5593,37 +5485,37 @@ class KappaApp {
   private draggedEmployeeId: string | null = null;
   private draggedEmployeeScope: 'project' | 'audit' | 'adhesion' | 'specific' = 'project';
   
-  private loadPinnedScheduleProjects(): void {
+  private async loadPinnedScheduleProjects(): Promise<void> {
     try {
-      const saved = localStorage.getItem('pinnedScheduleProjects');
-      if (saved) {
-        this.pinnedScheduleProjects = new Set(JSON.parse(saved));
+      const saved = await db.getPreference('pinnedScheduleProjects');
+      if (saved && Array.isArray(saved)) {
+        this.pinnedScheduleProjects = new Set(saved);
       }
     } catch (e) {
       console.warn('Failed to load pinned schedule projects');
     }
   }
   
-  private toggleScheduleProjectPin(groupKey: string): void {
+  private async toggleScheduleProjectPin(groupKey: string): Promise<void> {
     if (this.pinnedScheduleProjects.has(groupKey)) {
       this.pinnedScheduleProjects.delete(groupKey);
     } else {
       this.pinnedScheduleProjects.add(groupKey);
     }
-    localStorage.setItem('pinnedScheduleProjects', JSON.stringify([...this.pinnedScheduleProjects]));
+    await db.setPreference('pinnedScheduleProjects', [...this.pinnedScheduleProjects]);
     this.renderScheduleProjectsPanel();
   }
   
-  private renderScheduleView(): void {
-    this.loadPinnedScheduleProjects();
+  private async renderScheduleView(): Promise<void> {
+    await this.loadPinnedScheduleProjects();
+    // Load absences for schedule integration
+    await this.loadAbsenceData();
     this.setupScheduleEventListeners();
     this.renderScheduleFilters();
     this.renderScheduleWeekNav();
     this.renderScheduleEmployeePanel();
     this.renderScheduleAlerts();
     this.renderScheduleContent();
-    this.renderScheduleStats();
-    this.renderScheduleHistory();
   }
   
   private renderScheduleFilters(): void {
@@ -5819,6 +5711,10 @@ class KappaApp {
     
     // Statystyki pracownika
     document.getElementById('employeeStatsBtn')?.addEventListener('click', () => this.showEmployeeStatsModal());
+    
+    // Klikalne panele statystyk i historii
+    document.getElementById('statsPanelContainer')?.addEventListener('click', () => this.showStatsModal());
+    document.getElementById('historyPanelContainer')?.addEventListener('click', () => this.showHistoryPanel());
   }
   
   // Mini kalendarz miesięczny
@@ -5961,56 +5857,72 @@ class KappaApp {
   }
   
   // Panel historii zmian
-  private showHistoryPanel(): void {
-    // Pobierz historię z localStorage (jeśli jest)
-    const historyJson = localStorage.getItem('kappa_schedule_history') || '[]';
-    let logs: Array<{action: string; type: string; details: string; timestamp: number}> = [];
-    try {
-      logs = JSON.parse(historyJson);
-    } catch (e) {
-      logs = [];
-    }
+  private async showHistoryPanel(): Promise<void> {
+    // Pobierz historię z lokalnego stanu (this.logs)
+    let logs = this.logs
+      .filter(log => log.entityType === 'Assignment' || log.entityType === 'Employee' || log.entityType === 'ScheduleEntry')
+      .slice(0, 100); // Max 100 wpisów
     
-    logs = logs.slice(-20).reverse();
+    // Filtruj tylko wpisy z ostatnich 30 dni
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    logs = logs
+      .filter(log => log.timestamp >= thirtyDaysAgo)
+      .sort((a, b) => b.timestamp - a.timestamp);
+    
+    // Grupuj po datach
+    const groupedLogs = new Map<string, typeof logs>();
+    logs.forEach(log => {
+      const date = new Date(log.timestamp).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit' });
+      if (!groupedLogs.has(date)) {
+        groupedLogs.set(date, []);
+      }
+      groupedLogs.get(date)!.push(log);
+    });
     
     const overlay = document.createElement('div');
     overlay.className = 'employee-modal-overlay';
     overlay.innerHTML = `
-      <div class="employee-modal" style="max-width: 500px;">
+      <div class="employee-modal" style="max-width: 550px;">
         <div class="employee-modal-header">
           <div class="employee-modal-info">
-            <h2>📋 Historia zmian</h2>
+            <h2>📋 Historia zmian (ostatnie 30 dni)</h2>
+            <span style="font-size: 0.75rem; color: var(--color-text-muted);">${logs.length} zmian</span>
           </div>
           <button class="employee-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-        <div class="employee-modal-body">
+        <div class="employee-modal-body" style="max-height: 70vh;">
           <div class="sched-history-list">
-            ${logs.length > 0 ? logs.map((log: any) => {
-              const isAdded = log.action === 'added' || log.action === 'created';
-              const isRemoved = log.action === 'deleted' || log.action === 'removed';
-              const iconClass = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
-              const iconSvg = isAdded 
-                ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-                : isRemoved
-                ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-                : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
-              
-              const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
-                day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
-              });
-              
-              return `
-                <div class="sched-history-item">
-                  <div class="sched-history-icon ${iconClass}">${iconSvg}</div>
-                  <div class="sched-history-content">
-                    <div class="sched-history-text">${log.details || `${log.action} ${log.type}`}</div>
-                    <div class="sched-history-time">${time}</div>
-                  </div>
-                </div>
-              `;
-            }).join('') : '<p style="padding: 20px; text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>'}
+            ${logs.length > 0 ? [...groupedLogs.entries()].map(([date, dayLogs]) => `
+              <div class="sched-history-date-group">
+                <div class="sched-history-date-header">${date}</div>
+                ${dayLogs.map((log: any) => {
+                  const isAdded = log.action === 'added' || log.action === 'created';
+                  const isRemoved = log.action === 'deleted' || log.action === 'removed';
+                  const iconClass = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
+                  const iconSvg = isAdded 
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+                    : isRemoved
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+                    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+                  
+                  const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
+                    hour: '2-digit', minute: '2-digit' 
+                  });
+                  
+                  return `
+                    <div class="sched-history-item">
+                      <div class="sched-history-icon ${iconClass}">${iconSvg}</div>
+                      <div class="sched-history-content">
+                        <div class="sched-history-text">${log.entityName || ''}${log.details ? ` - ${log.details}` : ''}</div>
+                        <div class="sched-history-time">${time}</div>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `).join('') : '<p style="padding: 20px; text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>'}
           </div>
         </div>
       </div>
@@ -6905,6 +6817,25 @@ class KappaApp {
     this.renderScheduleContent();
   }
   
+  // Check if employee has absence in a given week
+  private getEmployeeAbsenceInWeek(employeeId: string, year: number, week: number): any | null {
+    // Get the dates for the week
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const weekStart = new Date(jan4);
+    weekStart.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 4); // Mon-Fri
+    
+    // Check if any absence overlaps with this week
+    return this.absences.find(a => {
+      if (a.employeeId !== employeeId) return false;
+      const absStart = new Date(a.startDate);
+      const absEnd = new Date(a.endDate);
+      return absStart <= weekEnd && absEnd >= weekStart;
+    }) || null;
+  }
+
   private renderScheduleEmployeePanel(): void {
     const assignedList = document.getElementById('assignedList');
     const unassignedList = document.getElementById('unassignedList');
@@ -6915,9 +6846,22 @@ class KappaApp {
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const assignedEmployeeIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
     
-    // Podziel pracowników
-    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
-    const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
+    // Check employees with absences from absence module
+    const employeesWithAbsences = new Map<string, any>();
+    this.state.employees.forEach(e => {
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      if (absence) {
+        employeesWithAbsences.set(e.id, absence);
+      }
+    });
+    
+    // Podziel pracowników - uwzględnij nieobecności z modułu urlopów
+    const availableEmployees = this.state.employees.filter(e => 
+      (!e.status || e.status === 'available') && !employeesWithAbsences.has(e.id)
+    );
+    const absentEmployees = this.state.employees.filter(e => 
+      e.status === 'vacation' || e.status === 'sick' || employeesWithAbsences.has(e.id)
+    );
     const assignedAvailable = availableEmployees.filter(e => assignedEmployeeIds.has(e.id));
     const unassignedAvailable = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id));
     
@@ -6969,16 +6913,34 @@ class KappaApp {
         absentList.innerHTML = '<p class="sched-panel-empty">—</p>';
       } else {
         absentList.innerHTML = absentEmployees.map(emp => {
-          const isVacation = emp.status === 'vacation';
-          const icon = isVacation 
-            ? '<svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M21 15l-3-3m0 0l-3 3m3-3v9"/></svg>'
-            : '<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" width="18" height="18"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
-          const label = isVacation ? 'Urlop' : 'L4';
+          // Check if absence is from new module
+          const absenceFromModule = employeesWithAbsences.get(emp.id);
+          const absenceType = absenceFromModule ? this.absenceTypes.find(t => t.id === absenceFromModule.absenceTypeId) : null;
+          
+          const isVacation = emp.status === 'vacation' || absenceType?.id?.includes('vacation');
+          const isSick = emp.status === 'sick' || absenceType?.id === 'sick';
+          
+          let icon: string;
+          let label: string;
+          let badgeClass: string;
+          
+          if (absenceType) {
+            icon = `<span style="font-size: 1.1rem;">${absenceType.icon}</span>`;
+            label = absenceType.name.length > 15 ? absenceType.name.substring(0, 12) + '...' : absenceType.name;
+            badgeClass = isVacation ? 'vacation' : isSick ? 'sick' : 'vacation';
+          } else {
+            icon = isVacation 
+              ? '<svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M21 15l-3-3m0 0l-3 3m3-3v9"/></svg>'
+              : '<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" width="18" height="18"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
+            label = isVacation ? 'Urlop' : 'L4';
+            badgeClass = emp.status || 'vacation';
+          }
+          
           return `
-            <div class="sched-absent-card" data-employee-id="${emp.id}" data-status="${emp.status}">
+            <div class="sched-absent-card" data-employee-id="${emp.id}" data-status="${emp.status || 'absent'}" ${absenceFromModule ? `data-absence-id="${absenceFromModule.id}"` : ''}>
               <span class="sched-absent-icon">${icon}</span>
               <span class="sched-absent-name">${emp.firstName} ${emp.lastName}</span>
-              <span class="sched-absent-badge ${emp.status}">${label}</span>
+              <span class="sched-absent-badge ${badgeClass}">${label}</span>
               <button class="sched-absent-return" data-emp-id="${emp.id}" title="Przywróć">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
               </button>
@@ -7169,7 +7131,751 @@ class KappaApp {
     // Quick add
     document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
     
+    // Render stats and history panels
+    this.renderScheduleStatsPanel();
+    this.renderScheduleHistoryPanel();
+    
     (window as any).kappaApp = this;
+  }
+  
+  // Render stats panel in sidebar
+  private renderScheduleStatsPanel(): void {
+    const panel = document.getElementById('scheduleStatsPanel');
+    if (!panel) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const allAssignments = this.state.scheduleAssignments;
+    
+    // ===== PODSTAWOWE STATYSTYKI =====
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
+    const assignedEmployeeIds = new Set(weekAssignments.map(a => a.employeeId));
+    const unassignedCount = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id)).length;
+    
+    // ===== ANALIZA OBCIĄŻENIA PRACOWNIKÓW =====
+    const employeeWorkload = new Map<string, number>();
+    weekAssignments.forEach(a => {
+      employeeWorkload.set(a.employeeId, (employeeWorkload.get(a.employeeId) || 0) + 1);
+    });
+    
+    const workloads = Array.from(employeeWorkload.values());
+    const maxWorkload = Math.max(...workloads, 0);
+    const minWorkload = Math.min(...workloads.filter(w => w > 0), maxWorkload);
+    const avgWorkload = workloads.length > 0 ? workloads.reduce((a, b) => a + b, 0) / workloads.length : 0;
+    
+    // Znajdź pracowników z nierównomiernym obciążeniem
+    const overloadedEmployees: Array<{emp: Employee; count: number}> = [];
+    const underloadedEmployees: Array<{emp: Employee; count: number}> = [];
+    
+    employeeWorkload.forEach((count, empId) => {
+      const emp = this.state.employees.find(e => e.id === empId);
+      if (emp) {
+        if (count >= avgWorkload * 1.5 && count > 3) {
+          overloadedEmployees.push({ emp, count });
+        }
+      }
+    });
+    
+    // Pracownicy dostępni ale bez przypisań lub z małą liczbą
+    availableEmployees.forEach(emp => {
+      const count = employeeWorkload.get(emp.id) || 0;
+      if (count < avgWorkload * 0.5 && maxWorkload > 2) {
+        underloadedEmployees.push({ emp, count });
+      }
+    });
+    
+    // ===== ANALIZA POKRYCIA PROJEKTÓW =====
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (p.hidden) return false;
+      const weekData = p.weeks?.[weekKey];
+      return weekData && weekData.soll > 0;
+    });
+    
+    const projectGroups = new Map<string, { items: Project[]; customer: string; type: string }>();
+    projectsWithSoll.forEach(p => {
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      if (!projectGroups.has(groupKey)) {
+        const customer = this.state.customers.find(c => c.id === p.customer_id);
+        const type = this.state.types.find(t => t.id === p.type_id);
+        projectGroups.set(groupKey, { 
+          items: [], 
+          customer: customer?.name || '?',
+          type: type?.name || '?'
+        });
+      }
+      projectGroups.get(groupKey)!.items.push(p);
+    });
+    
+    let fullyCovered = 0;
+    let partiallyCovered = 0;
+    let notCovered = 0;
+    const uncoveredProjects: Array<{groupKey: string; customer: string; type: string}> = [];
+    
+    projectGroups.forEach((group, groupKey) => {
+      const groupAssignments = weekAssignments.filter((a: ScheduleAssignment) =>
+        a.projectId === groupKey || group.items.some(item => item.id === a.projectId)
+      );
+      
+      if (groupAssignments.length === 0) {
+        notCovered++;
+        uncoveredProjects.push({ groupKey, customer: group.customer, type: group.type });
+      } else {
+        // Sprawdź pełne pokrycie:
+        // 1. Ktoś jest przypisany do całego projektu (scope='project'), LUB
+        // 2. Wszystkie unikalne testy w projekcie mają przypisania
+        const hasProjectScope = groupAssignments.some((a: ScheduleAssignment) => a.scope === 'project');
+        
+        if (hasProjectScope) {
+          fullyCovered++;
+        } else {
+          // Zbierz unikalne testy wymagane w tym tygodniu
+          const requiredTests = new Set<string>();
+          group.items.forEach(p => {
+            const weekData = p.weeks?.[weekKey];
+            if (weekData && weekData.soll > 0) {
+              // Dodaj test_id projektu do wymaganych
+              if (p.test_id) requiredTests.add(p.test_id);
+            }
+          });
+          
+          // Zbierz testy które mają przypisania
+          const coveredTests = new Set<string>();
+          groupAssignments.forEach((a: ScheduleAssignment) => {
+            if (a.testId) {
+              coveredTests.add(a.testId);
+            } else if (a.scope === 'project') {
+              // Jeśli ktoś ma scope='project', pokrywa wszystkie testy
+              requiredTests.forEach(t => coveredTests.add(t));
+            }
+          });
+          
+          // Sprawdź czy wszystkie wymagane testy są pokryte
+          const allTestsCovered = requiredTests.size > 0 && 
+            [...requiredTests].every(testId => coveredTests.has(testId));
+          
+          if (allTestsCovered || requiredTests.size === 0) {
+            fullyCovered++;
+          } else if (coveredTests.size > 0) {
+            partiallyCovered++;
+          } else {
+            partiallyCovered++;
+          }
+        }
+      }
+    });
+    
+    const coveragePercent = projectGroups.size > 0 
+      ? Math.round((fullyCovered / projectGroups.size) * 100) 
+      : 100;
+    
+    // ===== ANALIZA ROTACJI - ZBYT DŁUGO NA PROJEKCIE =====
+    const consecutiveWeeksOnProject = new Map<string, Map<string, number>>(); // empId -> projectKey -> weeks
+    
+    // Sprawdź ostatnie 4 tygodnie
+    for (let i = 0; i < 4; i++) {
+      let checkWeek = this.scheduleCurrentWeek - i;
+      let checkYear = this.scheduleCurrentYear;
+      if (checkWeek < 1) {
+        checkWeek += 52;
+        checkYear--;
+      }
+      const checkKey = `${checkYear}-KW${checkWeek.toString().padStart(2, '0')}`;
+      
+      const weekAssigns = allAssignments.filter((a: ScheduleAssignment) => a.week === checkKey);
+      weekAssigns.forEach(a => {
+        const projectKey = a.projectId;
+        if (!consecutiveWeeksOnProject.has(a.employeeId)) {
+          consecutiveWeeksOnProject.set(a.employeeId, new Map());
+        }
+        const empProjects = consecutiveWeeksOnProject.get(a.employeeId)!;
+        empProjects.set(projectKey, (empProjects.get(projectKey) || 0) + 1);
+      });
+    }
+    
+    const longTermAssignments: Array<{emp: Employee; project: string; weeks: number}> = [];
+    consecutiveWeeksOnProject.forEach((projects, empId) => {
+      const emp = this.state.employees.find(e => e.id === empId);
+      if (!emp) return;
+      
+      projects.forEach((weeks, projectKey) => {
+        if (weeks >= 3) {
+          // Znajdź nazwę projektu
+          const parts = projectKey.split('-');
+          const customer = this.state.customers.find(c => c.id === parts[0]);
+          const type = this.state.types.find(t => t.id === parts[1]);
+          const projectName = customer && type ? `${customer.name} ${type.name}` : projectKey;
+          longTermAssignments.push({ emp, project: projectName, weeks });
+        }
+      });
+    });
+    
+    // ===== ANALIZA DOŚWIADCZENIA =====
+    const projectExperience = new Map<string, Map<string, number>>(); // projectKey -> empId -> count
+    
+    allAssignments.forEach((a: ScheduleAssignment) => {
+      const projectKey = a.projectId;
+      if (!projectExperience.has(projectKey)) {
+        projectExperience.set(projectKey, new Map());
+      }
+      const empExp = projectExperience.get(projectKey)!;
+      empExp.set(a.employeeId, (empExp.get(a.employeeId) || 0) + 1);
+    });
+    
+    const experienceImbalance: Array<{project: string; experienced: {emp: Employee; count: number}; inexperienced: {emp: Employee; count: number}}> = [];
+    
+    projectExperience.forEach((empCounts, projectKey) => {
+      const counts = Array.from(empCounts.entries())
+        .map(([empId, count]) => ({ emp: this.state.employees.find(e => e.id === empId), count }))
+        .filter(x => x.emp && (!x.emp.status || x.emp.status === 'available')) as Array<{emp: Employee; count: number}>;
+      
+      if (counts.length < 2) return;
+      
+      counts.sort((a, b) => b.count - a.count);
+      const max = counts[0];
+      const min = counts[counts.length - 1];
+      
+      if (max.count >= 10 && min.count <= 3 && max.count > min.count * 3) {
+        const parts = projectKey.split('-');
+        const customer = this.state.customers.find(c => c.id === parts[0]);
+        const type = this.state.types.find(t => t.id === parts[1]);
+        const projectName = customer && type ? `${customer.name} ${type.name}` : projectKey;
+        experienceImbalance.push({ project: projectName, experienced: max, inexperienced: min });
+      }
+    });
+    
+    // ===== KONFLIKTY - pracownik na 2 projektach w tej samej zmianie =====
+    const shiftConflicts: Array<{emp: Employee; shift: number; projects: string[]}> = [];
+    const empShiftProjects = new Map<string, Map<number, string[]>>(); // empId -> shift -> projects[]
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (!empShiftProjects.has(a.employeeId)) {
+        empShiftProjects.set(a.employeeId, new Map());
+      }
+      const shifts = empShiftProjects.get(a.employeeId)!;
+      if (!shifts.has(a.shift)) {
+        shifts.set(a.shift, []);
+      }
+      
+      const parts = a.projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const type = this.state.types.find(t => t.id === parts[1]);
+      const projectName = customer && type ? `${customer.name} ${type.name}` : a.projectId;
+      shifts.get(a.shift)!.push(projectName);
+    });
+    
+    empShiftProjects.forEach((shifts, empId) => {
+      const emp = this.state.employees.find(e => e.id === empId);
+      if (!emp) return;
+      
+      shifts.forEach((projects, shift) => {
+        if (projects.length > 1) {
+          shiftConflicts.push({ emp, shift, projects });
+        }
+      });
+    });
+    
+    // ===== KONFLIKT - pracownik na urlopie ale przypisany =====
+    const absentButAssigned: Array<{emp: Employee; status: string}> = [];
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (emp && (emp.status === 'vacation' || emp.status === 'sick')) {
+        if (!absentButAssigned.find(x => x.emp.id === emp.id)) {
+          absentButAssigned.push({ emp, status: emp.status === 'vacation' ? 'urlop' : 'L4' });
+        }
+      }
+    });
+    
+    // ===== SUGESTIE OPTYMALNEGO PRZYPISANIA =====
+    const optimalSuggestions: Array<{project: string; suggestedEmp: Employee; reason: string}> = [];
+    
+    uncoveredProjects.slice(0, 3).forEach(({ groupKey, customer, type }) => {
+      // Znajdź pracownika z najmniejszym obciążeniem który ma doświadczenie
+      const projectExp = projectExperience.get(groupKey);
+      
+      let bestCandidate: Employee | null = null;
+      let bestScore = -1;
+      
+      availableEmployees.forEach((emp: Employee) => {
+        if (assignedEmployeeIds.has(emp.id) && (employeeWorkload.get(emp.id) || 0) > avgWorkload) return;
+        
+        const experience = projectExp?.get(emp.id) || 0;
+        const workload = employeeWorkload.get(emp.id) || 0;
+        const score = experience * 2 - workload; // Preferuj doświadczenie, ale balansuj obciążenie
+        
+        const currentBestWorkload = bestCandidate ? (employeeWorkload.get(bestCandidate.id) || 0) : Infinity;
+        if (score > bestScore || (score === bestScore && workload < currentBestWorkload)) {
+          bestScore = score;
+          bestCandidate = emp;
+        }
+      });
+      
+      if (bestCandidate) {
+        const candidate = bestCandidate as Employee;
+        const exp = projectExp?.get(candidate.id) || 0;
+        const reason = exp > 0 
+          ? `był już ${exp} razy na tym projekcie i ma mało zadań`
+          : `ma najmniej zadań w tym tygodniu`;
+        optimalSuggestions.push({ 
+          project: `${customer} ${type}`, 
+          suggestedEmp: candidate, 
+          reason 
+        });
+      }
+    });
+    
+    // ===== BALANS ZMIAN =====
+    const shiftCounts = new Map<number, number>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      shiftCounts.set(a.shift, (shiftCounts.get(a.shift) || 0) + 1);
+    });
+    
+    const shifts = [1, 2, 3].filter(s => this.state.settings.shiftSystem >= s);
+    const shiftImbalance: {from: number; to: number; diff: number} | null = (() => {
+      let maxShift = 1, minShift = 1, maxCount = 0, minCount = Infinity;
+      shifts.forEach(s => {
+        const count = shiftCounts.get(s) || 0;
+        if (count > maxCount) { maxCount = count; maxShift = s; }
+        if (count < minCount) { minCount = count; minShift = s; }
+      });
+      if (maxCount > minCount * 2 && maxCount - minCount >= 3) {
+        return { from: maxShift, to: minShift, diff: maxCount - minCount };
+      }
+      return null;
+    })();
+    
+    // ===== GENERUJ HTML =====
+    const suggestions: string[] = [];
+    const alerts: string[] = [];
+    
+    // Alerty krytyczne
+    absentButAssigned.forEach(({ emp, status }) => {
+      alerts.push(`<div class="sched-alert danger"><span class="alert-icon">⚠️</span><span class="alert-text"><strong>${emp.firstName} ${emp.lastName}</strong> jest na ${status}, ale ma przypisania!</span></div>`);
+    });
+    
+    shiftConflicts.forEach(({ emp, shift, projects }) => {
+      alerts.push(`<div class="sched-alert warning"><span class="alert-icon">⚡</span><span class="alert-text"><strong>${emp.firstName} ${emp.lastName}</strong> ma ${projects.length} projekty na zmianie ${shift} naraz!</span></div>`);
+    });
+    
+    // Sugestie
+    if (longTermAssignments.length > 0) {
+      longTermAssignments.slice(0, 3).forEach(({ emp, project, weeks }) => {
+        suggestions.push(`<div class="sched-suggestion rotate"><span class="sugg-icon">🔄</span><span class="sugg-text"><strong>${emp.firstName}</strong> pracuje na <em>${project}</em> już ${weeks} tygodnie z rzędu - może czas na zmianę?</span></div>`);
+      });
+    }
+    
+    if (experienceImbalance.length > 0) {
+      experienceImbalance.slice(0, 2).forEach(({ project, experienced, inexperienced }) => {
+        suggestions.push(`<div class="sched-suggestion balance"><span class="sugg-icon">📊</span><span class="sugg-text"><em>${project}</em>: <strong>${experienced.emp.firstName}</strong> był ${experienced.count} razy, <strong>${inexperienced.emp.firstName}</strong> tylko ${inexperienced.count} - daj szansę mniej doświadczonemu</span></div>`);
+      });
+    }
+    
+    if (overloadedEmployees.length > 0 && underloadedEmployees.length > 0) {
+      const over = overloadedEmployees[0];
+      const under = underloadedEmployees[0];
+      suggestions.push(`<div class="sched-suggestion workload"><span class="sugg-icon">⚖️</span><span class="sugg-text"><strong>${over.emp.firstName}</strong> ma ${over.count} zadań, <strong>${under.emp.firstName}</strong> tylko ${under.count} - przenieś jedno zadanie</span></div>`);
+    }
+    
+    if (shiftImbalance) {
+      suggestions.push(`<div class="sched-suggestion shift"><span class="sugg-icon">🔀</span><span class="sugg-text">Zmiana ${shiftImbalance.from} ma ${shiftImbalance.diff} osób więcej niż zmiana ${shiftImbalance.to} - przenieś kogoś</span></div>`);
+    }
+    
+    optimalSuggestions.slice(0, 2).forEach(({ project, suggestedEmp, reason }) => {
+      suggestions.push(`<div class="sched-suggestion optimal"><span class="sugg-icon">💡</span><span class="sugg-text">Przypisz <strong>${suggestedEmp.firstName}</strong> do <em>${project}</em> - ${reason}</span></div>`);
+    });
+    
+    panel.innerHTML = `
+      <div class="sched-stats-grid">
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${assignedEmployeeIds.size}</span>
+          <span class="sched-stat-label">Przypisanych</span>
+        </div>
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${unassignedCount}</span>
+          <span class="sched-stat-label">Wolnych</span>
+        </div>
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${absentEmployees.length}</span>
+          <span class="sched-stat-label">Nieobecnych</span>
+        </div>
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${coveragePercent}%</span>
+          <span class="sched-stat-label">Pokrycie</span>
+        </div>
+      </div>
+      
+      <div class="sched-stats-coverage">
+        <div class="sched-coverage-bar">
+          <div class="sched-coverage-fill" style="width: ${coveragePercent}%"></div>
+        </div>
+        <div class="sched-coverage-legend">
+          <span class="sched-coverage-item full"><span class="dot"></span>${fullyCovered} pełne</span>
+          <span class="sched-coverage-item partial"><span class="dot"></span>${partiallyCovered} częściowe</span>
+          <span class="sched-coverage-item empty"><span class="dot"></span>${notCovered} brak</span>
+        </div>
+      </div>
+      
+      ${alerts.length > 0 ? `
+        <div class="sched-alerts-section">
+          <h5>⚠️ Alerty</h5>
+          ${alerts.join('')}
+        </div>
+      ` : ''}
+      
+      ${suggestions.length > 0 ? `
+        <div class="sched-suggestions-section">
+          <h5>💡 Sugestie</h5>
+          ${suggestions.join('')}
+        </div>
+      ` : '<div class="sched-no-suggestions">✅ Brak sugestii - grafik wygląda dobrze!</div>'}
+    `;
+  }
+  
+  // Render history panel in sidebar
+  private renderScheduleHistoryPanel(): void {
+    const panel = document.getElementById('scheduleHistoryPanel');
+    if (!panel) return;
+    
+    // Pobierz logi z bazy danych zamiast localStorage
+    const recentLogs = this.logs
+      .filter(log => log.entityType === 'Assignment' || log.entityType === 'Employee' || log.entityType === 'ScheduleEntry')
+      .slice(0, 5);
+    
+    if (recentLogs.length === 0) {
+      panel.innerHTML = '<p class="sched-panel-empty">Brak ostatnich zmian</p>';
+      return;
+    }
+    
+    panel.innerHTML = `
+      <div class="sched-history-mini-list">
+        ${recentLogs.map(log => {
+          const isAdded = log.action === 'created';
+          const isRemoved = log.action === 'deleted';
+          const iconClass = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
+          const iconSvg = isAdded 
+            ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+            : isRemoved
+            ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+            : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+          
+          const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
+            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
+          });
+          
+          return `
+            <div class="sched-history-mini-item">
+              <div class="sched-history-mini-icon ${iconClass}">${iconSvg}</div>
+              <div class="sched-history-mini-content">
+                <span class="sched-history-mini-text">${log.entityName}${log.details ? ` - ${log.details}` : ''}</span>
+                <span class="sched-history-mini-time">${time}</span>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+  
+  // Show stats modal
+  private showStatsModal(): void {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const allAssignments = this.state.scheduleAssignments;
+    
+    // === STATYSTYKI PRACOWNIKÓW ===
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const employeeStats = availableEmployees
+      .map(emp => {
+        const empAssignments = weekAssignments.filter(a => a.employeeId === emp.id);
+        const shifts = empAssignments.map(a => a.shift);
+        const projects = [...new Set(empAssignments.map(a => {
+          const parts = a.projectId.split('-');
+          const customer = this.state.customers.find(c => c.id === parts[0]);
+          return customer?.name || '?';
+        }))];
+        return {
+          id: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          firstName: emp.firstName,
+          tasks: empAssignments.length,
+          shifts: [...new Set(shifts)],
+          projects
+        };
+      })
+      .sort((a, b) => b.tasks - a.tasks);
+    
+    const maxTasks = Math.max(...employeeStats.map(e => e.tasks), 1);
+    const avgTasks = employeeStats.length > 0 ? employeeStats.reduce((sum, e) => sum + e.tasks, 0) / employeeStats.length : 0;
+    
+    // === STATYSTYKI ZMIAN ===
+    const shiftStats = [1, 2, 3].map(shift => {
+      const count = weekAssignments.filter(a => a.shift === shift).length;
+      const employees = [...new Set(weekAssignments.filter(a => a.shift === shift).map(a => a.employeeId))].length;
+      return { shift, count, employees };
+    }).filter((_, i) => i < this.scheduleShiftSystem);
+    
+    const totalShiftAssignments = shiftStats.reduce((sum, s) => sum + s.count, 0);
+    
+    // === STATYSTYKI PROJEKTÓW ===
+    const projectStats = new Map<string, {name: string; assignments: number; employees: Set<string>; shifts: Set<number>}>();
+    weekAssignments.forEach(a => {
+      const parts = a.projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const type = this.state.types.find(t => t.id === parts[1]);
+      const name = customer && type ? `${customer.name} ${type.name}` : a.projectId;
+      
+      if (!projectStats.has(a.projectId)) {
+        projectStats.set(a.projectId, { name, assignments: 0, employees: new Set(), shifts: new Set() });
+      }
+      const stat = projectStats.get(a.projectId)!;
+      stat.assignments++;
+      stat.employees.add(a.employeeId);
+      stat.shifts.add(a.shift);
+    });
+    
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (p.hidden) return false;
+      const weekData = p.weeks?.[weekKey];
+      return weekData && weekData.soll > 0;
+    });
+    
+    const projectGroupsSet = new Set<string>();
+    projectsWithSoll.forEach(p => projectGroupsSet.add(`${p.customer_id}-${p.type_id}`));
+    const totalProjects = projectGroupsSet.size;
+    const coveredProjects = projectStats.size;
+    const coveragePercent = totalProjects > 0 ? Math.round((coveredProjects / totalProjects) * 100) : 100;
+    
+    // === HISTORIA TYGODNIOWA ===
+    const weeklyHistory: Array<{week: string; assignments: number; employees: number}> = [];
+    for (let i = 5; i >= 0; i--) {
+      let checkWeek = this.scheduleCurrentWeek - i;
+      let checkYear = this.scheduleCurrentYear;
+      if (checkWeek < 1) { checkWeek += 52; checkYear--; }
+      const checkKey = `${checkYear}-KW${checkWeek.toString().padStart(2, '0')}`;
+      const weekAssigns = allAssignments.filter((a: ScheduleAssignment) => a.week === checkKey);
+      weeklyHistory.push({
+        week: `KW${checkWeek}`,
+        assignments: weekAssigns.length,
+        employees: new Set(weekAssigns.map(a => a.employeeId)).size
+      });
+    }
+    const maxHistoryAssignments = Math.max(...weeklyHistory.map(w => w.assignments), 1);
+    
+    // === TOP PRACOWNICY W MIESIĄCU ===
+    const monthlyStats = new Map<string, number>();
+    for (let i = 0; i < 4; i++) {
+      let checkWeek = this.scheduleCurrentWeek - i;
+      let checkYear = this.scheduleCurrentYear;
+      if (checkWeek < 1) { checkWeek += 52; checkYear--; }
+      const checkKey = `${checkYear}-KW${checkWeek.toString().padStart(2, '0')}`;
+      allAssignments.filter((a: ScheduleAssignment) => a.week === checkKey).forEach(a => {
+        monthlyStats.set(a.employeeId, (monthlyStats.get(a.employeeId) || 0) + 1);
+      });
+    }
+    const topMonthlyWorkers = [...monthlyStats.entries()]
+      .map(([empId, count]) => {
+        const emp = this.state.employees.find(e => e.id === empId);
+        return { name: emp ? `${emp.firstName} ${emp.lastName}` : '?', count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    
+    // === DOŚWIADCZENIE PRACOWNIKÓW NA PROJEKTACH ===
+    const employeeProjectExperience = new Map<string, Map<string, number>>(); // empId -> projectName -> count
+    allAssignments.forEach((a: ScheduleAssignment) => {
+      const parts = a.projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const projectName = customer?.name || '?';
+      
+      if (!employeeProjectExperience.has(a.employeeId)) {
+        employeeProjectExperience.set(a.employeeId, new Map());
+      }
+      const empProjects = employeeProjectExperience.get(a.employeeId)!;
+      empProjects.set(projectName, (empProjects.get(projectName) || 0) + 1);
+    });
+    
+    // Przygotuj dane do wykresu - top 8 pracowników z największym doświadczeniem
+    const experienceData = availableEmployees
+      .map(emp => {
+        const projects = employeeProjectExperience.get(emp.id) || new Map();
+        const totalExp = [...projects.values()].reduce((sum, c) => sum + c, 0);
+        const projectList = [...projects.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 4)
+          .map(([name, count]) => ({ name, count }));
+        return {
+          name: `${emp.firstName} ${emp.lastName}`,
+          firstName: emp.firstName,
+          totalExp,
+          projects: projectList
+        };
+      })
+      .filter(e => e.totalExp > 0)
+      .sort((a, b) => b.totalExp - a.totalExp)
+      .slice(0, 8);
+    
+    const maxExp = Math.max(...experienceData.map(e => e.totalExp), 1);
+    
+    // Zbierz unikalne projekty dla legendy
+    const allProjectNames = new Set<string>();
+    experienceData.forEach(e => e.projects.forEach(p => allProjectNames.add(p.name)));
+    const projectColors = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+    const projectColorMap = new Map<string, string>();
+    [...allProjectNames].slice(0, 8).forEach((name, i) => projectColorMap.set(name, projectColors[i % projectColors.length]));
+    
+    // === GENERUJ HTML ===
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal stats-modal-wide">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📊 Szczegółowe statystyki - KW${this.scheduleCurrentWeek.toString().padStart(2, '0')} ${this.scheduleCurrentYear}</h2>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="employee-modal-body stats-modal-body">
+          
+          <!-- SEKCJA 1: Podsumowanie -->
+          <div class="stats-section stats-summary">
+            <div class="stats-summary-card">
+              <div class="stats-card-value">${weekAssignments.length}</div>
+              <div class="stats-card-label">Przypisań</div>
+            </div>
+            <div class="stats-summary-card">
+              <div class="stats-card-value">${new Set(weekAssignments.map(a => a.employeeId)).size}</div>
+              <div class="stats-card-label">Pracowników</div>
+            </div>
+            <div class="stats-summary-card">
+              <div class="stats-card-value">${coveredProjects}/${totalProjects}</div>
+              <div class="stats-card-label">Projektów</div>
+            </div>
+            <div class="stats-summary-card ${coveragePercent === 100 ? 'success' : coveragePercent >= 80 ? 'warning' : 'danger'}">
+              <div class="stats-card-value">${coveragePercent}%</div>
+              <div class="stats-card-label">Pokrycie</div>
+            </div>
+          </div>
+          
+          <!-- SEKCJA 2: Wykres zmian -->
+          <div class="stats-section">
+            <h4>📈 Rozkład na zmiany</h4>
+            <div class="stats-shift-chart">
+              ${shiftStats.map(s => `
+                <div class="stats-shift-bar">
+                  <div class="stats-bar-label">Zmiana ${s.shift}</div>
+                  <div class="stats-bar-track">
+                    <div class="stats-bar-fill shift-${s.shift}" style="width: ${totalShiftAssignments > 0 ? (s.count / totalShiftAssignments * 100) : 0}%"></div>
+                  </div>
+                  <div class="stats-bar-value">${s.count} <small>(${s.employees} os.)</small></div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 3: Wykres obciążenia pracowników -->
+          <div class="stats-section">
+            <h4>👥 Obciążenie pracowników</h4>
+            <div class="stats-employee-chart">
+              ${employeeStats.slice(0, 10).map(e => `
+                <div class="stats-emp-bar ${e.tasks === 0 ? 'zero' : e.tasks > avgTasks * 1.5 ? 'high' : e.tasks < avgTasks * 0.5 ? 'low' : ''}">
+                  <div class="stats-emp-name">${e.firstName}</div>
+                  <div class="stats-emp-track">
+                    <div class="stats-emp-fill" style="width: ${(e.tasks / maxTasks * 100)}%"></div>
+                  </div>
+                  <div class="stats-emp-value">${e.tasks}</div>
+                </div>
+              `).join('')}
+              ${employeeStats.length > 10 ? `<div class="stats-more-hint">...i ${employeeStats.length - 10} więcej</div>` : ''}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 4: Trend tygodniowy -->
+          <div class="stats-section">
+            <h4>📅 Trend ostatnich 6 tygodni</h4>
+            <div class="stats-trend-chart">
+              ${weeklyHistory.map((w, i) => `
+                <div class="stats-trend-bar ${i === weeklyHistory.length - 1 ? 'current' : ''}">
+                  <div class="stats-trend-fill" style="height: ${(w.assignments / maxHistoryAssignments * 100)}%">
+                    <span class="stats-trend-value">${w.assignments}</span>
+                  </div>
+                  <div class="stats-trend-label">${w.week}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 5: Top pracownicy miesiąca -->
+          <div class="stats-section">
+            <h4>🏆 Top pracownicy (ostatnie 4 tyg.)</h4>
+            <div class="stats-top-list">
+              ${topMonthlyWorkers.map((w, i) => `
+                <div class="stats-top-item">
+                  <span class="stats-top-rank">${i + 1}.</span>
+                  <span class="stats-top-name">${w.name}</span>
+                  <span class="stats-top-count">${w.count} przypisań</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 6: Doświadczenie pracowników na projektach -->
+          <div class="stats-section stats-experience-section">
+            <h4>🎯 Doświadczenie na projektach (wszystkie tygodnie)</h4>
+            <div class="stats-experience-legend">
+              ${[...projectColorMap.entries()].map(([name, color]) => `
+                <span class="stats-legend-item"><span class="stats-legend-dot" style="background: ${color}"></span>${name}</span>
+              `).join('')}
+            </div>
+            <div class="stats-experience-chart">
+              ${experienceData.map(e => `
+                <div class="stats-exp-row">
+                  <div class="stats-exp-name">${e.firstName}</div>
+                  <div class="stats-exp-bar-container">
+                    <div class="stats-exp-bar">
+                      ${e.projects.map(p => `
+                        <div class="stats-exp-segment" style="width: ${(p.count / maxExp * 100)}%; background: ${projectColorMap.get(p.name) || '#888'}" title="${p.name}: ${p.count} razy"></div>
+                      `).join('')}
+                    </div>
+                  </div>
+                  <div class="stats-exp-total">${e.totalExp}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 7: Tabela szczegółowa -->
+          <div class="stats-section">
+            <h4>📋 Szczegóły pracowników</h4>
+            <div class="stats-detail-table">
+              <div class="stats-table-header">
+                <span>Pracownik</span>
+                <span>Przypisania</span>
+                <span>Zmiany</span>
+                <span>Projekty</span>
+              </div>
+              ${employeeStats.map(e => `
+                <div class="stats-table-row ${e.tasks === 0 ? 'inactive' : ''}">
+                  <span class="stats-table-name">${e.name}</span>
+                  <span class="stats-table-tasks">${e.tasks}</span>
+                  <span class="stats-table-shifts">${e.shifts.length > 0 ? e.shifts.map(s => `Z${s}`).join(', ') : '-'}</span>
+                  <span class="stats-table-projects">${e.projects.length > 0 ? e.projects.slice(0, 2).join(', ') + (e.projects.length > 2 ? '...' : '') : '-'}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
   }
   
   // Podświetlanie przypisań pracownika w tabeli
@@ -7222,389 +7928,6 @@ class KappaApp {
     }
     
     this.renderScheduleEmployeePanel();
-  }
-  
-  // ==================== Schedule Statistics ====================
-  private renderScheduleStats(): void {
-    const container = document.getElementById('scheduleStatsPanel');
-    if (!container) return;
-    
-    const stats: Array<{ type: 'warning' | 'info' | 'success'; icon: string; text: string }> = [];
-    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
-    const currentYear = this.scheduleCurrentYear;
-    
-    // Analiza pracowników
-    this.state.employees.forEach(emp => {
-      if (emp.status && emp.status !== 'available') return;
-      
-      // Sprawdź ile tygodni z rzędu pracownik ma ten sam projekt
-      let consecutiveWeeks = 0;
-      let lastProjectId: string | null = null;
-      
-      for (let w = this.scheduleCurrentWeek; w >= Math.max(1, this.scheduleCurrentWeek - 12); w--) {
-        const wk = `${currentYear}-KW${w.toString().padStart(2, '0')}`;
-        const assignments = this.state.scheduleAssignments.filter(
-          (a: ScheduleAssignment) => a.employeeId === emp.id && a.week === wk
-        );
-        
-        if (assignments.length === 0) break;
-        
-        const projectIds = [...new Set(assignments.map((a: ScheduleAssignment) => a.projectId))];
-        const mainProject = projectIds[0];
-        
-        if (lastProjectId === null) {
-          lastProjectId = mainProject;
-          consecutiveWeeks = 1;
-        } else if (mainProject === lastProjectId) {
-          consecutiveWeeks++;
-        } else {
-          break;
-        }
-      }
-      
-      if (consecutiveWeeks >= 3 && lastProjectId) {
-        const project = this.state.projects.find(p => p.id === lastProjectId || `${p.customer_id}-${p.type_id}` === lastProjectId);
-        const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-        stats.push({
-          type: 'warning',
-          icon: '🔄',
-          text: `<strong>${emp.firstName}</strong> pracuje przy <strong>${customer?.name || '?'}</strong> od ${consecutiveWeeks} tygodni - rozważ rotację`
-        });
-      }
-      
-      // Statystyki roczne - ile razy dany projekt/test
-      const yearAssignments = this.state.scheduleAssignments.filter(
-        (a: ScheduleAssignment) => a.employeeId === emp.id && a.week.startsWith(`${currentYear}-`)
-      );
-      
-      const projectCounts = new Map<string, number>();
-      yearAssignments.forEach((a: ScheduleAssignment) => {
-        const count = projectCounts.get(a.projectId) || 0;
-        projectCounts.set(a.projectId, count + 1);
-      });
-      
-      // Znajdź projekt z największą liczbą przypisań
-      let maxProject = '';
-      let maxCount = 0;
-      projectCounts.forEach((count, projectId) => {
-        if (count > maxCount) {
-          maxCount = count;
-          maxProject = projectId;
-        }
-      });
-      
-      if (maxCount >= 10) {
-        const project = this.state.projects.find(p => p.id === maxProject || `${p.customer_id}-${p.type_id}` === maxProject);
-        const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-        stats.push({
-          type: 'info',
-          icon: '📊',
-          text: `<strong>${emp.firstName}</strong> był przypisany do <strong>${customer?.name || '?'}</strong> już ${maxCount}× w tym roku`
-        });
-      }
-    });
-    
-    // Porównanie z innymi pracownikami - kto ma mniej doświadczenia z danym projektem
-    const currentWeekAssignments = this.state.scheduleAssignments.filter(
-      (a: ScheduleAssignment) => a.week === weekKey
-    );
-    
-    const projectsThisWeek = [...new Set(currentWeekAssignments.map((a: ScheduleAssignment) => a.projectId))];
-    
-    projectsThisWeek.forEach(projectId => {
-      const assignedEmps = currentWeekAssignments
-        .filter((a: ScheduleAssignment) => a.projectId === projectId)
-        .map((a: ScheduleAssignment) => a.employeeId);
-      
-      // Dla każdego przypisanego sprawdź ilu ma doświadczenia
-      const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
-      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-      
-      const allYearAssignments = this.state.scheduleAssignments.filter(
-        (a: ScheduleAssignment) => a.projectId === projectId && a.week.startsWith(`${currentYear}-`)
-      );
-      
-      const empExperience = new Map<string, number>();
-      allYearAssignments.forEach((a: ScheduleAssignment) => {
-        const count = empExperience.get(a.employeeId) || 0;
-        empExperience.set(a.employeeId, count + 1);
-      });
-      
-      // Znajdź kto ma najmniej doświadczenia
-      this.state.employees
-        .filter(e => !e.status || e.status === 'available')
-        .forEach(emp => {
-          const myExp = empExperience.get(emp.id) || 0;
-          const assignedExp = assignedEmps.map(id => empExperience.get(id) || 0);
-          const maxAssignedExp = Math.max(...assignedExp, 0);
-          
-          if (myExp === 0 && maxAssignedExp >= 5 && !assignedEmps.includes(emp.id)) {
-            // Ten pracownik nigdy nie robił tego projektu
-            stats.push({
-              type: 'info',
-              icon: '💡',
-              text: `<strong>${emp.firstName}</strong> jeszcze nigdy nie pracował przy <strong>${customer?.name || '?'}</strong> - świetna okazja do szkolenia`
-            });
-          }
-        });
-    });
-    
-    // Limit do 5 najbardziej istotnych
-    const displayStats = stats.slice(0, 5);
-    
-    if (displayStats.length === 0) {
-      container.innerHTML = '<div class="sched-stats-empty">Brak sugestii w tym tygodniu ✓</div>';
-    } else {
-      container.innerHTML = displayStats.map(stat => `
-        <div class="sched-stat-item ${stat.type}">
-          <span class="sched-stat-icon">${stat.icon}</span>
-          <span class="sched-stat-text">${stat.text}</span>
-        </div>
-      `).join('');
-    }
-    
-    // Event listener dla przycisku rozwijania
-    document.getElementById('openStatsModal')?.addEventListener('click', () => {
-      this.showScheduleStatsModal(stats);
-    });
-  }
-  
-  private showScheduleStatsModal(stats: Array<{ type: string; icon: string; text: string }>): void {
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
-    
-    modalTitle.innerHTML = '📊 Statystyki i Sugestie';
-    modalBody.innerHTML = `
-      <div class="stats-modal-content" style="max-height: 400px; overflow-y: auto;">
-        ${stats.length === 0 ? '<p style="text-align: center; color: var(--color-text-muted);">Brak sugestii</p>' : stats.map(stat => `
-          <div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 8px; border-left: 3px solid ${stat.type === 'warning' ? '#f59e0b' : stat.type === 'info' ? '#3b82f6' : '#10b981'};">
-            <span style="font-size: 18px;">${stat.icon}</span>
-            <span style="flex: 1; font-size: 0.875rem; line-height: 1.5;">${stat.text}</span>
-          </div>
-        `).join('')}
-      </div>
-    `;
-    
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
-    cancelBtn.style.display = 'none';
-    confirmBtn.textContent = 'Zamknij';
-    confirmBtn.onclick = () => this.hideModal();
-    
-    modal.classList.add('active');
-  }
-  
-  // ==================== Schedule Change History ====================
-  private logScheduleChange(
-    actionType: 'add' | 'remove' | 'move' | 'status_change' | 'added' | 'removed' | 'modified',
-    employeeName: string,
-    customerName: string,
-    typeName: string,
-    shift?: number,
-    details?: string
-  ): void {
-    // Normalizuj typ akcji
-    let normalizedAction: 'add' | 'remove' | 'move' | 'status_change';
-    switch (actionType) {
-      case 'added': normalizedAction = 'add'; break;
-      case 'removed': normalizedAction = 'remove'; break;
-      case 'modified': normalizedAction = 'move'; break;
-      default: normalizedAction = actionType;
-    }
-    
-    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
-    
-    const log: ScheduleChangeLog = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      timestamp: Date.now(),
-      userName: this.state.settings.userName || 'System',
-      actionType: normalizedAction,
-      employeeName: employeeName,
-      projectName: `${customerName} - ${typeName}`,
-      customerName: customerName,
-      typeName: typeName,
-      week: weekKey,
-      shift: shift,
-      details: details
-    };
-    
-    this.scheduleChangeLogs.unshift(log);
-    
-    // Zachowaj tylko ostatnie 100 wpisów
-    if (this.scheduleChangeLogs.length > 100) {
-      this.scheduleChangeLogs = this.scheduleChangeLogs.slice(0, 100);
-    }
-    
-    // Zapisz do localStorage
-    localStorage.setItem('scheduleChangeLogs', JSON.stringify(this.scheduleChangeLogs));
-    
-    // Odśwież widok historii
-    this.renderScheduleHistory();
-  }
-  
-  private loadScheduleChangeLogs(): void {
-    try {
-      const saved = localStorage.getItem('scheduleChangeLogs');
-      if (saved) {
-        this.scheduleChangeLogs = JSON.parse(saved);
-      }
-    } catch (e) {
-      console.warn('Failed to load schedule change logs:', e);
-      this.scheduleChangeLogs = [];
-    }
-  }
-  
-  private renderScheduleHistory(): void {
-    const container = document.getElementById('scheduleHistoryPanel');
-    if (!container) return;
-    
-    // Załaduj logi jeśli jeszcze nie załadowane
-    if (this.scheduleChangeLogs.length === 0) {
-      this.loadScheduleChangeLogs();
-    }
-    
-    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
-    
-    // Filtruj logi dla bieżącego tygodnia lub ostatnich 24h
-    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    const allRelevantLogs = this.scheduleChangeLogs.filter(log => 
-      log.week === weekKey || log.timestamp > oneDayAgo
-    );
-    const relevantLogs = allRelevantLogs.slice(0, 10);
-    const hasMore = allRelevantLogs.length > 10;
-    
-    if (relevantLogs.length === 0) {
-      container.innerHTML = '<div class="sched-history-empty">Brak zmian w tym tygodniu</div>';
-    } else {
-      container.innerHTML = relevantLogs.map(log => {
-        const time = new Date(log.timestamp);
-        const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
-        const dateStr = `${time.getDate().toString().padStart(2, '0')}.${(time.getMonth() + 1).toString().padStart(2, '0')}`;
-        
-        let actionClass = '';
-        let actionIcon = '';
-        switch (log.actionType) {
-          case 'add':
-            actionClass = 'add';
-            actionIcon = '+';
-            break;
-          case 'remove':
-            actionClass = 'remove';
-            actionIcon = '−';
-            break;
-          case 'move':
-            actionClass = 'move';
-            actionIcon = '↔';
-            break;
-          case 'status_change':
-            actionClass = 'move';
-            actionIcon = '⟳';
-            break;
-        }
-        
-        // Buduj czytelną informację o projekcie
-        const customerName = log.customerName || '';
-        const typeName = log.typeName || '';
-        const projectDisplay = customerName && typeName ? `${customerName} · ${typeName}` : (log.projectName || '');
-        const shiftDisplay = log.shift ? `Z${log.shift}` : '';
-        
-        return `
-          <div class="sched-history-item ${actionClass}">
-            <span class="sched-history-badge ${actionClass}">${actionIcon}</span>
-            <div class="sched-history-body">
-              <div class="sched-history-main">
-                <span class="sched-history-emp">${log.employeeName}</span>
-                ${projectDisplay ? `<span class="sched-history-arrow">→</span><span class="sched-history-proj">${projectDisplay}</span>` : ''}
-                ${shiftDisplay ? `<span class="sched-history-shift">${shiftDisplay}</span>` : ''}
-              </div>
-              <div class="sched-history-meta">
-                <span>${dateStr} ${timeStr}</span>
-                ${log.details && !log.details.includes('przeniesiono do innego') ? `<span>· ${log.details}</span>` : ''}
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
-      
-      if (hasMore) {
-        container.innerHTML += `
-          <div class="sched-history-more" id="showMoreHistory">
-            Pokaż więcej (+${allRelevantLogs.length - 10})
-          </div>
-        `;
-      }
-    }
-    
-    // Event listener dla przycisku rozwijania
-    document.getElementById('openHistoryModal')?.addEventListener('click', () => {
-      this.showScheduleHistoryModal();
-    });
-    
-    // Event listener dla "pokaż więcej"
-    document.getElementById('showMoreHistory')?.addEventListener('click', () => {
-      this.showScheduleHistoryModal();
-    });
-  }
-  
-  private showScheduleHistoryModal(): void {
-    const allLogs = this.scheduleChangeLogs.slice(0, 50);
-    
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
-    
-    modalTitle.innerHTML = '📋 Historia zmian grafiku';
-    modalBody.innerHTML = `
-      <div class="history-modal-content" style="max-height: 400px; overflow-y: auto;">
-        ${allLogs.length === 0 ? '<p style="text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>' : allLogs.map(log => {
-          const time = new Date(log.timestamp);
-          const dateTimeStr = `${time.getDate().toString().padStart(2, '0')}.${(time.getMonth() + 1).toString().padStart(2, '0')}.${time.getFullYear()} ${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
-          
-          let actionLabel = '';
-          let actionColor = '';
-          switch (log.actionType) {
-            case 'add': actionLabel = '➕ Dodano'; actionColor = '#10b981'; break;
-            case 'remove': actionLabel = '➖ Usunięto'; actionColor = '#ef4444'; break;
-            case 'move': actionLabel = '↔️ Przeniesiono'; actionColor = '#3b82f6'; break;
-            case 'status_change': actionLabel = '🔄 Zmiana statusu'; actionColor = '#f59e0b'; break;
-          }
-          
-          // Buduj czytelną informację o projekcie
-          const customerName = log.customerName || '';
-          const typeName = log.typeName || '';
-          const projectDisplay = customerName && typeName ? `${customerName} (${typeName})` : log.projectName;
-          
-          return `
-            <div style="padding: 12px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 8px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <strong style="color: ${actionColor};">${actionLabel}</strong>
-                <small style="color: var(--color-text-muted);">${dateTimeStr}</small>
-              </div>
-              <div style="margin-bottom: 4px;">
-                <span style="color: var(--color-primary); font-weight: 600;">${log.employeeName}</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <span style="font-size: 0.85rem;">→</span>
-                <span style="font-weight: 500; color: var(--color-text);">${projectDisplay}</span>
-                ${log.shift ? `<span style="background: var(--color-info-bg); color: var(--color-info); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Zmiana ${log.shift}</span>` : ''}
-                <span style="color: var(--color-text-muted); font-size: 0.75rem;">${log.week}</span>
-              </div>
-              ${log.details ? `<div style="margin-top: 6px; font-size: 0.8rem; color: var(--color-text-secondary); padding-left: 16px; border-left: 2px solid var(--color-border);">${log.details}</div>` : ''}
-              ${log.userName ? `<div style="margin-top: 4px; font-size: 0.7rem; color: var(--color-text-muted);">przez ${log.userName}</div>` : ''}
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
-    
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
-    cancelBtn.style.display = 'none';
-    confirmBtn.textContent = 'Zamknij';
-    confirmBtn.onclick = () => this.hideModal();
-    
-    modal.classList.add('active');
   }
   
   // Popup z detalami przypisań pracownika
@@ -8240,7 +8563,7 @@ class KappaApp {
       }
     }
     
-    this.logScheduleChange('added', `${copied} przypisań`, 'Kopiowanie', sourceWeekKey, undefined, `skopiowano z ${sourceWeekKey}`);
+    this.logScheduleChange('added', `${copied} przypisań`, `skopiowano z ${sourceWeekKey}`);
     this.showToast(`Skopiowano ${copied} przypisań z ${sourceWeekKey}`, 'success');
     this.renderScheduleContent();
     this.renderScheduleEmployeePanel();
@@ -8248,15 +8571,14 @@ class KappaApp {
   }
 
   // ==================== SZABLONY GRAFIKÓW ====================
-  private showTemplatesModal(): void {
+  private async showTemplatesModal(): Promise<void> {
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
     
-    // Pobierz zapisane szablony
-    const templatesJson = localStorage.getItem('kappa_schedule_templates') || '[]';
+    // Pobierz zapisane szablony z bazy danych
     let templates: Array<{id: string; name: string; assignments: ScheduleAssignment[]; createdAt: number}> = [];
-    try { templates = JSON.parse(templatesJson); } catch { templates = []; }
+    try { templates = await db.getTemplates(); } catch { templates = []; }
     
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
@@ -8314,7 +8636,7 @@ class KappaApp {
     confirmBtn.style.display = 'none';
     
     // Save template
-    modalBody.querySelector('#saveTemplateBtn')?.addEventListener('click', () => {
+    modalBody.querySelector('#saveTemplateBtn')?.addEventListener('click', async () => {
       const name = (document.getElementById('templateName') as HTMLInputElement).value.trim();
       if (!name) { this.showToast('Podaj nazwę szablonu', 'warning'); return; }
       
@@ -8322,9 +8644,8 @@ class KappaApp {
         .filter((a: ScheduleAssignment) => a.week === weekKey)
         .map((a: ScheduleAssignment) => ({ ...a, week: 'TEMPLATE' }));
       
-      const template = { id: crypto.randomUUID(), name, assignments, createdAt: Date.now() };
-      templates.push(template);
-      localStorage.setItem('kappa_schedule_templates', JSON.stringify(templates));
+      const template = { id: crypto.randomUUID(), name, data: assignments, createdAt: Date.now() };
+      await db.addTemplate(template);
       
       this.showToast(`Szablon "${name}" zapisany`, 'success');
       this.hideModal();
@@ -8359,14 +8680,12 @@ class KappaApp {
     
     // Delete template
     modalBody.querySelectorAll('.template-delete').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const id = (btn as HTMLElement).dataset.id;
-        const idx = templates.findIndex(t => t.id === id);
-        if (idx !== -1) {
-          const name = templates[idx].name;
-          templates.splice(idx, 1);
-          localStorage.setItem('kappa_schedule_templates', JSON.stringify(templates));
-          this.showToast(`Szablon "${name}" usunięty`, 'success');
+        const template = templates.find(t => t.id === id);
+        if (template) {
+          await db.deleteTemplate(id!);
+          this.showToast(`Szablon "${template.name}" usunięty`, 'success');
           this.showTemplatesModal(); // Refresh
         }
       });
@@ -8376,15 +8695,14 @@ class KappaApp {
   }
 
   // ==================== POWIADOMIENIA ====================
-  private showNotificationsModal(): void {
+  private async showNotificationsModal(): Promise<void> {
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
     
-    // Pobierz ustawienia powiadomień
-    const settingsJson = localStorage.getItem('kappa_notification_settings') || '{}';
+    // Pobierz ustawienia powiadomień z bazy danych
     let settings: {email?: string; enabled?: boolean; onAssign?: boolean; onUnassign?: boolean; dailyDigest?: boolean} = {};
-    try { settings = JSON.parse(settingsJson); } catch { settings = {}; }
+    try { settings = await db.getPreference('kappa_notification_settings') || {}; } catch { settings = {}; }
     
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
@@ -8452,7 +8770,7 @@ class KappaApp {
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     confirmBtn.style.display = '';
     confirmBtn.textContent = 'Zapisz ustawienia';
-    confirmBtn.onclick = () => {
+    confirmBtn.onclick = async () => {
       const newSettings = {
         email: (document.getElementById('notifyEmail') as HTMLInputElement).value,
         enabled: (document.getElementById('notifyEnabled') as HTMLInputElement).checked,
@@ -8460,7 +8778,7 @@ class KappaApp {
         onUnassign: (document.getElementById('notifyOnUnassign') as HTMLInputElement).checked,
         dailyDigest: (document.getElementById('notifyDailyDigest') as HTMLInputElement).checked
       };
-      localStorage.setItem('kappa_notification_settings', JSON.stringify(newSettings));
+      await db.setPreference('kappa_notification_settings', newSettings);
       this.showToast('Ustawienia powiadomień zapisane', 'success');
       this.hideModal();
     };
@@ -8476,7 +8794,7 @@ class KappaApp {
   }
 
   // ==================== WYSYŁANIE GRAFIKU MAILEM ====================
-  private showSendEmailModal(): void {
+  private async showSendEmailModal(): Promise<void> {
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -8484,8 +8802,8 @@ class KappaApp {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     
-    // Pobierz zapisane adresy email
-    const savedEmails = localStorage.getItem('kappa_email_addresses') || '';
+    // Pobierz zapisane adresy email z bazy danych
+    const savedEmails = await db.getPreference('kappa_email_addresses') || '';
     
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
@@ -8564,13 +8882,13 @@ class KappaApp {
       });
     });
     
-    // Zapisz adresy email
-    document.getElementById('emailAddresses')?.addEventListener('blur', (e) => {
-      localStorage.setItem('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
+    // Zapisz adresy email do bazy danych
+    document.getElementById('emailAddresses')?.addEventListener('blur', async (e) => {
+      await db.setPreference('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
     });
     
     // Wysyłanie ogólnego emaila
-    document.getElementById('sendGeneralEmail')?.addEventListener('click', () => {
+    document.getElementById('sendGeneralEmail')?.addEventListener('click', async () => {
       const emails = (document.getElementById('emailAddresses') as HTMLTextAreaElement).value
         .split(/[,\n]/)
         .map(e => e.trim())
@@ -8581,7 +8899,7 @@ class KappaApp {
         return;
       }
       
-      localStorage.setItem('kappa_email_addresses', emails.join(', '));
+      await db.setPreference('kappa_email_addresses', emails.join(', '));
       this.openOutlookEmail(emails.join('; '), `Grafik ${weekKey}`, this.generateScheduleEmailBody(weekKey, 'general'));
       this.hideModal();
     });
@@ -9270,28 +9588,26 @@ class KappaApp {
     if (!assignment) return;
     
     const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+    const empName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
     const oldShift = assignment.shift;
     const oldProjectId = assignment.projectId;
     
-    // Pobierz informacje o starym projekcie
-    const oldProject = this.state.projects.find(p => p.id === oldProjectId || `${p.customer_id}-${p.type_id}` === oldProjectId);
-    const oldCustomer = oldProject ? this.state.customers.find(c => c.id === oldProject.customer_id) : null;
-    const oldType = oldProject ? this.state.types.find(t => t.id === oldProject.type_id) : null;
+    // Pobierz nazwy projektów
+    const getProjectName = (projectId: string): string => {
+      const parts = projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const type = this.state.types.find(t => t.id === parts[1]);
+      return customer && type ? `${customer.name} ${type.name}` : projectId;
+    };
+    
+    const oldProjectName = getProjectName(oldProjectId);
+    const newProjectName = newProjectId ? getProjectName(newProjectId) : oldProjectName;
     
     // Sprawdź czy coś się zmienia
     const shiftChanged = assignment.shift !== newShift;
     const projectChanged = newProjectId && assignment.projectId !== newProjectId;
     
     if (!shiftChanged && !projectChanged) return;
-    
-    // Pobierz informacje o nowym projekcie jeśli się zmienił
-    let newCustomer = oldCustomer;
-    let newType = oldType;
-    if (projectChanged && newProjectId) {
-      const newProject = this.state.projects.find(p => p.id === newProjectId || `${p.customer_id}-${p.type_id}` === newProjectId);
-      newCustomer = newProject ? this.state.customers.find(c => c.id === newProject.customer_id) : null;
-      newType = newProject ? this.state.types.find(t => t.id === newProject.type_id) : null;
-    }
     
     if (shiftChanged) {
       assignment.shift = newShift;
@@ -9303,15 +9619,21 @@ class KappaApp {
     assignment.updatedAt = Date.now();
     await db.put('scheduleAssignments', assignment);
     
-    // Log zmiany
+    // Log zmiany - do głównej historii i historii grafiku
     if (projectChanged && shiftChanged) {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, newCustomer?.name || '?', newType?.name || '?', newShift, `z ${oldCustomer?.name || '?'} Z${oldShift} → ${newCustomer?.name || '?'} Z${newShift}`);
-      this.showToast(`Przeniesiono do ${newCustomer?.name || 'innego projektu'} na zmianę ${newShift}`, 'success');
+      const details = `${oldProjectName} Z${oldShift} → ${newProjectName} Z${newShift}`;
+      await this.addLog('updated', 'Assignment', empName, details);
+      this.logScheduleChange('modified', empName, details);
+      this.showToast(`Przeniesiono na ${newProjectName}, zmiana ${newShift}`, 'success');
     } else if (projectChanged) {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, newCustomer?.name || '?', newType?.name || '?', newShift, `z ${oldCustomer?.name || '?'} → ${newCustomer?.name || '?'}`);
-      this.showToast(`Przeniesiono do ${newCustomer?.name || 'innego projektu'}`, 'success');
+      const details = `${oldProjectName} → ${newProjectName}`;
+      await this.addLog('updated', 'Assignment', empName, details);
+      this.logScheduleChange('modified', empName, details);
+      this.showToast(`Przeniesiono na ${newProjectName}`, 'success');
     } else {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, oldCustomer?.name || '?', oldType?.name || '?', newShift, `Z${oldShift} → Z${newShift}`);
+      const details = `${oldProjectName}: Z${oldShift} → Z${newShift}`;
+      await this.addLog('updated', 'Assignment', empName, details);
+      this.logScheduleChange('modified', empName, details);
       this.showToast(`Przeniesiono na zmianę ${newShift}`, 'success');
     }
     
@@ -9731,19 +10053,37 @@ class KappaApp {
           e.preventDefault();
           shiftCell.classList.remove('drag-over');
           
+          // Zapisz pozycję drop dla pickera
+          const dropX = (e as DragEvent).clientX;
+          const dropY = (e as DragEvent).clientY;
+          
           // Sprawdź czy to przenoszenie istniejącego chipa (między zmianami lub projektami)
           const assignmentId = (e as DragEvent).dataTransfer?.getData('assignmentId');
           if (assignmentId) {
             const sourceProject = (e as DragEvent).dataTransfer?.getData('sourceProject');
-            // Przekaż nowy projekt jeśli różny od źródłowego
-            const newProjectId = sourceProject !== groupKey ? groupKey : undefined;
-            await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3, newProjectId);
+            const sourceShift = parseInt((e as DragEvent).dataTransfer?.getData('sourceShift') || '0');
+            
+            // Jeśli przenosimy na INNY projekt - pokaż picker scope
+            if (sourceProject !== groupKey) {
+              const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
+              if (assignment) {
+                // Usuń stare przypisanie i pokaż picker dla nowego
+                await this.removeAssignment(assignmentId);
+                this.showScopePickerAtPosition(groupKey, group.items, assignment.employeeId, weekKey, s as 1 | 2 | 3, dropX, dropY);
+              }
+              return;
+            }
+            
+            // Jeśli tylko zmiana zmiany (ten sam projekt) - przenieś bez zmiany scope
+            if (sourceShift !== s) {
+              await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3);
+            }
             return;
           }
           
           // Inaczej to przeciąganie nowego pracownika
           if (this.draggedEmployeeId) {
-            this.showScopePicker(groupKey, group.items, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3, shiftCell);
+            this.showScopePickerAtPosition(groupKey, group.items, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3, dropX, dropY);
           }
         });
         
@@ -9833,8 +10173,7 @@ class KappaApp {
     const emp = this.state.employees.find(e => e.id === employeeId);
     const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
     const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-    const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
-    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, customer?.name || '?', type?.name || '?', shift);
+    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${shift}`);
     
     this.renderScheduleProjectsPanel();
     this.renderScheduleAlerts();
@@ -9843,6 +10182,30 @@ class KappaApp {
     
     const scopeText = scope === 'project' ? i18n.t('schedule.wholeProject') : (testId ? 'test' : 'część');
     this.showToast(`${i18n.t('schedule.assignedTo')} ${shift} (${scopeText})`, 'success');
+  }
+  
+  private async logScheduleChange(action: 'added' | 'removed' | 'modified', employee: string, details: string): Promise<void> {
+    let history: Array<{action: string; type: string; details: string; timestamp: number}> = [];
+    try {
+      const historyData = await db.getPreference('kappa_schedule_history');
+      history = Array.isArray(historyData) ? historyData : [];
+    } catch (e) {
+      history = [];
+    }
+    
+    history.push({
+      action,
+      type: 'Assignment',
+      details: `${action === 'added' ? 'Przypisano' : action === 'removed' ? 'Usunięto' : 'Zmieniono'} <strong>${employee}</strong> → ${details}`,
+      timestamp: Date.now()
+    });
+    
+    // Zachowaj tylko ostatnie 100 wpisów
+    if (history.length > 100) {
+      history = history.slice(-100);
+    }
+    
+    await db.setPreference('kappa_schedule_history', history);
   }
 
   // Picker pracownika - krok 1
@@ -9922,6 +10285,133 @@ class KappaApp {
           picker.remove();
           this.showScopePicker(groupKey, groupItems, empId, week, shift, targetCell);
         }
+      });
+    });
+    
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!picker.contains(e.target as Node)) {
+          picker.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 10);
+  }
+  
+  // Picker zakresu przy pozycji drop
+  private showScopePickerAtPosition(
+    groupKey: string,
+    groupItems: Project[],
+    employeeId: string,
+    week: string,
+    shift: 1 | 2 | 3,
+    x: number,
+    y: number
+  ): void {
+    document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
+    document.querySelectorAll('.sched-picker').forEach(p => p.remove());
+    
+    const picker = document.createElement('div');
+    picker.className = 'sched-scope-picker';
+    
+    const employee = this.state.employees.find(e => e.id === employeeId);
+    
+    // Zbierz wszystkie unikalne testy i części
+    const uniqueTests = new Map<string, Test>();
+    const uniqueParts = new Map<string, Part>();
+    
+    groupItems.forEach(p => {
+      if (p.test_id) {
+        const test = this.state.tests.find(t => t.id === p.test_id);
+        if (test) uniqueTests.set(test.id, test);
+      }
+      if (p.part_id) {
+        const part = this.state.parts.find(pt => pt.id === p.part_id);
+        if (part) uniqueParts.set(part.id, part);
+      }
+    });
+    
+    const tests = Array.from(uniqueTests.values());
+    const parts = Array.from(uniqueParts.values());
+    
+    picker.innerHTML = `
+      <div class="sched-scope-header">
+        <span class="sched-scope-emp" style="--emp-color: ${employee?.color || '#888'}">${employee?.firstName || '?'}</span>
+        <span class="sched-scope-title">${i18n.t('schedule.selectScope')}</span>
+      </div>
+      <div class="sched-scope-options">
+        <button class="sched-scope-option primary" data-scope="project">
+          <span class="sched-scope-icon">📦</span>
+          <div class="sched-scope-text">
+            <span class="sched-scope-label">${i18n.t('schedule.wholeProject')}</span>
+            <span class="sched-scope-desc">${i18n.t('schedule.allTestsAndParts')}</span>
+          </div>
+        </button>
+        
+        ${tests.length > 0 ? `
+          <div class="sched-scope-divider">${i18n.t('messages.test')}</div>
+          ${tests.map(t => `
+            <button class="sched-scope-option" data-scope="specific" data-test="${t.id}">
+              <span class="sched-scope-icon">🧪</span>
+              <span class="sched-scope-label">${t.name}</span>
+            </button>
+          `).join('')}
+        ` : ''}
+        
+        ${parts.length > 1 ? `
+          <div class="sched-scope-divider">${i18n.t('messages.part')}</div>
+          ${parts.map(p => `
+            <button class="sched-scope-option" data-scope="specific" data-part="${p.id}">
+              <span class="sched-scope-icon">🔧</span>
+              <span class="sched-scope-label">${p.name}</span>
+            </button>
+          `).join('')}
+        ` : ''}
+      </div>
+    `;
+    
+    // Pozycjonowanie przy miejscu drop
+    picker.style.position = 'fixed';
+    picker.style.zIndex = '1001';
+    
+    document.body.appendChild(picker);
+    
+    const pickerRect = picker.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    
+    // Pozycjonuj przy miejscu drop z inteligentnym dostosowaniem
+    let topPosition = y + 10; // Trochę poniżej kursora
+    let leftPosition = x - 20; // Lekko w lewo od kursora
+    
+    // Sprawdź czy mieści się w pionie
+    if (topPosition + pickerRect.height > viewportHeight - 10) {
+      topPosition = y - pickerRect.height - 10; // Pokaż powyżej
+    }
+    if (topPosition < 10) {
+      topPosition = 10;
+    }
+    
+    // Sprawdź czy mieści się w poziomie
+    if (leftPosition + pickerRect.width > viewportWidth - 10) {
+      leftPosition = viewportWidth - pickerRect.width - 10;
+    }
+    if (leftPosition < 10) {
+      leftPosition = 10;
+    }
+    
+    picker.style.top = `${topPosition}px`;
+    picker.style.left = `${leftPosition}px`;
+    
+    // Event listeners
+    picker.querySelectorAll('.sched-scope-option').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const scope = (btn as HTMLElement).dataset.scope as AssignmentScope;
+        const testId = (btn as HTMLElement).dataset.test;
+        const partId = (btn as HTMLElement).dataset.part;
+        
+        await this.addScopedAssignment(groupKey, employeeId, week, shift, scope, testId, partId);
+        picker.remove();
       });
     });
     
@@ -10891,14 +11381,19 @@ class KappaApp {
       const emp = this.state.employees.find(e => e.id === assignment.employeeId);
       const project = this.state.projects.find(p => p.id === assignment.projectId || `${p.customer_id}-${p.type_id}` === assignment.projectId);
       const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-      const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
       
       this.state.scheduleAssignments.splice(idx, 1);
       await db.delete('scheduleAssignments', assignmentId);
-      await this.addLog('deleted', 'Assignment', assignmentId);
+      
+      // Czytelny log zamiast ID
+      const empName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
+      const projectName = customer?.name || '?';
+      const scopeLabels: Record<string, string> = { project: 'Projekt', audit: 'Audyt', adhesion: 'Przyczepność', specific: 'Specyficzne' };
+      const scopeLabel = scopeLabels[assignment.scope] || assignment.scope;
+      await this.addLog('deleted', 'Assignment', `${empName} ← ${projectName}`, `Z${assignment.shift}, ${scopeLabel}`);
       
       // Loguj do historii
-      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, customer?.name || '?', type?.name || '?', assignment.shift);
+      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${assignment.shift}`);
       
       this.renderScheduleProjectsPanel();
       this.renderScheduleEmployeePanel();
@@ -12558,6 +13053,1659 @@ class KappaApp {
         },
       },
     });
+  }
+
+  // ==================== ABSENCE MODULE ====================
+  
+  private async renderAbsencesView(): Promise<void> {
+    // Load data
+    await this.loadAbsenceData();
+    
+    // Setup event listeners
+    this.setupAbsenceEventListeners();
+    
+    // Update year label
+    const yearLabel = document.getElementById('absenceYearLabel');
+    if (yearLabel) yearLabel.textContent = this.absenceYear.toString();
+    
+    // Render filters
+    this.renderAbsenceFilters();
+    
+    // Render stats
+    this.renderAbsenceYearStats();
+    
+    // Render upcoming
+    this.renderAbsenceUpcoming();
+    
+    // Render employee sidebar
+    this.renderAbsenceEmployeesSidebar();
+    
+    // Render main content based on view mode
+    this.renderAbsenceContent();
+  }
+  
+  private async loadAbsenceData(): Promise<void> {
+    try {
+      // Synchronizuj pracowników z IndexedDB do backendu
+      await this.syncEmployeesToBackend();
+      
+      this.absenceTypes = await api.getAbsenceTypes();
+      this.absences = await api.getAbsences({ year: this.absenceYear });
+      this.absenceLimits = await api.getAbsenceLimits({ year: this.absenceYear });
+      this.holidays = await api.getHolidays(this.absenceYear);
+    } catch (e) {
+      console.error('Failed to load absence data:', e);
+      this.absenceTypes = [];
+      this.absences = [];
+      this.absenceLimits = [];
+      this.holidays = [];
+    }
+  }
+  
+  private async syncEmployeesToBackend(): Promise<void> {
+    try {
+      // Pobierz pracowników z lokalnej bazy (IndexedDB)
+      const localEmployees = this.state.employees;
+      console.log('Syncing employees to backend, count:', localEmployees.length);
+      if (localEmployees.length === 0) {
+        console.log('No local employees to sync');
+        return;
+      }
+      
+      // Wyślij każdego pracownika do backendu (upsert)
+      for (const emp of localEmployees) {
+        console.log('Syncing employee:', emp.id, emp.firstName, emp.lastName);
+        await api.addEmployee(emp);
+      }
+      console.log('Employees synced successfully');
+    } catch (e) {
+      console.error('Failed to sync employees to backend:', e);
+    }
+  }
+  
+  private setupAbsenceEventListeners(): void {
+    // Prevent multiple initializations
+    if (this.absenceEventsInitialized) {
+      console.log('Absence event listeners already initialized');
+      return;
+    }
+    this.absenceEventsInitialized = true;
+    console.log('Setting up absence event listeners...');
+    
+    const addBtn = document.getElementById('addAbsenceBtn');
+    const settingsBtn = document.getElementById('absenceSettingsBtn');
+    console.log('addAbsenceBtn found:', !!addBtn);
+    console.log('absenceSettingsBtn found:', !!settingsBtn);
+    
+    // Year navigation
+    document.getElementById('absencePrevYear')?.addEventListener('click', () => {
+      this.absenceYear--;
+      this.absenceCalendarMonth = 0;
+      this.renderAbsencesView();
+    });
+    
+    document.getElementById('absenceNextYear')?.addEventListener('click', () => {
+      this.absenceYear++;
+      this.absenceCalendarMonth = 0;
+      this.renderAbsencesView();
+    });
+    
+    // View toggle
+    document.querySelectorAll('.absence-view-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = (btn as HTMLElement).dataset.view as any;
+        this.absenceViewMode = view;
+        document.querySelectorAll('.absence-view-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.renderAbsenceContent();
+      });
+    });
+    
+    // Filters
+    document.getElementById('absenceFilterEmployee')?.addEventListener('change', (e) => {
+      this.absenceFilterEmployee = (e.target as HTMLSelectElement).value;
+      this.renderAbsenceContent();
+    });
+    
+    document.getElementById('absenceFilterType')?.addEventListener('change', (e) => {
+      this.absenceFilterType = (e.target as HTMLSelectElement).value;
+      this.renderAbsenceContent();
+    });
+    
+    document.getElementById('absenceFilterMonth')?.addEventListener('change', (e) => {
+      this.absenceFilterMonth = (e.target as HTMLSelectElement).value;
+      if (this.absenceFilterMonth) {
+        this.absenceCalendarMonth = parseInt(this.absenceFilterMonth) - 1;
+      }
+      this.renderAbsenceContent();
+    });
+    
+    // Add absence button
+    document.getElementById('addAbsenceBtn')?.addEventListener('click', () => {
+      console.log('Add absence button clicked!');
+      this.showAddAbsenceWizard();
+    });
+    
+    // Settings button
+    document.getElementById('absenceSettingsBtn')?.addEventListener('click', () => {
+      console.log('Settings button clicked!');
+      this.showAbsenceSettingsModal();
+    });
+    
+    // Export button
+    document.getElementById('absenceExportBtn')?.addEventListener('click', () => {
+      this.exportAbsences();
+    });
+  }
+  
+  private renderAbsenceFilters(): void {
+    // Employee filter
+    const empFilter = document.getElementById('absenceFilterEmployee') as HTMLSelectElement;
+    if (empFilter) {
+      empFilter.innerHTML = '<option value="">Wszyscy</option>' +
+        this.state.employees
+          .filter(e => !e.status || e.status === 'available')
+          .sort((a, b) => a.firstName.localeCompare(b.firstName))
+          .map(e => `<option value="${e.id}" ${e.id === this.absenceFilterEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`)
+          .join('');
+    }
+    
+    // Type filter
+    const typeFilter = document.getElementById('absenceFilterType') as HTMLSelectElement;
+    if (typeFilter) {
+      typeFilter.innerHTML = '<option value="">Wszystkie</option>' +
+        this.absenceTypes
+          .map(t => `<option value="${t.id}" ${t.id === this.absenceFilterType ? 'selected' : ''}>${t.icon} ${t.name}</option>`)
+          .join('');
+    }
+  }
+  
+  private renderAbsenceYearStats(): void {
+    const container = document.getElementById('absenceYearStats');
+    if (!container) return;
+    
+    // Calculate stats
+    const totalAbsences = this.absences.length;
+    const totalDays = this.absences.reduce((sum, a) => sum + (a.workDays || 0), 0);
+    const pendingCount = this.absences.filter(a => a.status === 'pending').length;
+    const employeesOnLeave = new Set(this.absences.map(a => a.employeeId)).size;
+    
+    container.innerHTML = `
+      <div class="absence-year-stats-grid">
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${totalAbsences}</div>
+          <div class="absence-stat-label">Nieobecności</div>
+        </div>
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${totalDays}</div>
+          <div class="absence-stat-label">Dni łącznie</div>
+        </div>
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${pendingCount}</div>
+          <div class="absence-stat-label">Oczekujących</div>
+        </div>
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${employeesOnLeave}</div>
+          <div class="absence-stat-label">Pracowników</div>
+        </div>
+      </div>
+    `;
+  }
+  
+  private renderAbsenceUpcoming(): void {
+    const container = document.getElementById('absenceUpcoming');
+    if (!container) return;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const upcoming = this.absences
+      .filter(a => new Date(a.startDate) >= today)
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      .slice(0, 5);
+    
+    if (upcoming.length === 0) {
+      container.innerHTML = '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">Brak nadchodzących nieobecności</p>';
+      return;
+    }
+    
+    container.innerHTML = upcoming.map(a => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      const startDate = new Date(a.startDate).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
+      
+      return `
+        <div class="absence-upcoming-item">
+          <span class="absence-upcoming-icon">${type?.icon || '📅'}</span>
+          <div class="absence-upcoming-info">
+            <div class="absence-upcoming-name">${emp?.firstName || ''} ${emp?.lastName || ''}</div>
+            <div class="absence-upcoming-date">${startDate} - ${a.workDays} dni</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  private renderAbsenceEmployeesSidebar(): void {
+    const container = document.getElementById('absenceEmployeesList');
+    if (!container) return;
+    
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    container.innerHTML = availableEmployees.map(emp => {
+      // Get limits for this employee
+      const empLimits = this.absenceLimits.filter(l => l.employeeId === emp.id);
+      const vacationLimit = empLimits.find(l => l.absenceTypeId === 'vacation');
+      const vacationUsed = vacationLimit?.usedDays || 0;
+      const vacationTotal = vacationLimit?.totalDays || 26;
+      const vacationPercent = vacationTotal > 0 ? (vacationUsed / vacationTotal) * 100 : 0;
+      
+      const hoLimit = empLimits.find(l => l.absenceTypeId === 'home-office');
+      const hoUsed = hoLimit?.usedDays || 0;
+      const hoTotal = hoLimit?.totalDays || 12;
+      const hoPercent = hoTotal > 0 ? (hoUsed / hoTotal) * 100 : 0;
+      
+      return `
+        <div class="absence-employee-card" data-employee-id="${emp.id}">
+          <div class="absence-employee-card-header">
+            <div class="absence-employee-avatar" style="background: ${emp.color}">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </div>
+            <div class="absence-employee-info">
+              <h4>${emp.firstName} ${emp.lastName}</h4>
+              <span>${vacationUsed}/${vacationTotal} dni urlopu</span>
+            </div>
+          </div>
+          <div class="absence-employee-stats">
+            <div class="absence-employee-stat">
+              <span class="absence-employee-stat-icon">🏖️</span>
+              <div class="absence-employee-stat-bar">
+                <div class="absence-employee-stat-fill" style="width: ${Math.min(vacationPercent, 100)}%; background: ${vacationPercent > 80 ? '#ef4444' : '#10b981'}"></div>
+              </div>
+              <span class="absence-employee-stat-text">${vacationUsed}/${vacationTotal}</span>
+            </div>
+            <div class="absence-employee-stat">
+              <span class="absence-employee-stat-icon">🏠</span>
+              <div class="absence-employee-stat-bar">
+                <div class="absence-employee-stat-fill" style="width: ${Math.min(hoPercent, 100)}%; background: ${hoPercent > 80 ? '#ef4444' : '#a855f7'}"></div>
+              </div>
+              <span class="absence-employee-stat-text">${hoUsed}/${hoTotal}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    // Add click handlers
+    container.querySelectorAll('.absence-employee-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const empId = (card as HTMLElement).dataset.employeeId;
+        if (empId) this.showEmployeeAbsenceModal(empId);
+      });
+    });
+  }
+  
+  private renderAbsenceContent(): void {
+    switch (this.absenceViewMode) {
+      case 'calendar':
+        this.renderAbsenceCalendar();
+        break;
+      case 'list':
+        this.renderAbsenceList();
+        break;
+      case 'heatmap':
+        this.renderAbsenceHeatmap();
+        break;
+      case 'employees':
+        this.renderAbsenceEmployeesGrid();
+        break;
+    }
+  }
+  
+  private renderAbsenceCalendar(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    const months = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 
+                    'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
+    const weekdays = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nie'];
+    
+    const year = this.absenceYear;
+    const month = this.absenceCalendarMonth;
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startPadding = (firstDay.getDay() + 6) % 7;
+    
+    // Get filtered absences
+    let filteredAbsences = this.absences;
+    if (this.absenceFilterEmployee) {
+      filteredAbsences = filteredAbsences.filter(a => a.employeeId === this.absenceFilterEmployee);
+    }
+    if (this.absenceFilterType) {
+      filteredAbsences = filteredAbsences.filter(a => a.absenceTypeId === this.absenceFilterType);
+    }
+    
+    // Build calendar grid
+    let daysHtml = weekdays.map(d => `<div class="absence-calendar-weekday">${d}</div>`).join('');
+    
+    // Padding days from previous month
+    const prevMonth = new Date(year, month, 0);
+    for (let i = startPadding - 1; i >= 0; i--) {
+      const day = prevMonth.getDate() - i;
+      daysHtml += `<div class="absence-calendar-day other-month"><div class="absence-calendar-day-number">${day}</div></div>`;
+    }
+    
+    // Current month days
+    const today = new Date();
+    for (let d = 1; d <= lastDay.getDate(); d++) {
+      const date = new Date(year, month, d);
+      const dateStr = date.toISOString().split('T')[0];
+      const isToday = date.toDateString() === today.toDateString();
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      const holiday = this.holidays.find(h => h.date === dateStr);
+      
+      // Get absences for this day
+      const dayAbsences = filteredAbsences.filter(a => {
+        const start = new Date(a.startDate);
+        const end = new Date(a.endDate);
+        return date >= start && date <= end;
+      });
+      
+      let classes = 'absence-calendar-day';
+      if (isToday) classes += ' today';
+      if (isWeekend) classes += ' weekend';
+      if (holiday) classes += ' holiday';
+      
+      const eventsHtml = dayAbsences.slice(0, 3).map(a => {
+        const emp = this.state.employees.find(e => e.id === a.employeeId);
+        const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+        return `
+          <div class="absence-calendar-event" style="background: ${type?.color || '#64748b'}" title="${emp?.firstName} ${emp?.lastName} - ${type?.name}">
+            ${type?.icon || ''} ${emp?.firstName || ''}
+          </div>
+        `;
+      }).join('');
+      
+      const moreCount = dayAbsences.length - 3;
+      const moreHtml = moreCount > 0 ? `<div class="absence-calendar-event-more">+${moreCount} więcej</div>` : '';
+      
+      daysHtml += `
+        <div class="${classes}" data-date="${dateStr}">
+          <div class="absence-calendar-day-number">${isToday ? `<span>${d}</span>` : d}</div>
+          ${holiday ? `<div class="absence-calendar-event" style="background: #f59e0b; font-size: 0.65rem;">🎉 ${holiday.name.substring(0, 12)}</div>` : ''}
+          <div class="absence-calendar-day-events">
+            ${eventsHtml}
+            ${moreHtml}
+          </div>
+        </div>
+      `;
+    }
+    
+    // Padding days for next month
+    const totalCells = startPadding + lastDay.getDate();
+    const remainingCells = (7 - (totalCells % 7)) % 7;
+    for (let i = 1; i <= remainingCells; i++) {
+      daysHtml += `<div class="absence-calendar-day other-month"><div class="absence-calendar-day-number">${i}</div></div>`;
+    }
+    
+    container.innerHTML = `
+      <div class="absence-calendar">
+        <div class="absence-calendar-header">
+          <div class="absence-calendar-nav">
+            <button class="absence-calendar-nav-btn" id="absenceCalendarPrev">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <span class="absence-calendar-month">${months[month]} ${year}</span>
+            <button class="absence-calendar-nav-btn" id="absenceCalendarNext">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
+          <button class="absence-calendar-today-btn" id="absenceCalendarToday">Dzisiaj</button>
+        </div>
+        <div class="absence-calendar-grid">
+          ${daysHtml}
+        </div>
+      </div>
+    `;
+    
+    // Add navigation handlers
+    document.getElementById('absenceCalendarPrev')?.addEventListener('click', () => {
+      this.absenceCalendarMonth--;
+      if (this.absenceCalendarMonth < 0) {
+        this.absenceCalendarMonth = 11;
+        this.absenceYear--;
+        document.getElementById('absenceYearLabel')!.textContent = this.absenceYear.toString();
+      }
+      this.renderAbsenceCalendar();
+    });
+    
+    document.getElementById('absenceCalendarNext')?.addEventListener('click', () => {
+      this.absenceCalendarMonth++;
+      if (this.absenceCalendarMonth > 11) {
+        this.absenceCalendarMonth = 0;
+        this.absenceYear++;
+        document.getElementById('absenceYearLabel')!.textContent = this.absenceYear.toString();
+      }
+      this.renderAbsenceCalendar();
+    });
+    
+    document.getElementById('absenceCalendarToday')?.addEventListener('click', () => {
+      const now = new Date();
+      this.absenceYear = now.getFullYear();
+      this.absenceCalendarMonth = now.getMonth();
+      document.getElementById('absenceYearLabel')!.textContent = this.absenceYear.toString();
+      this.renderAbsenceCalendar();
+    });
+    
+    // Add click handlers for days
+    container.querySelectorAll('.absence-calendar-day:not(.other-month)').forEach(day => {
+      day.addEventListener('click', () => {
+        const dateStr = (day as HTMLElement).dataset.date;
+        if (dateStr) this.showAddAbsenceWizard(dateStr);
+      });
+    });
+  }
+  
+  private renderAbsenceList(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    // Filter absences
+    let filtered = this.absences;
+    if (this.absenceFilterEmployee) {
+      filtered = filtered.filter(a => a.employeeId === this.absenceFilterEmployee);
+    }
+    if (this.absenceFilterType) {
+      filtered = filtered.filter(a => a.absenceTypeId === this.absenceFilterType);
+    }
+    if (this.absenceFilterMonth) {
+      const month = parseInt(this.absenceFilterMonth);
+      filtered = filtered.filter(a => {
+        const start = new Date(a.startDate);
+        const end = new Date(a.endDate);
+        return start.getMonth() + 1 === month || end.getMonth() + 1 === month;
+      });
+    }
+    
+    // Sort by date descending
+    filtered = filtered.sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+    
+    if (filtered.length === 0) {
+      container.innerHTML = `
+        <div class="absence-empty">
+          <div class="absence-empty-icon">📅</div>
+          <h3>Brak nieobecności</h3>
+          <p>Nie znaleziono nieobecności spełniających kryteria.</p>
+          <button class="absence-action-btn primary" onclick="document.getElementById('addAbsenceBtn').click()">
+            Dodaj pierwszą nieobecność
+          </button>
+        </div>
+      `;
+      return;
+    }
+    
+    const itemsHtml = filtered.map(a => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      const startDate = new Date(a.startDate).toLocaleDateString('pl-PL');
+      const endDate = new Date(a.endDate).toLocaleDateString('pl-PL');
+      
+      return `
+        <div class="absence-list-item" data-absence-id="${a.id}">
+          <div class="absence-list-employee">
+            <div class="absence-list-avatar" style="background: ${emp?.color || '#64748b'}">
+              ${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}
+            </div>
+            <span class="absence-list-name">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
+          </div>
+          <div class="absence-list-type">
+            <span class="absence-list-type-icon">${type?.icon || '📅'}</span>
+            <span class="absence-list-type-name">${type?.name || 'Nieobecność'}</span>
+          </div>
+          <div class="absence-list-dates">${startDate} - ${endDate}</div>
+          <div class="absence-list-days">${a.workDays} dni</div>
+          <div class="absence-list-status ${a.status}">${a.status === 'approved' ? 'Zatwierdzona' : a.status === 'pending' ? 'Oczekuje' : 'Odrzucona'}</div>
+          <div class="absence-list-actions">
+            <button class="absence-list-action-btn edit-absence" title="Edytuj">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+            <button class="absence-list-action-btn delete delete-absence" title="Usuń">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    container.innerHTML = `
+      <div class="absence-list">
+        <div class="absence-list-header">
+          <span>Pracownik</span>
+          <span>Typ</span>
+          <span>Daty</span>
+          <span>Dni</span>
+          <span>Status</span>
+          <span>Akcje</span>
+        </div>
+        ${itemsHtml}
+      </div>
+    `;
+    
+    // Add action handlers
+    container.querySelectorAll('.delete-absence').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = (btn as HTMLElement).closest('.absence-list-item') as HTMLElement | null;
+        const id = item?.dataset?.absenceId;
+        if (id && confirm('Czy na pewno chcesz usunąć tę nieobecność?')) {
+          await api.deleteAbsence(id);
+          await this.loadAbsenceData();
+          this.renderAbsenceContent();
+          this.renderAbsenceYearStats();
+          this.renderAbsenceUpcoming();
+          this.renderAbsenceEmployeesSidebar();
+        }
+      });
+    });
+    
+    container.querySelectorAll('.edit-absence').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const item = (btn as HTMLElement).closest('.absence-list-item') as HTMLElement | null;
+        const id = item?.dataset?.absenceId;
+        if (id) this.showEditAbsenceModal(id);
+      });
+    });
+  }
+  
+  private renderAbsenceHeatmap(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    const months = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
+    const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    // Header with months
+    let headerHtml = '<div class="absence-heatmap-employee"></div>';
+    headerHtml += months.map(m => `<div class="absence-heatmap-month">${m}</div>`).join('');
+    
+    // Rows for each employee
+    const rowsHtml = employees.map(emp => {
+      let row = `
+        <div class="absence-heatmap-employee">
+          <span style="width: 24px; height: 24px; border-radius: 50%; background: ${emp.color}; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 0.65rem; margin-right: 6px;">
+            ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+          </span>
+          ${emp.firstName} ${emp.lastName.charAt(0)}.
+        </div>
+      `;
+      
+      for (let m = 0; m < 12; m++) {
+        // Count absence days in this month
+        const monthStart = new Date(this.absenceYear, m, 1);
+        const monthEnd = new Date(this.absenceYear, m + 1, 0);
+        
+        let daysInMonth = 0;
+        this.absences
+          .filter(a => a.employeeId === emp.id)
+          .forEach(a => {
+            const start = new Date(a.startDate);
+            const end = new Date(a.endDate);
+            
+            // Calculate overlap with this month
+            const overlapStart = start > monthStart ? start : monthStart;
+            const overlapEnd = end < monthEnd ? end : monthEnd;
+            
+            if (overlapStart <= overlapEnd) {
+              // Count only working days
+              let days = 0;
+              const current = new Date(overlapStart);
+              while (current <= overlapEnd) {
+                if (current.getDay() !== 0 && current.getDay() !== 6) {
+                  days++;
+                }
+                current.setDate(current.getDate() + 1);
+              }
+              daysInMonth += days;
+            }
+          });
+        
+        const level = daysInMonth === 0 ? 0 : daysInMonth <= 2 ? 1 : daysInMonth <= 5 ? 2 : daysInMonth <= 10 ? 3 : daysInMonth <= 15 ? 4 : 5;
+        
+        row += `<div class="absence-heatmap-cell level-${level}" title="${emp.firstName}: ${daysInMonth} dni w ${months[m]}">${daysInMonth || ''}</div>`;
+      }
+      
+      return row;
+    }).join('');
+    
+    container.innerHTML = `
+      <div class="absence-heatmap">
+        <div class="absence-heatmap-header">
+          <h3>Mapa nieobecności ${this.absenceYear}</h3>
+          <p>Liczba dni nieobecności każdego pracownika w danym miesiącu</p>
+        </div>
+        <div class="absence-heatmap-grid">
+          ${headerHtml}
+          ${rowsHtml}
+        </div>
+        <div class="absence-heatmap-legend">
+          <span>Mniej</span>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-0"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-1"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-2"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-3"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-4"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-5"></div></div>
+          <span>Więcej</span>
+        </div>
+      </div>
+    `;
+  }
+  
+  private renderAbsenceEmployeesGrid(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    const cardsHtml = employees.map(emp => {
+      const empLimits = this.absenceLimits.filter(l => l.employeeId === emp.id);
+      
+      const limitsHtml = this.absenceTypes.slice(0, 5).map(type => {
+        const limit = empLimits.find(l => l.absenceTypeId === type.id);
+        const used = limit?.usedDays || 0;
+        const total = limit?.totalDays || type.defaultDays || 0;
+        const percent = total > 0 ? (used / total) * 100 : 0;
+        
+        if (total === 0) return '';
+        
+        return `
+          <div class="absence-employee-limit-row">
+            <span class="absence-employee-limit-icon">${type.icon}</span>
+            <div class="absence-employee-limit-info">
+              <div class="absence-employee-limit-name">${type.name}</div>
+              <div class="absence-employee-limit-bar">
+                <div class="absence-employee-limit-fill" style="width: ${Math.min(percent, 100)}%; background: ${type.color}"></div>
+              </div>
+            </div>
+            <span class="absence-employee-limit-text">${used}/${total} dni</span>
+          </div>
+        `;
+      }).filter(Boolean).join('');
+      
+      const totalUsed = empLimits.reduce((sum, l) => sum + (l.usedDays || 0), 0);
+      
+      return `
+        <div class="absence-employee-full-card" data-employee-id="${emp.id}">
+          <div class="absence-employee-full-header">
+            <div class="absence-employee-full-avatar" style="background: ${emp.color}">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </div>
+            <div class="absence-employee-full-info">
+              <h4>${emp.firstName} ${emp.lastName}</h4>
+              <span>${this.absenceYear}</span>
+            </div>
+          </div>
+          <div class="absence-employee-full-body">
+            ${limitsHtml || '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">Brak ustawionych limitów</p>'}
+          </div>
+          <div class="absence-employee-full-footer">
+            <span class="absence-employee-full-total">Razem: <strong>${totalUsed} dni</strong></span>
+            <button class="absence-employee-edit-btn">Edytuj limity</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    container.innerHTML = `
+      <div class="absence-employees-grid">
+        ${cardsHtml}
+      </div>
+    `;
+    
+    // Add click handlers
+    container.querySelectorAll('.absence-employee-edit-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log('Edit limits button clicked');
+        const card = (btn as HTMLElement).closest('.absence-employee-full-card') as HTMLElement | null;
+        const empId = card?.dataset?.employeeId;
+        console.log('Employee ID:', empId);
+        if (empId) this.showEmployeeLimitsModal(empId);
+      });
+    });
+    
+    container.querySelectorAll('.absence-employee-full-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const empId = (card as HTMLElement).dataset.employeeId;
+        if (empId) this.showEmployeeAbsenceModal(empId);
+      });
+    });
+  }
+  
+  // ========== ABSENCE MODALS ==========
+  
+  private async showAddAbsenceWizard(preselectedDate?: string): Promise<void> {
+    // Load data first if not loaded
+    if (this.absenceTypes.length === 0) {
+      try {
+        this.absenceTypes = await api.getAbsenceTypes();
+      } catch (e) {
+        console.error('Failed to load absence types:', e);
+        this.absenceTypes = [];
+      }
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 550px;">
+        <div class="absence-modal-header">
+          <h2>➕ Dodaj nieobecność</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-wizard-steps">
+          <div class="absence-wizard-step active" data-step="1">
+            <span class="absence-wizard-step-number">1</span>
+            <span class="absence-wizard-step-label">Pracownik</span>
+          </div>
+          <div class="absence-wizard-step-connector"></div>
+          <div class="absence-wizard-step" data-step="2">
+            <span class="absence-wizard-step-number">2</span>
+            <span class="absence-wizard-step-label">Szczegóły</span>
+          </div>
+          <div class="absence-wizard-step-connector"></div>
+          <div class="absence-wizard-step" data-step="3">
+            <span class="absence-wizard-step-number">3</span>
+            <span class="absence-wizard-step-label">Podsumowanie</span>
+          </div>
+        </div>
+        <div class="absence-modal-body" id="absenceWizardContent">
+          <!-- Step 1: Select Employee -->
+          <div class="absence-form-group">
+            <label class="absence-form-label">Wybierz pracownika</label>
+            <select class="absence-form-select" id="wizardEmployee">
+              <option value="">-- Wybierz --</option>
+              ${employees.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="wizardCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="wizardNext" disabled>Dalej</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    let currentStep = 1;
+    let selectedEmployee = '';
+    let selectedType = '';
+    let startDate = preselectedDate || '';
+    let endDate = preselectedDate || '';
+    let note = '';
+    
+    // Get button references
+    const nextBtn = overlay.querySelector('#wizardNext') as HTMLButtonElement;
+    const cancelBtn = overlay.querySelector('#wizardCancel') as HTMLButtonElement;
+    
+    // Setup initial step 1 listener
+    const employeeSelect = overlay.querySelector('#wizardEmployee') as HTMLSelectElement;
+    if (employeeSelect) {
+      employeeSelect.addEventListener('change', (e) => {
+        selectedEmployee = (e.target as HTMLSelectElement).value;
+        if (nextBtn) nextBtn.disabled = !selectedEmployee;
+      });
+    }
+    
+    const updateStep = (step: number) => {
+      currentStep = step;
+      
+      // Update step indicators
+      overlay.querySelectorAll('.absence-wizard-step').forEach((s, i) => {
+        s.classList.remove('active', 'completed');
+        if (i + 1 < step) s.classList.add('completed');
+        if (i + 1 === step) s.classList.add('active');
+      });
+      
+      const content = overlay.querySelector('#absenceWizardContent') as HTMLElement;
+      
+      if (step === 1) {
+        content!.innerHTML = `
+          <div class="absence-form-group">
+            <label class="absence-form-label">Wybierz pracownika</label>
+            <select class="absence-form-select" id="wizardEmployee">
+              <option value="">-- Wybierz --</option>
+              ${employees.map(e => `<option value="${e.id}" ${e.id === selectedEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`).join('')}
+            </select>
+          </div>
+        `;
+        nextBtn.textContent = 'Dalej';
+        nextBtn.disabled = !selectedEmployee;
+        
+        overlay.querySelector('#wizardEmployee')?.addEventListener('change', (e) => {
+          selectedEmployee = (e.target as HTMLSelectElement).value;
+          nextBtn.disabled = !selectedEmployee;
+        });
+        
+      } else if (step === 2) {
+        content!.innerHTML = `
+          <div class="absence-form-group">
+            <label class="absence-form-label">Typ nieobecności</label>
+            <select class="absence-form-select" id="wizardType">
+              <option value="">-- Wybierz --</option>
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === selectedType ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data od</label>
+              <input type="date" class="absence-form-input" id="wizardStartDate" value="${startDate}">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data do</label>
+              <input type="date" class="absence-form-input" id="wizardEndDate" value="${endDate}">
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Notatka (opcjonalnie)</label>
+            <textarea class="absence-form-textarea" id="wizardNote" rows="2" placeholder="Dodatkowe informacje...">${note}</textarea>
+          </div>
+        `;
+        nextBtn.textContent = 'Dalej';
+        
+        const checkValid = () => {
+          selectedType = (overlay.querySelector('#wizardType') as HTMLSelectElement)?.value || '';
+          startDate = (overlay.querySelector('#wizardStartDate') as HTMLInputElement)?.value || '';
+          endDate = (overlay.querySelector('#wizardEndDate') as HTMLInputElement)?.value || '';
+          note = (overlay.querySelector('#wizardNote') as HTMLTextAreaElement)?.value || '';
+          nextBtn.disabled = !selectedType || !startDate || !endDate;
+        };
+        
+        checkValid();
+        overlay.querySelector('#wizardType')?.addEventListener('change', checkValid);
+        overlay.querySelector('#wizardStartDate')?.addEventListener('change', checkValid);
+        overlay.querySelector('#wizardEndDate')?.addEventListener('change', checkValid);
+        
+      } else if (step === 3) {
+        const emp = employees.find(e => e.id === selectedEmployee);
+        const type = this.absenceTypes.find(t => t.id === selectedType);
+        
+        // Calculate work days
+        const workDays = this.calculateWorkDays(startDate, endDate);
+        
+        content!.innerHTML = `
+          <div style="text-align: center; padding: 20px;">
+            <div style="font-size: 3rem; margin-bottom: 16px;">${type?.icon || '📅'}</div>
+            <h3 style="margin: 0 0 8px 0;">${emp?.firstName} ${emp?.lastName}</h3>
+            <p style="color: var(--color-text-secondary); margin: 0 0 20px 0;">${type?.name}</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: left; background: var(--color-bg-secondary); padding: 16px; border-radius: 8px;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Od</div>
+                <div style="font-weight: 500;">${new Date(startDate).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: 'long' })}</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Do</div>
+                <div style="font-weight: 500;">${new Date(endDate).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: 'long' })}</div>
+              </div>
+            </div>
+            <div style="margin-top: 16px; padding: 12px; background: ${type?.color}20; border-radius: 8px; border-left: 4px solid ${type?.color};">
+              <span style="font-size: 1.5rem; font-weight: 700; color: ${type?.color};">${workDays}</span>
+              <span style="color: var(--color-text-secondary);"> dni roboczych</span>
+            </div>
+            ${note ? `<p style="margin-top: 16px; font-style: italic; color: var(--color-text-secondary);">"${note}"</p>` : ''}
+          </div>
+        `;
+        nextBtn.textContent = 'Zapisz';
+        nextBtn.disabled = false;
+      }
+    };
+    
+    // Next/Save button
+    nextBtn?.addEventListener('click', async () => {
+      if (currentStep < 3) {
+        updateStep(currentStep + 1);
+      } else {
+        // Save absence
+        const workDays = this.calculateWorkDays(startDate, endDate);
+        await api.addAbsence({
+          id: `abs-${Date.now()}`,
+          employeeId: selectedEmployee,
+          absenceTypeId: selectedType,
+          startDate,
+          endDate,
+          workDays,
+          status: 'approved',
+          note
+        });
+        
+        overlay.remove();
+        await this.loadAbsenceData();
+        this.renderAbsenceContent();
+        this.renderAbsenceYearStats();
+        this.renderAbsenceUpcoming();
+        this.renderAbsenceEmployeesSidebar();
+      }
+    });
+    
+    // Cancel button - go back or close
+    cancelBtn?.addEventListener('click', () => {
+      if (currentStep > 1) {
+        updateStep(currentStep - 1);
+      } else {
+        overlay.remove();
+      }
+    });
+    
+    // Close button
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private calculateWorkDays(startDate: string, endDate: string): number {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    let days = 0;
+    const current = new Date(start);
+    
+    while (current <= end) {
+      const dayOfWeek = current.getDay();
+      const dateStr = current.toISOString().split('T')[0];
+      const isHoliday = this.holidays.some(h => h.date === dateStr);
+      
+      if (dayOfWeek !== 0 && dayOfWeek !== 6 && !isHoliday) {
+        days++;
+      }
+      current.setDate(current.getDate() + 1);
+    }
+    
+    return days;
+  }
+  
+  private async showAbsenceSettingsModal(): Promise<void> {
+    // Load data first if not loaded
+    if (this.absenceTypes.length === 0) {
+      try {
+        this.absenceTypes = await api.getAbsenceTypes();
+      } catch (e) {
+        console.error('Failed to load absence types:', e);
+        this.absenceTypes = [];
+      }
+    }
+    if (this.holidays.length === 0) {
+      try {
+        this.holidays = await api.getHolidays(this.absenceYear);
+      } catch (e) {
+        console.error('Failed to load holidays:', e);
+        this.holidays = [];
+      }
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    const typesHtml = this.absenceTypes.map(type => `
+      <div class="absence-type-row" data-type-id="${type.id}">
+        <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
+          ${type.icon}
+        </div>
+        <input type="text" class="absence-type-name-input" value="${type.name}" data-field="name">
+        <input type="number" class="absence-type-days-input" value="${type.defaultDays}" data-field="defaultDays" min="0" placeholder="Dni">
+        <input type="color" value="${type.color}" data-field="color" style="width: 40px; height: 32px; border: none; cursor: pointer;">
+        <div class="absence-type-toggle">
+          <input type="checkbox" ${type.isActive ? 'checked' : ''} data-field="isActive">
+        </div>
+      </div>
+    `).join('');
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 700px;">
+        <div class="absence-modal-header">
+          <h2>⚙️ Ustawienia urlopów</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <div class="absence-settings-section">
+            <h3>Typy nieobecności</h3>
+            <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
+              Skonfiguruj typy nieobecności, ich domyślne limity i kolory.
+            </p>
+            <div style="display: grid; grid-template-columns: 40px 1fr 80px 50px 50px; gap: 12px; padding: 8px 10px; background: var(--color-bg-tertiary); border-radius: 6px; font-size: 0.7rem; color: var(--color-text-secondary); text-transform: uppercase; margin-bottom: 8px;">
+              <span>Ikona</span>
+              <span>Nazwa</span>
+              <span>Domyślne dni</span>
+              <span>Kolor</span>
+              <span>Aktywny</span>
+            </div>
+            ${typesHtml || '<p style="color: var(--color-text-muted);">Brak typów nieobecności</p>'}
+          </div>
+          
+          <div class="absence-settings-section" style="margin-top: 24px;">
+            <h3>Święta ${this.absenceYear}</h3>
+            <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
+              Dni wolne od pracy nie są wliczane do urlopów. ${this.holidays.length} dni ustawionych.
+            </p>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              ${this.holidays.slice(0, 8).map(h => `
+                <span style="padding: 4px 10px; background: var(--color-warning-bg); color: var(--color-warning); border-radius: 4px; font-size: 0.75rem;">
+                  🎉 ${new Date(h.date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} - ${h.name}
+                </span>
+              `).join('')}
+              ${this.holidays.length > 8 ? `<span style="padding: 4px 10px; color: var(--color-text-muted); font-size: 0.75rem;">+${this.holidays.length - 8} więcej</span>` : ''}
+            </div>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="settingsCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="settingsSave">Zapisz zmiany</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Save handler
+    overlay.querySelector('#settingsSave')?.addEventListener('click', async () => {
+      const rows = overlay.querySelectorAll('.absence-type-row');
+      
+      for (const row of rows) {
+        const typeId = (row as HTMLElement).dataset.typeId;
+        const name = (row.querySelector('[data-field="name"]') as HTMLInputElement).value;
+        const defaultDays = parseInt((row.querySelector('[data-field="defaultDays"]') as HTMLInputElement).value) || 0;
+        const color = (row.querySelector('[data-field="color"]') as HTMLInputElement).value;
+        const isActive = (row.querySelector('[data-field="isActive"]') as HTMLInputElement).checked;
+        
+        const type = this.absenceTypes.find(t => t.id === typeId);
+        if (type) {
+          await api.updateAbsenceType(typeId!, {
+            ...type,
+            name,
+            defaultDays,
+            color,
+            isActive
+          });
+        }
+      }
+      
+      overlay.remove();
+      await this.loadAbsenceData();
+      this.renderAbsenceFilters();
+    });
+    
+    // Cancel/close handlers
+    overlay.querySelector('#settingsCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private async showEmployeeLimitsModal(employeeId: string): Promise<void> {
+    console.log('showEmployeeLimitsModal called for:', employeeId);
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) {
+      console.log('Employee not found!');
+      return;
+    }
+    
+    // Always try to load data for this modal
+    try {
+      console.log('Loading absence types...');
+      this.absenceTypes = await api.getAbsenceTypes();
+      console.log('Loaded absence types:', this.absenceTypes.length);
+    } catch (e) {
+      console.error('Failed to load absence types:', e);
+      if (this.absenceTypes.length === 0) {
+        alert('Nie można załadować typów nieobecności. Sprawdź połączenie z serwerem.');
+        return;
+      }
+    }
+    
+    try {
+      console.log('Loading absence limits...');
+      this.absenceLimits = await api.getAbsenceLimits({ year: this.absenceYear });
+      console.log('Loaded absence limits:', this.absenceLimits.length);
+    } catch (e) {
+      console.error('Failed to load absence limits:', e);
+    }
+    
+    const empLimits = this.absenceLimits.filter(l => l.employeeId === employeeId);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    const limitsHtml = this.absenceTypes.map(type => {
+      const limit = empLimits.find(l => l.absenceTypeId === type.id);
+      const totalDays = limit?.totalDays ?? type.defaultDays;
+      const usedDays = limit?.usedDays || 0;
+      
+      return `
+        <div class="absence-type-row" data-type-id="${type.id}">
+          <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
+            ${type.icon}
+          </div>
+          <span style="flex: 1; font-size: 0.85rem;">${type.name}</span>
+          <input type="number" class="absence-type-days-input" value="${totalDays}" data-field="totalDays" min="0" style="width: 70px;">
+          <span style="font-size: 0.8rem; color: var(--color-text-secondary); min-width: 70px; text-align: right;">
+            Użyte: ${usedDays}
+          </span>
+        </div>
+      `;
+    }).join('');
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 550px;">
+        <div class="absence-modal-header">
+          <h2>
+            <span style="width: 32px; height: 32px; border-radius: 50%; background: ${emp.color}; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 0.8rem; margin-right: 8px;">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </span>
+            Limity urlopowe - ${emp.firstName} ${emp.lastName}
+          </h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <p style="font-size: 0.85rem; color: var(--color-text-secondary); margin-bottom: 16px;">
+            Ustaw indywidualne limity nieobecności dla roku <strong>${this.absenceYear}</strong>
+          </p>
+          ${limitsHtml}
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="limitsCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="limitsSave">Zapisz limity</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Save handler
+    overlay.querySelector('#limitsSave')?.addEventListener('click', async () => {
+      const limits: any[] = [];
+      const rows = overlay.querySelectorAll('.absence-type-row');
+      
+      rows.forEach(row => {
+        const typeId = (row as HTMLElement).dataset.typeId;
+        const totalDays = parseInt((row.querySelector('[data-field="totalDays"]') as HTMLInputElement).value) || 0;
+        limits.push({ absenceTypeId: typeId, totalDays });
+      });
+      
+      await api.setAbsenceLimitsBulk(employeeId, this.absenceYear, limits);
+      
+      overlay.remove();
+      await this.loadAbsenceData();
+      this.renderAbsenceEmployeesSidebar();
+      if (this.absenceViewMode === 'employees') {
+        this.renderAbsenceEmployeesGrid();
+      }
+    });
+    
+    // Cancel/close handlers
+    overlay.querySelector('#limitsCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private async showEmployeeAbsenceModal(employeeId: string): Promise<void> {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const empAbsences = this.absences.filter(a => a.employeeId === employeeId);
+    const empLimits = this.absenceLimits.filter(l => l.employeeId === employeeId);
+    
+    // Fetch employee details and qualifications
+    let empDetails: any = null;
+    let empQualifications: any[] = [];
+    try {
+      empDetails = await api.getEmployeeDetails(employeeId);
+      empQualifications = await api.getQualifications(employeeId);
+    } catch (e) {
+      console.log('No employee details found');
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    // Contact info section
+    const contactHtml = `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">📧</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Email</div>
+            <div style="font-size: 0.8rem;">${empDetails?.email || '-'}</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">📱</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Telefon</div>
+            <div style="font-size: 0.8rem;">${empDetails?.phone || '-'}</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">📍</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Stanowisko</div>
+            <div style="font-size: 0.8rem;">${empDetails?.position || '-'}</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">🏢</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Dział</div>
+            <div style="font-size: 0.8rem;">${empDetails?.department || '-'}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Qualifications section
+    const qualificationsHtml = empQualifications.length > 0 ? `
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;">
+        ${empQualifications.map(q => `
+          <span style="padding: 4px 10px; background: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'}20; 
+                       color: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'}; 
+                       border-radius: 12px; font-size: 0.7rem; font-weight: 500;">
+            ${q.level === 'expert' ? '⭐' : q.level === 'advanced' ? '✓' : '○'} ${q.skillName}
+          </span>
+        `).join('')}
+      </div>
+    ` : '';
+    
+    // Limits summary
+    const limitsHtml = this.absenceTypes.slice(0, 5).map(type => {
+      const limit = empLimits.find(l => l.absenceTypeId === type.id);
+      const total = limit?.totalDays || type.defaultDays || 0;
+      const used = limit?.usedDays || 0;
+      const remaining = total - used;
+      const percent = total > 0 ? (used / total) * 100 : 0;
+      
+      if (total === 0) return '';
+      
+      return `
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <span style="font-size: 1rem;">${type.icon}</span>
+          <div style="flex: 1;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
+              <span>${type.name}</span>
+              <span style="color: ${remaining <= 0 ? 'var(--color-danger)' : 'var(--color-text-secondary)'};">${remaining} pozostało</span>
+            </div>
+            <div style="height: 4px; background: var(--color-bg-tertiary); border-radius: 2px;">
+              <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${type.color}; border-radius: 2px;"></div>
+            </div>
+          </div>
+          <span style="font-size: 0.75rem; color: var(--color-text-muted); min-width: 45px; text-align: right;">${used}/${total}</span>
+        </div>
+      `;
+    }).filter(Boolean).join('');
+    
+    // Absences list
+    const absencesHtml = empAbsences.length > 0 ? empAbsences.slice(0, 10).map(a => {
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      return `
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--color-border-light);">
+          <span style="font-size: 1.1rem;">${type?.icon || '📅'}</span>
+          <div style="flex: 1;">
+            <div style="font-size: 0.8rem; font-weight: 500;">${type?.name || 'Nieobecność'}</div>
+            <div style="font-size: 0.7rem; color: var(--color-text-muted);">
+              ${new Date(a.startDate).toLocaleDateString('pl-PL')} - ${new Date(a.endDate).toLocaleDateString('pl-PL')}
+            </div>
+          </div>
+          <span style="font-size: 0.8rem; font-weight: 600;">${a.workDays} dni</span>
+        </div>
+      `;
+    }).join('') : '<p style="text-align: center; color: var(--color-text-muted); padding: 20px;">Brak nieobecności w tym roku</p>';
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 550px;">
+        <div class="absence-modal-header">
+          <h2>
+            <span style="width: 42px; height: 42px; border-radius: 50%; background: ${emp.color}; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 0.9rem; margin-right: 12px;">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </span>
+            <div>
+              <div>${emp.firstName} ${emp.lastName}</div>
+              <div style="font-size: 0.75rem; font-weight: 400; color: var(--color-text-secondary);">${empDetails?.position || 'Pracownik'}</div>
+            </div>
+          </h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          ${contactHtml}
+          ${empQualifications.length > 0 ? `<h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 8px 0;">🎓 Kwalifikacje</h4>` + qualificationsHtml : ''}
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 12px 0;">📊 Limity ${this.absenceYear}</h4>
+          ${limitsHtml || '<p style="color: var(--color-text-muted); font-size: 0.8rem;">Brak ustawionych limitów</p>'}
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">📅 Historia nieobecności</h4>
+          ${absencesHtml}
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="empEditDetails">✏️ Edytuj profil</button>
+          <button class="absence-modal-btn secondary" id="empEditLimits">Edytuj limity</button>
+          <button class="absence-modal-btn primary" id="empAddAbsence">Dodaj nieobecność</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Handlers
+    document.getElementById('empEditDetails')?.addEventListener('click', () => {
+      overlay.remove();
+      this.showEditEmployeeDetailsModal(employeeId, empDetails);
+    });
+    
+    document.getElementById('empEditLimits')?.addEventListener('click', () => {
+      overlay.remove();
+      this.showEmployeeLimitsModal(employeeId);
+    });
+    
+    document.getElementById('empAddAbsence')?.addEventListener('click', () => {
+      overlay.remove();
+      this.showAddAbsenceWizard();
+      setTimeout(() => {
+        const select = document.getElementById('wizardEmployee') as HTMLSelectElement;
+        if (select) {
+          select.value = employeeId;
+          select.dispatchEvent(new Event('change'));
+        }
+      }, 100);
+    });
+    
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private showEditEmployeeDetailsModal(employeeId: string, currentDetails: any): void {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 500px;">
+        <div class="absence-modal-header">
+          <h2>✏️ Edytuj profil pracownika</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">📧 Email</label>
+              <input type="email" class="absence-form-input" id="editEmpEmail" value="${currentDetails?.email || ''}" placeholder="jan.kowalski@firma.pl">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">📱 Telefon</label>
+              <input type="tel" class="absence-form-input" id="editEmpPhone" value="${currentDetails?.phone || ''}" placeholder="+48 123 456 789">
+            </div>
+          </div>
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">📍 Stanowisko</label>
+              <input type="text" class="absence-form-input" id="editEmpPosition" value="${currentDetails?.position || ''}" placeholder="np. Specjalista ds. testów">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">🏢 Dział</label>
+              <input type="text" class="absence-form-input" id="editEmpDepartment" value="${currentDetails?.department || ''}" placeholder="np. Kontrola jakości">
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">📝 Notatki</label>
+            <textarea class="absence-form-textarea" id="editEmpNotes" rows="3" placeholder="Dodatkowe informacje o pracowniku...">${currentDetails?.notes || ''}</textarea>
+          </div>
+          
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">🎓 Kwalifikacje</h4>
+          <div id="qualificationsList" style="margin-bottom: 12px;"></div>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" class="absence-form-input" id="newQualName" placeholder="Nazwa kwalifikacji" style="flex: 1;">
+            <select class="absence-form-select" id="newQualLevel" style="width: 120px;">
+              <option value="basic">Podstawowy</option>
+              <option value="advanced">Zaawansowany</option>
+              <option value="expert">Ekspert</option>
+            </select>
+            <button class="absence-modal-btn primary" id="addQualBtn" style="padding: 8px 12px;">+</button>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="editDetailsCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="editDetailsSave">Zapisz zmiany</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Qualifications management
+    let qualifications: Array<{skillName: string, level: string}> = [];
+    
+    const renderQualifications = () => {
+      const list = document.getElementById('qualificationsList')!;
+      list.innerHTML = qualifications.map((q, i) => `
+        <div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--color-bg-secondary); border-radius: 6px; margin-bottom: 6px;">
+          <span style="color: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'};">
+            ${q.level === 'expert' ? '⭐' : q.level === 'advanced' ? '✓' : '○'}
+          </span>
+          <span style="flex: 1; font-size: 0.85rem;">${q.skillName}</span>
+          <span style="font-size: 0.7rem; color: var(--color-text-muted);">${q.level === 'expert' ? 'Ekspert' : q.level === 'advanced' ? 'Zaawansowany' : 'Podstawowy'}</span>
+          <button style="background: none; border: none; color: var(--color-danger); cursor: pointer; padding: 2px 6px;" onclick="this.parentElement.remove(); window._removeQual(${i});">✕</button>
+        </div>
+      `).join('') || '<p style="color: var(--color-text-muted); font-size: 0.8rem; text-align: center;">Brak dodanych kwalifikacji</p>';
+    };
+    
+    (window as any)._removeQual = (index: number) => {
+      qualifications.splice(index, 1);
+      renderQualifications();
+    };
+    
+    // Load existing qualifications
+    api.getQualifications(employeeId).then(quals => {
+      qualifications = quals.map((q: any) => ({ skillName: q.skillName, level: q.level }));
+      renderQualifications();
+    }).catch(() => renderQualifications());
+    
+    document.getElementById('addQualBtn')?.addEventListener('click', () => {
+      const name = (document.getElementById('newQualName') as HTMLInputElement).value.trim();
+      const level = (document.getElementById('newQualLevel') as HTMLSelectElement).value;
+      if (name) {
+        qualifications.push({ skillName: name, level });
+        renderQualifications();
+        (document.getElementById('newQualName') as HTMLInputElement).value = '';
+      }
+    });
+    
+    // Save handler
+    document.getElementById('editDetailsSave')?.addEventListener('click', async () => {
+      const details = {
+        email: (document.getElementById('editEmpEmail') as HTMLInputElement).value,
+        phone: (document.getElementById('editEmpPhone') as HTMLInputElement).value,
+        position: (document.getElementById('editEmpPosition') as HTMLInputElement).value,
+        department: (document.getElementById('editEmpDepartment') as HTMLInputElement).value,
+        notes: (document.getElementById('editEmpNotes') as HTMLTextAreaElement).value,
+      };
+      
+      await api.updateEmployeeDetails(employeeId, details);
+      
+      // Save qualifications
+      for (const q of qualifications) {
+        await api.setQualification({ employeeId, ...q });
+      }
+      
+      overlay.remove();
+      this.showEmployeeAbsenceModal(employeeId);
+    });
+    
+    document.getElementById('editDetailsCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private showEditAbsenceModal(absenceId: string): void {
+    const absence = this.absences.find(a => a.id === absenceId);
+    if (!absence) return;
+    
+    const emp = this.state.employees.find(e => e.id === absence.employeeId);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 450px;">
+        <div class="absence-modal-header">
+          <h2>✏️ Edytuj nieobecność</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <div class="absence-form-group">
+            <label class="absence-form-label">Pracownik</label>
+            <input type="text" class="absence-form-input" value="${emp?.firstName} ${emp?.lastName}" disabled>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Typ nieobecności</label>
+            <select class="absence-form-select" id="editType">
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === absence.absenceTypeId ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data od</label>
+              <input type="date" class="absence-form-input" id="editStartDate" value="${absence.startDate}">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data do</label>
+              <input type="date" class="absence-form-input" id="editEndDate" value="${absence.endDate}">
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Status</label>
+            <select class="absence-form-select" id="editStatus">
+              <option value="approved" ${absence.status === 'approved' ? 'selected' : ''}>Zatwierdzona</option>
+              <option value="pending" ${absence.status === 'pending' ? 'selected' : ''}>Oczekuje</option>
+              <option value="rejected" ${absence.status === 'rejected' ? 'selected' : ''}>Odrzucona</option>
+            </select>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Notatka</label>
+            <textarea class="absence-form-textarea" id="editNote" rows="2">${absence.note || ''}</textarea>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn danger" id="editDelete">Usuń</button>
+          <button class="absence-modal-btn secondary" id="editCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="editSave">Zapisz</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Save handler
+    document.getElementById('editSave')?.addEventListener('click', async () => {
+      const absenceTypeId = (document.getElementById('editType') as HTMLSelectElement).value;
+      const startDate = (document.getElementById('editStartDate') as HTMLInputElement).value;
+      const endDate = (document.getElementById('editEndDate') as HTMLInputElement).value;
+      const status = (document.getElementById('editStatus') as HTMLSelectElement).value;
+      const note = (document.getElementById('editNote') as HTMLTextAreaElement).value;
+      const workDays = this.calculateWorkDays(startDate, endDate);
+      
+      await api.updateAbsence(absenceId, {
+        employeeId: absence.employeeId,
+        absenceTypeId,
+        startDate,
+        endDate,
+        workDays,
+        status,
+        note
+      });
+      
+      overlay.remove();
+      await this.loadAbsenceData();
+      this.renderAbsenceContent();
+      this.renderAbsenceYearStats();
+      this.renderAbsenceUpcoming();
+      this.renderAbsenceEmployeesSidebar();
+    });
+    
+    // Delete handler
+    document.getElementById('editDelete')?.addEventListener('click', async () => {
+      if (confirm('Czy na pewno chcesz usunąć tę nieobecność?')) {
+        await api.deleteAbsence(absenceId);
+        overlay.remove();
+        await this.loadAbsenceData();
+        this.renderAbsenceContent();
+        this.renderAbsenceYearStats();
+        this.renderAbsenceUpcoming();
+        this.renderAbsenceEmployeesSidebar();
+      }
+    });
+    
+    // Cancel/close handlers
+    document.getElementById('editCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private exportAbsences(): void {
+    // Create CSV
+    let csv = 'Pracownik,Typ,Od,Do,Dni robocze,Status,Notatka\n';
+    
+    this.absences.forEach(a => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      csv += `"${emp?.firstName} ${emp?.lastName}","${type?.name}","${a.startDate}","${a.endDate}",${a.workDays},"${a.status}","${a.note || ''}"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nieobecnosci-${this.absenceYear}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 }
 

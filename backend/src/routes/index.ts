@@ -119,7 +119,7 @@ export const dataRouter = Router();
 
 dataRouter.get('/export', (req, res) => {
   try {
-    const data = {
+    const data: any = {
       customers: getAll('SELECT * FROM customers'),
       types: getAll('SELECT * FROM types'),
       parts: getAll('SELECT * FROM parts'),
@@ -236,5 +236,28 @@ dataRouter.delete('/clear', (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to clear data' });
+  }
+});
+
+// Clear specific table
+dataRouter.delete('/clear/:table', (req, res) => {
+  try {
+    const table = req.params.table;
+    const allowedTables = ['customers', 'types', 'parts', 'tests', 'projects', 'comments', 'logs', 'employees', 'schedule_assignments', 'project_weeks'];
+    
+    if (!allowedTables.includes(table)) {
+      return res.status(400).json({ error: 'Invalid table name' });
+    }
+    
+    // Special handling for projects - also clear project_weeks
+    if (table === 'projects') {
+      runQuery('DELETE FROM project_weeks', []);
+    }
+    
+    runQuery(`DELETE FROM ${table}`, []);
+    res.json({ success: true, table });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to clear table' });
   }
 });

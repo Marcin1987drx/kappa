@@ -1,6 +1,21 @@
 import type { Customer, Type, Part, Test, Project, AppSettings } from '../types';
 
-const API_BASE_URL = 'http://localhost:3001/api';
+// Automatyczne wykrywanie URL API - dla Codespace używa odpowiedniego URL
+function getApiBaseUrl(): string {
+  const hostname = window.location.hostname;
+  
+  // Jeśli uruchomione w GitHub Codespaces
+  if (hostname.includes('.app.github.dev')) {
+    // Zamień port 5173 na 3001 w URL Codespaces
+    const codespaceUrl = hostname.replace('-5173.', '-3001.');
+    return `https://${codespaceUrl}/api`;
+  }
+  
+  // Lokalnie
+  return 'http://localhost:3001/api';
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 class ApiClient {
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -171,6 +186,11 @@ class ApiClient {
     await this.request('/data/clear', { method: 'DELETE' });
   }
 
+  // Clear specific table
+  async clearTable(table: string): Promise<void> {
+    await this.request(`/data/clear/${table}`, { method: 'DELETE' });
+  }
+
   // Health check
   async healthCheck(): Promise<boolean> {
     try {
@@ -179,6 +199,234 @@ class ApiClient {
     } catch {
       return false;
     }
+  }
+
+  // Employees
+  async getEmployees(): Promise<any[]> {
+    return this.request('/employees');
+  }
+
+  async addEmployee(employee: any): Promise<void> {
+    await this.request('/employees', {
+      method: 'POST',
+      body: JSON.stringify(employee),
+    });
+  }
+
+  async updateEmployee(employee: any): Promise<void> {
+    await this.request(`/employees/${employee.id}`, {
+      method: 'PUT',
+      body: JSON.stringify(employee),
+    });
+  }
+
+  async deleteEmployee(id: string): Promise<void> {
+    await this.request(`/employees/${id}`, { method: 'DELETE' });
+  }
+
+  // Schedule Assignments
+  async getScheduleAssignments(): Promise<any[]> {
+    return this.request('/schedule-assignments');
+  }
+
+  async addScheduleAssignment(assignment: any): Promise<void> {
+    await this.request('/schedule-assignments', {
+      method: 'POST',
+      body: JSON.stringify(assignment),
+    });
+  }
+
+  async deleteScheduleAssignment(id: string): Promise<void> {
+    await this.request(`/schedule-assignments/${id}`, { method: 'DELETE' });
+  }
+
+  // Logs
+  async getLogs(): Promise<any[]> {
+    return this.request('/logs');
+  }
+
+  async addLog(log: any): Promise<void> {
+    await this.request('/logs', {
+      method: 'POST',
+      body: JSON.stringify(log),
+    });
+  }
+
+  async clearLogs(): Promise<void> {
+    await this.request('/logs/clear', { method: 'DELETE' });
+  }
+
+  // Comments
+  async getComments(): Promise<any[]> {
+    return this.request('/comments');
+  }
+
+  async addComment(comment: any): Promise<void> {
+    await this.request('/comments', {
+      method: 'POST',
+      body: JSON.stringify(comment),
+    });
+  }
+
+  async deleteComment(id: string): Promise<void> {
+    await this.request(`/comments/${id}`, { method: 'DELETE' });
+  }
+
+  // User Preferences (replaces localStorage)
+  async getAllPreferences(): Promise<Record<string, any>> {
+    return this.request('/preferences');
+  }
+
+  async getPreference(key: string): Promise<any> {
+    return this.request(`/preferences/${key}`);
+  }
+
+  async setPreference(key: string, value: any): Promise<void> {
+    await this.request(`/preferences/${key}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    });
+  }
+
+  async deletePreference(key: string): Promise<void> {
+    await this.request(`/preferences/${key}`, { method: 'DELETE' });
+  }
+
+  // Schedule Templates
+  async getTemplates(): Promise<any[]> {
+    return this.request('/templates');
+  }
+
+  async addTemplate(template: any): Promise<void> {
+    await this.request('/templates', {
+      method: 'POST',
+      body: JSON.stringify(template),
+    });
+  }
+
+  async deleteTemplate(id: string): Promise<void> {
+    await this.request(`/templates/${id}`, { method: 'DELETE' });
+  }
+
+  // ==================== ABSENCE MANAGEMENT ====================
+
+  // Absence Types
+  async getAbsenceTypes(): Promise<any[]> {
+    return this.request('/absence-types');
+  }
+
+  async getAllAbsenceTypes(): Promise<any[]> {
+    return this.request('/absence-types/all');
+  }
+
+  async updateAbsenceType(id: string, data: any): Promise<void> {
+    await this.request(`/absence-types/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async addAbsenceType(data: any): Promise<void> {
+    await this.request('/absence-types', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Absence Limits
+  async getAbsenceLimits(params?: { employeeId?: string; year?: number }): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params?.employeeId) query.append('employeeId', params.employeeId);
+    if (params?.year) query.append('year', params.year.toString());
+    return this.request(`/absence-limits?${query.toString()}`);
+  }
+
+  async setAbsenceLimit(data: any): Promise<void> {
+    await this.request('/absence-limits', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async setAbsenceLimitsBulk(employeeId: string, year: number, limits: any[]): Promise<void> {
+    await this.request('/absence-limits/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ employeeId, year, limits }),
+    });
+  }
+
+  // Absences
+  async getAbsences(params?: { employeeId?: string; year?: number; month?: number; status?: string }): Promise<any[]> {
+    const query = new URLSearchParams();
+    if (params?.employeeId) query.append('employeeId', params.employeeId);
+    if (params?.year) query.append('year', params.year.toString());
+    if (params?.month) query.append('month', params.month.toString());
+    if (params?.status) query.append('status', params.status);
+    return this.request(`/absences?${query.toString()}`);
+  }
+
+  async addAbsence(data: any): Promise<void> {
+    await this.request('/absences', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateAbsence(id: string, data: any): Promise<void> {
+    await this.request(`/absences/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteAbsence(id: string): Promise<void> {
+    await this.request(`/absences/${id}`, { method: 'DELETE' });
+  }
+
+  // Employee Details
+  async getEmployeeDetails(employeeId: string): Promise<any> {
+    return this.request(`/employee-details/${employeeId}`);
+  }
+
+  async updateEmployeeDetails(employeeId: string, data: any): Promise<void> {
+    await this.request(`/employee-details/${employeeId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  // Qualifications
+  async getQualifications(employeeId?: string): Promise<any[]> {
+    const query = employeeId ? `?employeeId=${employeeId}` : '';
+    return this.request(`/qualifications${query}`);
+  }
+
+  async setQualification(data: any): Promise<void> {
+    await this.request('/qualifications', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteQualification(id: string): Promise<void> {
+    await this.request(`/qualifications/${id}`, { method: 'DELETE' });
+  }
+
+  // Holidays
+  async getHolidays(year?: number): Promise<any[]> {
+    const query = year ? `?year=${year}` : '';
+    return this.request(`/holidays${query}`);
+  }
+
+  async addHoliday(data: any): Promise<void> {
+    await this.request('/holidays', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteHoliday(date: string): Promise<void> {
+    await this.request(`/holidays/${date}`, { method: 'DELETE' });
   }
 }
 
