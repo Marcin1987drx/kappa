@@ -435,15 +435,15 @@ class KappaApp {
 
     // Quick action buttons
     document.getElementById('quickAddProject')?.addEventListener('click', () => {
-      this.showAddModal('project');
-    });
-
-    document.getElementById('quickWeekReport')?.addEventListener('click', () => {
-      this.showWeeklyReport();
+      this.showAddProjectModal();
     });
 
     document.getElementById('quickExport')?.addEventListener('click', () => {
       this.exportData();
+    });
+
+    document.getElementById('quickAnalytics')?.addEventListener('click', () => {
+      this.showAnalyticsModal();
     });
 
     // Stats panel collapse button
@@ -895,86 +895,87 @@ class KappaApp {
   }
 
   private updateStatsPanel(): void {
-    // Projects stats
-    const totalProjects = this.state.projects.length;
-    const activeProjects = this.state.projects.filter(p => {
-      const weeks = Object.keys(p.weeks || {});
-      return weeks.length > 0;
-    }).length;
+    const currentWeek = this.getCurrentWeek();
+    const currentYear = this.state.selectedYear;
+    const currentWeekKey = `${currentYear}-KW${String(currentWeek).padStart(2, '0')}`;
     
-    // Calculate hours for current week
-    const currentWeekKey = `${new Date().getFullYear()}-KW${String(this.getCurrentWeek()).padStart(2, '0')}`;
+    // Projects stats - only Kappa related
+    const totalProjects = this.state.projects.length;
+    
     let totalIst = 0;
     let totalSoll = 0;
+    let completedProjects = 0;
+    let delayedProjects = 0;
+    let activeProjects = 0;
     
     this.state.projects.forEach(p => {
       const weekData = p.weeks?.[currentWeekKey];
       if (weekData) {
         totalIst += weekData.ist || 0;
         totalSoll += weekData.soll || 0;
+        
+        if (weekData.soll > 0) {
+          activeProjects++;
+          if (weekData.ist >= weekData.soll) {
+            completedProjects++;
+          } else if (weekData.ist < weekData.soll * 0.5) {
+            delayedProjects++;
+          }
+        }
       }
     });
 
     const progressPercent = totalSoll > 0 ? Math.round((totalIst / totalSoll) * 100) : 0;
 
-    // Count alerts (projects behind schedule)
-    let delayedProjects = 0;
-    let unassignedProjects = 0;
-    let completedProjects = 0;
-    
-    this.state.projects.forEach(p => {
-      const weekData = p.weeks?.[currentWeekKey];
-      if (weekData) {
-        if (weekData.ist >= weekData.soll && weekData.soll > 0) {
-          completedProjects++;
-        } else if (weekData.ist < weekData.soll * 0.5) {
-          delayedProjects++;
-        }
-      }
-      // Check for unassigned (no schedule assignments)
-      const assignments = this.state.scheduleAssignments.filter(a => a.projectId === p.id);
-      if (assignments.length === 0) {
-        unassignedProjects++;
-      }
-    });
-
-    // Update existing HTML elements
+    // Update stats cards
     const statTotal = document.getElementById('statTotalProjects');
     const statActive = document.getElementById('statActiveProjects');
     const statCompleted = document.getElementById('statCompletedProjects');
     const statDelayed = document.getElementById('statDelayedProjects');
-    const weeklyDone = document.getElementById('weeklyHoursDone');
-    const weeklyTotal = document.getElementById('weeklyHoursTotal');
-    const weeklyProgress = document.getElementById('weeklyProgressBar');
-    const weeklyPercent = document.getElementById('weeklyProgressPercent');
-    const alertsList = document.getElementById('alertsList');
-    const teamWorkload = document.getElementById('teamWorkload');
-
+    
     if (statTotal) statTotal.textContent = String(totalProjects);
     if (statActive) statActive.textContent = String(activeProjects);
     if (statCompleted) statCompleted.textContent = String(completedProjects);
     if (statDelayed) statDelayed.textContent = String(delayedProjects);
-    if (weeklyDone) weeklyDone.textContent = String(totalIst);
-    if (weeklyTotal) weeklyTotal.textContent = String(totalSoll);
+    
+    // Update week/year info
+    const currentWeekNum = document.getElementById('currentWeekNum');
+    const currentYearNum = document.getElementById('currentYearNum');
+    if (currentWeekNum) currentWeekNum.textContent = String(currentWeek);
+    if (currentYearNum) currentYearNum.textContent = String(currentYear);
+    
+    // Update IST/SOLL progress
+    const weeklyIst = document.getElementById('weeklyIstDone');
+    const weeklySoll = document.getElementById('weeklySollTotal');
+    const weeklyProgress = document.getElementById('weeklyProgressBar');
+    const weeklyPercent = document.getElementById('weeklyProgressPercent');
+    
+    if (weeklyIst) weeklyIst.textContent = String(totalIst);
+    if (weeklySoll) weeklySoll.textContent = String(totalSoll);
     if (weeklyProgress) weeklyProgress.style.width = `${Math.min(progressPercent, 100)}%`;
     if (weeklyPercent) weeklyPercent.textContent = `${progressPercent}%`;
 
-    // Update alerts
+    // Update alerts - only Kappa related
+    const alertsList = document.getElementById('alertsList');
     if (alertsList) {
       let alertsHtml = '';
       if (delayedProjects > 0) {
         alertsHtml += `<div class="alert-item alert-danger">
           <span class="alert-icon">🔴</span>
-          <span class="alert-text">${delayedProjects} projekt${delayedProjects > 1 ? 'y' : ''} opóźnion${delayedProjects > 1 ? 'e' : 'y'}</span>
+          <span class="alert-text">${delayedProjects} projekt${delayedProjects > 1 ? 'ów' : ''} < 50% realizacji</span>
         </div>`;
       }
-      if (unassignedProjects > 0) {
+      const noSollProjects = this.state.projects.filter(p => {
+        const weekData = p.weeks?.[currentWeekKey];
+        return !weekData || !weekData.soll;
+      }).length;
+      if (noSollProjects > 0) {
         alertsHtml += `<div class="alert-item alert-warning">
           <span class="alert-icon">⚠️</span>
-          <span class="alert-text">${unassignedProjects} bez przypisania</span>
+          <span class="alert-text">${noSollProjects} bez planu SOLL</span>
         </div>`;
       }
-      if (delayedProjects === 0 && unassignedProjects === 0) {
+      if (!alertsHtml) {
         alertsHtml = `<div class="alert-item alert-success">
           <span class="alert-icon">✅</span>
           <span class="alert-text">Wszystko w porządku!</span>
@@ -983,38 +984,61 @@ class KappaApp {
       alertsList.innerHTML = alertsHtml;
     }
 
-    // Update team workload
-    if (teamWorkload) {
-      const employeeWorkload = this.state.employees.slice(0, 5).map(emp => {
-        const assignments = this.state.scheduleAssignments.filter(a => a.employeeId === emp.id);
-        const workload = Math.min((assignments.length / 5) * 100, 100);
-        const empName = `${emp.firstName} ${emp.lastName}`;
-        return `<div class="workload-item">
-          <span class="workload-name">${empName}</span>
-          <div class="workload-bar-container">
-            <div class="workload-bar-fill" style="width: ${workload}%; background: ${workload > 80 ? '#ef4444' : workload > 50 ? '#f59e0b' : '#10b981'}"></div>
-          </div>
-          <span class="workload-percent">${Math.round(workload)}%</span>
-        </div>`;
-      }).join('');
-      teamWorkload.innerHTML = employeeWorkload || '<div style="color: var(--color-text-secondary); font-size: 0.85rem;">Brak pracowników</div>';
+    // Update priority list (top projects behind schedule)
+    const priorityList = document.getElementById('priorityList');
+    if (priorityList) {
+      const topProjects = this.getTopPriorityProjects();
+      if (topProjects.length > 0) {
+        const priorityHtml = topProjects.map((p, idx) => {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          const test = this.state.tests.find(t => t.id === p.test_id);
+          const weekData = p.weeks?.[currentWeekKey];
+          const percent = weekData && weekData.soll > 0 
+            ? Math.round((weekData.ist / weekData.soll) * 100) 
+            : 0;
+          return `<div class="priority-item" data-project-id="${p.id}">
+            <span class="priority-badge p${idx + 1}">${idx + 1}</span>
+            <span class="priority-name">${customer?.name || 'N/A'}</span>
+            <span class="priority-percent">${percent}%</span>
+          </div>`;
+        }).join('');
+        priorityList.innerHTML = priorityHtml;
+        
+        // Add click handlers
+        priorityList.querySelectorAll('.priority-item').forEach(item => {
+          item.addEventListener('click', () => {
+            const projectId = item.getAttribute('data-project-id');
+            if (projectId) this.highlightProject(projectId);
+          });
+        });
+      } else {
+        priorityList.innerHTML = '<div class="priority-empty">Brak projektów do pokazania</div>';
+      }
     }
   }
 
+  private showAnalyticsModal(): void {
+    // Switch to analytics view
+    this.switchView('analytics');
+  }
+
   private getTopPriorityProjects(): Project[] {
-    const currentWeekKey = `${new Date().getFullYear()}-KW${String(this.getCurrentWeek()).padStart(2, '0')}`;
+    const currentWeekKey = `${this.state.selectedYear}-KW${String(this.getCurrentWeek()).padStart(2, '0')}`;
     
-    // Sort by how behind they are
+    // Sort by how behind they are (lowest IST/SOLL ratio first)
     return [...this.state.projects]
-      .filter(p => p.weeks && Object.keys(p.weeks).length > 0)
+      .filter(p => {
+        const weekData = p.weeks?.[currentWeekKey];
+        return weekData && weekData.soll > 0 && weekData.ist < weekData.soll;
+      })
       .sort((a, b) => {
         const aWeek = a.weeks?.[currentWeekKey];
         const bWeek = b.weeks?.[currentWeekKey];
-        const aRatio = aWeek ? (aWeek.ist / (aWeek.soll || 1)) : 1;
-        const bRatio = bWeek ? (bWeek.ist / (bWeek.soll || 1)) : 1;
+        const aRatio = aWeek ? (aWeek.ist / aWeek.soll) : 1;
+        const bRatio = bWeek ? (bWeek.ist / bWeek.soll) : 1;
         return aRatio - bRatio;
       })
-      .slice(0, 3);
+      .slice(0, 5);
   }
 
   private highlightProject(projectId: string): void {

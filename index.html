@@ -264,15 +264,23 @@
 
             <!-- Weekly Progress -->
             <div class="stats-section">
-              <div class="stats-section-title">Ten tydzień</div>
+              <div class="stats-section-title">📅 KW <span id="currentWeekNum">0</span> / <span id="currentYearNum">2026</span></div>
               <div class="weekly-progress">
                 <div class="progress-info">
-                  <span id="weeklyHoursDone">0</span> / <span id="weeklyHoursTotal">0</span> h
+                  IST: <span id="weeklyIstDone">0</span> / SOLL: <span id="weeklySollTotal">0</span>
                 </div>
                 <div class="progress-bar-container">
                   <div class="progress-bar-fill" id="weeklyProgressBar"></div>
                 </div>
                 <div class="progress-percent" id="weeklyProgressPercent">0%</div>
+              </div>
+            </div>
+
+            <!-- Top Priority Projects -->
+            <div class="stats-section">
+              <div class="stats-section-title">🔥 Priorytety</div>
+              <div class="priority-list" id="priorityList">
+                <!-- Generated dynamically -->
               </div>
             </div>
 
@@ -287,14 +295,6 @@
               </div>
             </div>
 
-            <!-- Team Workload -->
-            <div class="stats-section">
-              <div class="stats-section-title">👥 Obciążenie zespołu</div>
-              <div class="team-workload" id="teamWorkload">
-                <!-- Generated dynamically -->
-              </div>
-            </div>
-
             <!-- Quick Actions -->
             <div class="stats-section">
               <div class="stats-section-title">⚡ Szybkie akcje</div>
@@ -305,20 +305,21 @@
                   </svg>
                   Nowy projekt
                 </button>
-                <button class="quick-action-btn" id="quickWeekReport">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                  </svg>
-                  Raport tygodnia
-                </button>
                 <button class="quick-action-btn" id="quickExport">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                     <polyline points="7 10 12 15 17 10"/>
                     <line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
-                  Eksportuj
+                  Eksportuj Excel
+                </button>
+                <button class="quick-action-btn quick-action-primary" id="quickAnalytics">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="20" x2="18" y2="10"/>
+                    <line x1="12" y1="20" x2="12" y2="4"/>
+                    <line x1="6" y1="20" x2="6" y2="14"/>
+                  </svg>
+                  Pełna analityka
                 </button>
               </div>
             </div>
