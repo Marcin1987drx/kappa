@@ -830,16 +830,16 @@ body.dark-theme .btn-toolbar .icon-moon {
 
 /* Panel Content */
 .stats-panel-content {
-  width: 300px;
+  width: 280px;
   background: var(--color-bg-elevated);
   border-left: 1px solid var(--color-border);
   display: flex;
   flex-direction: column;
-  box-shadow: -4px 0 20px rgba(0,0,0,0.1);
+  box-shadow: -4px 0 16px rgba(0,0,0,0.1);
 }
 
 .stats-panel-header {
-  padding: 16px;
+  padding: 12px 14px;
   background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
   color: white;
   display: flex;
@@ -849,7 +849,7 @@ body.dark-theme .btn-toolbar .icon-moon {
 
 .stats-panel-header h3 {
   margin: 0;
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
 }
 
@@ -870,56 +870,64 @@ body.dark-theme .btn-toolbar .icon-moon {
   background: rgba(255,255,255,0.3);
 }
 
-/* Analytics Button - prominent */
+/* Analytics Button - compact & elegant */
 .analytics-panel-btn {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 0 16px 16px 16px;
-  padding: 14px 16px;
-  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 12px 12px 12px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   border: none;
-  border-radius: 12px;
+  border-radius: 8px;
   color: white;
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: 0.85rem;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.25);
 }
 
 .analytics-panel-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(59, 130, 246, 0.4);
-  background: linear-gradient(135deg, #2563eb 0%, #1e40af 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.35);
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+}
+
+.analytics-panel-btn:active {
+  transform: translateY(0);
 }
 
 .analytics-panel-btn svg:first-child {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
 }
 
 .analytics-panel-btn span {
-  flex: 1;
-  text-align: left;
+  white-space: nowrap;
 }
 
 .analytics-panel-btn .arrow-icon {
-  opacity: 0.7;
+  opacity: 0.8;
   transition: transform 0.2s;
+  width: 14px;
+  height: 14px;
 }
 
 .analytics-panel-btn:hover .arrow-icon {
-  transform: translateX(4px);
+  transform: translateX(3px);
   opacity: 1;
 }
 
 .stats-panel-body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 /* Stats Cards */
@@ -1102,7 +1110,7 @@ body.dark-theme .btn-toolbar .icon-moon {
 
 /* Stats Section */
 .stats-section {
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 
 .stats-section:last-child {
@@ -1110,12 +1118,12 @@ body.dark-theme .btn-toolbar .icon-moon {
 }
 
 .stats-section-title {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 600;
   color: var(--color-text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 /* Mini Stats Cards */
@@ -1124,23 +1132,23 @@ body.dark-theme .btn-toolbar .icon-moon {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 12px 8px;
+  padding: 10px 6px;
   background: var(--color-bg-secondary);
-  border-radius: 10px;
+  border-radius: 8px;
   border: 1px solid var(--color-border);
 }
 
 .stat-mini-value {
-  font-size: 1.4rem;
+  font-size: 1.25rem;
   font-weight: 700;
   color: var(--color-text);
   line-height: 1;
 }
 
 .stat-mini-label {
-  font-size: 0.7rem;
+  font-size: 0.65rem;
   color: var(--color-text-secondary);
-  margin-top: 4px;
+  margin-top: 3px;
   text-transform: uppercase;
 }
 
@@ -1151,35 +1159,35 @@ body.dark-theme .btn-toolbar .icon-moon {
 /* Weekly Progress */
 .weekly-progress {
   background: var(--color-bg-secondary);
-  border-radius: 10px;
-  padding: 14px;
+  border-radius: 8px;
+  padding: 10px 12px;
   border: 1px solid var(--color-border);
 }
 
 .progress-info {
-  font-size: 1rem;
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--color-text);
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .progress-bar-container {
-  height: 10px;
+  height: 8px;
   background: var(--color-bg-tertiary);
-  border-radius: 5px;
+  border-radius: 4px;
   overflow: hidden;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .progress-bar-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--color-primary), var(--color-primary-dark));
-  border-radius: 5px;
+  border-radius: 4px;
   transition: width 0.5s ease;
 }
 
 .progress-percent {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: var(--color-primary);
   text-align: right;
@@ -9728,15 +9736,16 @@ textarea.form-control {
 
 /* === MAIN CONTAINER === */
 .sched-container {
-  display: grid;
-  grid-template-columns: 1fr 300px;
-  gap: 16px;
+  display: flex;
+  gap: 0;
   min-height: calc(100vh - 180px);
   overflow: hidden;
+  position: relative;
 }
 
-/* === TABELA GRAFIKU - ELEGANCKI KORPO LOOK === */
+/* === TABELA GRAFIKU === */
 .sched-main {
+  flex: 1;
   background: var(--color-surface);
   border-radius: 16px;
   border: 1px solid var(--color-border);
@@ -9744,6 +9753,147 @@ textarea.form-control {
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
+  margin-right: 0;
+  transition: margin-right 0.3s ease;
+}
+
+.sched-container.sidebar-open .sched-main {
+  margin-right: 320px;
+}
+
+/* === SCHEDULE SIDEBAR - SLIDING PANEL === */
+.sched-sidebar {
+  position: fixed;
+  right: 0;
+  top: 160px;
+  bottom: 20px;
+  width: 320px;
+  background: var(--color-bg-elevated);
+  border-left: 1px solid var(--color-border);
+  box-shadow: -4px 0 20px rgba(0,0,0,0.1);
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px 0 0 12px;
+  overflow: visible;
+}
+
+.sched-sidebar.open {
+  transform: translateX(0);
+}
+
+/* Schedule Sidebar Tab/Handle */
+.sched-sidebar-toggle {
+  position: absolute;
+  left: -44px;
+  top: 80px;
+  width: 44px;
+  height: 110px;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  border: none;
+  border-radius: 8px 0 0 8px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: -2px 2px 8px rgba(0,0,0,0.15);
+  transition: all 0.2s ease;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.sched-sidebar-toggle:hover {
+  left: -48px;
+  width: 48px;
+  background: linear-gradient(135deg, #4f46e5 0%, #4338ca 100%);
+}
+
+.sched-sidebar-toggle svg {
+  transform: rotate(90deg);
+  width: 16px;
+  height: 16px;
+}
+
+.sched-sidebar-toggle .toggle-text {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.sched-sidebar.open .sched-sidebar-toggle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Sidebar Header */
+.sched-sidebar-header {
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.sched-sidebar-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sched-sidebar-header h3 svg {
+  opacity: 0.9;
+}
+
+/* Close button in header */
+.sched-sidebar-close {
+  width: 30px;
+  height: 30px;
+  background: rgba(255,255,255,0.2);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.sched-sidebar-close:hover {
+  background: rgba(255,255,255,0.3);
+  transform: scale(1.05);
+}
+
+/* Sidebar Content */
+.sched-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--color-bg-elevated);
+}
+
+/* Panel items - auto height */
+.sched-sidebar-content .sched-panel {
+  flex-shrink: 0;
+}
+
+.sched-sidebar-content .sched-panel-content {
+  max-height: none;
 }
 
 .sched-table-wrapper {
@@ -12397,20 +12547,14 @@ textarea.form-control {
   margin: 0;
 }
 
-/* === SIDEBAR - ELEGANCKI KORPO 2026 === */
-.sched-sidebar {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
+/* === SIDEBAR PANELS - ELEGANCKI KORPO 2026 === */
 .sched-panel {
   background: var(--color-surface);
   border-radius: 16px;
   border: 1px solid var(--color-border);
   overflow: hidden;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
-  transition: all 0.2s ease;
+  transition: all 0.3s ease;
 }
 
 .sched-panel:hover {
@@ -12981,31 +13125,6 @@ textarea.form-control {
   font-size: 0.68rem;
   color: #f59e0b;
   display: block;
-}
-
-/* Przycisk dodaj pracownika */
-.sched-add-employee-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  padding: 12px;
-  border: 2px dashed var(--color-border);
-  background: transparent;
-  border-radius: 10px;
-  color: var(--color-text-secondary);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  margin-top: 8px;
-}
-
-.sched-add-employee-btn:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-  background: var(--color-primary-subtle);
 }
 
 .sched-panel-add {
@@ -15054,14 +15173,17 @@ textarea.form-control {
 
 /* Main Layout */
 .absence-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr 320px;
+  display: flex;
   gap: 0;
   height: calc(100vh - 56px);
   background: var(--color-bg);
+  position: relative;
+  overflow: hidden;
 }
 
 .absence-sidebar {
+  width: 280px;
+  flex-shrink: 0;
   background: var(--color-bg-elevated);
   border-right: 1px solid var(--color-border);
   padding: 16px;
@@ -15072,16 +15194,135 @@ textarea.form-control {
 }
 
 .absence-main {
+  flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: margin-right 0.3s ease;
 }
 
+.absence-layout.sidebar-open .absence-main {
+  margin-right: 320px;
+}
+
+/* === ABSENCE EMPLOYEES SIDEBAR - SLIDING PANEL === */
 .absence-employees-sidebar {
+  position: fixed;
+  right: 0;
+  top: 56px;
+  bottom: 0;
+  width: 320px;
   background: var(--color-bg-elevated);
   border-left: 1px solid var(--color-border);
-  padding: 16px;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.1);
+  transform: translateX(100%);
+  transition: transform 0.3s ease;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+.absence-employees-sidebar.open {
+  transform: translateX(0);
+}
+
+/* Absence Sidebar Tab/Handle */
+.absence-sidebar-toggle {
+  position: absolute;
+  left: -44px;
+  top: 80px;
+  width: 44px;
+  height: 120px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  border: none;
+  border-radius: 8px 0 0 8px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  box-shadow: -2px 2px 8px rgba(0,0,0,0.15);
+  transition: all 0.2s ease;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.absence-sidebar-toggle:hover {
+  left: -48px;
+  width: 48px;
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+}
+
+.absence-sidebar-toggle svg {
+  transform: rotate(90deg);
+  width: 16px;
+  height: 16px;
+}
+
+.absence-sidebar-toggle .toggle-text {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.absence-employees-sidebar.open .absence-sidebar-toggle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Absence Sidebar Header */
+.absence-sidebar-header {
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.absence-sidebar-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.absence-sidebar-header h3 svg {
+  opacity: 0.9;
+}
+
+.absence-sidebar-close {
+  width: 30px;
+  height: 30px;
+  background: rgba(255,255,255,0.2);
+  border: none;
+  border-radius: 8px;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.absence-sidebar-close:hover {
+  background: rgba(255,255,255,0.3);
+  transform: scale(1.05);
+}
+
+/* Absence Sidebar Content */
+.absence-employees-content {
+  flex: 1;
   overflow-y: auto;
+  padding: 16px;
+  background: var(--color-bg-elevated);
 }
 
 /* Year Selector */

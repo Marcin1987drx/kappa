@@ -13485,8 +13485,44 @@ class KappaApp {
     document.getElementById('absenceExportBtn')?.addEventListener('click', () => {
       this.exportAbsences();
     });
+    
+    // Toggle absence employees sidebar - otwieranie
+    document.getElementById('absenceEmployeesToggle')?.addEventListener('click', () => {
+      const sidebar = document.getElementById('absenceEmployeesSidebar');
+      const layout = sidebar?.closest('.absence-layout');
+      if (sidebar && layout) {
+        sidebar.classList.add('open');
+        layout.classList.add('sidebar-open');
+        localStorage.setItem('absenceEmployeesSidebarOpen', '1');
+      }
+    });
+    
+    // Close absence employees sidebar - zamykanie
+    document.getElementById('absenceEmployeesClose')?.addEventListener('click', () => {
+      const sidebar = document.getElementById('absenceEmployeesSidebar');
+      const layout = sidebar?.closest('.absence-layout');
+      if (sidebar && layout) {
+        sidebar.classList.remove('open');
+        layout.classList.remove('sidebar-open');
+        localStorage.setItem('absenceEmployeesSidebarOpen', '0');
+      }
+    });
+    
+    // Przywróć stan sidebara z localStorage (domyślnie otwarty)
+    const absenceSidebarOpen = localStorage.getItem('absenceEmployeesSidebarOpen') !== '0';
+    const absenceSidebar = document.getElementById('absenceEmployeesSidebar');
+    const absenceLayout = absenceSidebar?.closest('.absence-layout');
+    if (absenceSidebar && absenceLayout) {
+      if (absenceSidebarOpen) {
+        absenceSidebar.classList.add('open');
+        absenceLayout.classList.add('sidebar-open');
+      } else {
+        absenceSidebar.classList.remove('open');
+        absenceLayout.classList.remove('sidebar-open');
+      }
+    }
   }
-  
+
   private renderAbsenceFilters(): void {
     // Employee filter
     const empFilter = document.getElementById('absenceFilterEmployee') as HTMLSelectElement;
