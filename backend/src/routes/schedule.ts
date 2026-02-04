@@ -92,8 +92,11 @@ scheduleAssignmentsRouter.get('/', (req, res) => {
 
 scheduleAssignmentsRouter.post('/', (req, res) => {
   try {
-    const { id, employeeId, projectId, testId, week, shift, scope, note } = req.body;
-    const created_at = Date.now();
+    console.log('POST /schedule-assignments body:', JSON.stringify(req.body));
+    const { id, employeeId, projectId, week, shift, scope, note, createdAt, updatedAt } = req.body;
+    const testId = req.body.testId || null;
+    const partId = req.body.partId || null;
+    const created_at = createdAt || Date.now();
     
     // Check if exists (upsert)
     const existing = getOne('SELECT id FROM schedule_assignments WHERE id = ?', [id]);
@@ -101,17 +104,17 @@ scheduleAssignmentsRouter.post('/', (req, res) => {
       runQuery(`
         UPDATE schedule_assignments SET employeeId = ?, projectId = ?, testId = ?, week = ?, shift = ?, scope = ?, note = ?
         WHERE id = ?
-      `, [employeeId, projectId, testId, week, shift || 1, scope || 'project', note, id]);
+      `, [employeeId, projectId, testId, week, shift || 1, scope || 'project', note || null, id]);
     } else {
       runQuery(`
         INSERT INTO schedule_assignments (id, employeeId, projectId, testId, week, shift, scope, note, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [id, employeeId, projectId, testId, week, shift || 1, scope || 'project', note, created_at]);
+      `, [id, employeeId, projectId, testId, week, shift || 1, scope || 'project', note || null, created_at]);
     }
     
     res.status(201).json({ id, employeeId, projectId, testId, week, shift, scope, note, created_at });
   } catch (error) {
-    console.error(error);
+    console.error('Schedule assignment error:', error);
     res.status(500).json({ error: 'Failed to create schedule assignment' });
   }
 });

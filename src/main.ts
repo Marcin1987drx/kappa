@@ -5565,167 +5565,275 @@ class KappaApp {
 
   private async exportAnalyticsToPdf(): Promise<void> {
     try {
-      this.showExportProgress(true, 5, 'Przygotowywanie raportu...');
+      const t = (key: string) => i18n.t(key);
+      const lang = i18n.getLanguage();
+      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
+      
+      this.showExportProgress(true, 5, t('export.preparingReport'));
       
       const filterInfo = this.getFilterInfo();
       const analyticsView = document.getElementById('analyticsView');
       if (!analyticsView) throw new Error('Analytics view not found');
       
-      this.showExportProgress(true, 10, 'Tworzenie nagłówka raportu...');
-      
-      // Create PDF container
-      const pdfContainer = document.createElement('div');
-      pdfContainer.id = 'pdfExportContainer';
-      pdfContainer.style.cssText = 'position: fixed; left: 0; top: 0; width: 1200px; background: #fff; z-index: -9999; padding: 0;';
-      
-      // Create header
-      const header = document.createElement('div');
-      header.innerHTML = `
-        <div style="background: #000; color: #fff; padding: 24px 32px; display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <h1 style="margin: 0; font-size: 28px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
-            <p style="margin: 6px 0 0 0; font-size: 16px; opacity: 0.85;">Produkt Audit 360</p>
-          </div>
-          <div style="text-align: right;">
-            <p style="margin: 0; font-size: 14px; opacity: 0.9;">Raport Analityczny</p>
-            <p style="margin: 4px 0 0 0; font-size: 13px; opacity: 0.7;">${filterInfo.rangeText}</p>
-          </div>
-        </div>
-        <div style="background: #0097AC; color: #fff; padding: 14px 32px; display: flex; justify-content: space-between; font-size: 12px;">
-          <span><strong>Data generowania:</strong> ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')}</span>
-          <span><strong>Użytkownik:</strong> ${this.state.settings.userName || 'System'}</span>
-        </div>
-      `;
-      pdfContainer.appendChild(header);
-      
-      this.showExportProgress(true, 20, 'Kopiowanie zawartości...');
+      this.showExportProgress(true, 10, t('export.creatingHeader'));
       
       // Get analytics data
       const analyticsData = this.calculateAnalyticsData();
+      const projects = this.getFilteredProjects();
       
-      // Create content section
-      const content = document.createElement('div');
-      content.style.cssText = 'padding: 24px 32px; background: #f8fafc;';
+      const dateStr = new Date().toLocaleDateString(dateLocale);
+      const timeStr = new Date().toLocaleTimeString(dateLocale);
       
-      // KPI Summary Section
-      content.innerHTML = `
-        <div style="margin-bottom: 24px;">
-          <h2 style="margin: 0 0 16px 0; font-size: 18px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 8px;">📊 Kluczowe Wskaźniki (KPI)</h2>
-          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
-            <div style="background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-              <div style="font-size: 32px; font-weight: 700; color: #0097AC;">${analyticsData.totalProjects}</div>
-              <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Projekty</div>
+      // Helper to create a page section - A4 ratio: 1000px width = 1414px height
+      const pageHeight = 1414;
+      const headerHeight = 110; // black + teal headers
+      const footerHeight = 40;
+      
+      const createPageSection = (content: string, includeHeader: boolean = false): HTMLDivElement => {
+        const section = document.createElement('div');
+        section.style.cssText = `width: 1000px; height: ${pageHeight}px; background: #f8fafc; padding: 0; position: relative; overflow: hidden;`;
+        
+        if (includeHeader) {
+          section.innerHTML = `
+            <div style="background: #000; color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
+                <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.85;">Produkt Audit 360</p>
+              </div>
+              <div style="text-align: right;">
+                <p style="margin: 0; font-size: 13px; opacity: 0.9;">${t('export.analyticsReport')}</p>
+                <p style="margin: 3px 0 0 0; font-size: 12px; opacity: 0.7;">${filterInfo.rangeText}</p>
+              </div>
             </div>
-            <div style="background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-              <div style="font-size: 32px; font-weight: 700; color: #10b981;">${analyticsData.totalIst.toLocaleString('pl-PL')}</div>
-              <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Testy Ist</div>
+            <div style="background: #0097AC; color: #fff; padding: 10px 28px; display: flex; justify-content: space-between; font-size: 11px;">
+              <span><strong>${t('export.generatedAt')}:</strong> ${dateStr} ${timeStr}</span>
+              <span><strong>${t('export.user')}:</strong> ${this.state.settings.userName || 'System'}</span>
             </div>
-            <div style="background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-              <div style="font-size: 32px; font-weight: 700; color: #6366f1;">${analyticsData.totalSoll.toLocaleString('pl-PL')}</div>
-              <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Testy Soll</div>
+          `;
+        }
+        
+        const contentHeight = pageHeight - (includeHeader ? headerHeight : 0) - footerHeight;
+        section.innerHTML += `<div style="padding: 24px 28px; background: #f8fafc; min-height: ${contentHeight}px;">${content}</div>`;
+        
+        // Add footer - positioned at bottom
+        section.innerHTML += `
+          <div style="background: #1e293b; color: #fff; padding: 12px 28px; text-align: center; font-size: 10px; position: absolute; bottom: 0; left: 0; right: 0;">
+            <p style="margin: 0; opacity: 0.8;">© ${new Date().getFullYear()} ${t('export.copyright')}</p>
+          </div>
+        `;
+        
+        return section;
+      };
+      
+      this.showExportProgress(true, 20, t('export.copyingContent'));
+      
+      // Calculate test type statistics
+      const testTypeStats = new Map<string, { name: string; count: number; ist: number; soll: number }>();
+      const filterInfo2 = this.getFilterInfo();
+      projects.forEach(project => {
+        const test = this.state.tests.find(t => t.id === project.test_id);
+        const testName = test?.name || 'Unknown';
+        
+        if (!testTypeStats.has(project.test_id)) {
+          testTypeStats.set(project.test_id, { name: testName, count: 0, ist: 0, soll: 0 });
+        }
+        
+        const ts = testTypeStats.get(project.test_id)!;
+        ts.count++;
+        
+        for (let week = filterInfo2.weekFrom; week <= filterInfo2.weekTo; week++) {
+          const wd = project.weeks?.[week.toString()];
+          if (wd) {
+            ts.ist += wd.ist || 0;
+            ts.soll += wd.soll || 0;
+          }
+        }
+      });
+      
+      const testStats = Array.from(testTypeStats.values())
+        .map(ts => ({ ...ts, percent: ts.soll > 0 ? (ts.ist / ts.soll * 100) : 0 }))
+        .sort((a, b) => b.count - a.count);
+      
+      // Calculate status distribution
+      let completedCount = 0, inProgressCount = 0, delayedCount = 0, notStartedCount = 0;
+      projects.forEach(project => {
+        let istTotal = 0, sollTotal = 0;
+        for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+          const wd = project.weeks?.[w.toString()];
+          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+        }
+        const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+        if (sollTotal === 0) notStartedCount++;
+        else if (percent >= 100) completedCount++;
+        else if (percent >= 50) inProgressCount++;
+        else delayedCount++;
+      });
+      
+      // Calculate weekly data
+      const weeklyData: { week: number; ist: number; soll: number }[] = [];
+      for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+        let weekIst = 0, weekSoll = 0;
+        projects.forEach(project => {
+          const wd = project.weeks?.[w.toString()];
+          if (wd) { weekIst += wd.ist || 0; weekSoll += wd.soll || 0; }
+        });
+        weeklyData.push({ week: w, ist: weekIst, soll: weekSoll });
+      }
+      
+      // PAGE 1: KPI + Customer Statistics + Test Type Stats + Status + Projects
+      const kpiContent = `
+        <div style="margin-bottom: 12px;">
+          <h2 style="margin: 0 0 8px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📊 ${t('export.kpiTitle')}</h2>
+          <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px;">
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #0097AC;">${analyticsData.totalProjects}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.projects')}</div>
             </div>
-            <div style="background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-              <div style="font-size: 32px; font-weight: 700; color: ${analyticsData.totalPercent >= 100 ? '#10b981' : analyticsData.totalPercent >= 50 ? '#f59e0b' : '#ef4444'};">${analyticsData.totalPercent.toFixed(1)}%</div>
-              <div style="font-size: 13px; color: #64748b; margin-top: 4px;">Realizacja</div>
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #10b981;">${analyticsData.totalIst.toLocaleString(dateLocale)}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.testsIst')}</div>
+            </div>
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #6366f1;">${analyticsData.totalSoll.toLocaleString(dateLocale)}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.testsSoll')}</div>
+            </div>
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: ${analyticsData.totalPercent >= 100 ? '#10b981' : analyticsData.totalPercent >= 50 ? '#f59e0b' : '#ef4444'};">${analyticsData.totalPercent.toFixed(1)}%</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.realization')}</div>
+            </div>
+            <div style="background: #dcfce7; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #166534;">${completedCount}</div>
+              <div style="font-size: 9px; color: #166534;">${t('export.completedProjects')}</div>
+            </div>
+            <div style="background: #fef3c7; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #92400e;">${inProgressCount}</div>
+              <div style="font-size: 9px; color: #92400e;">${t('export.inProgressProjects')}</div>
+            </div>
+            <div style="background: #fee2e2; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #991b1b;">${delayedCount}</div>
+              <div style="font-size: 9px; color: #991b1b;">${t('export.delayedProjects')}</div>
+            </div>
+            <div style="background: #f1f5f9; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #64748b;">${notStartedCount}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('analytics.pending')}</div>
             </div>
           </div>
         </div>
-      `;
-      
-      this.showExportProgress(true, 35, 'Generowanie tabeli klientów...');
-      
-      // Customer Statistics Table
-      const customerTableHTML = `
-        <div style="margin-bottom: 24px;">
-          <h2 style="margin: 0 0 16px 0; font-size: 18px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 8px;">👥 Statystyki Klientów</h2>
-          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-            <thead>
-              <tr style="background: #1e293b; color: #fff;">
-                <th style="padding: 14px 16px; text-align: left; font-weight: 600;">Klient</th>
-                <th style="padding: 14px 16px; text-align: center; font-weight: 600;">Projekty</th>
-                <th style="padding: 14px 16px; text-align: center; font-weight: 600;">Ist</th>
-                <th style="padding: 14px 16px; text-align: center; font-weight: 600;">Soll</th>
-                <th style="padding: 14px 16px; text-align: center; font-weight: 600;">Realizacja</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${analyticsData.customerStats.map((cs, idx) => `
-                <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-                  <td style="padding: 12px 16px; font-weight: 500;">${cs.name}</td>
-                  <td style="padding: 12px 16px; text-align: center;">${cs.count}</td>
-                  <td style="padding: 12px 16px; text-align: center;">${cs.ist.toLocaleString('pl-PL')}</td>
-                  <td style="padding: 12px 16px; text-align: center;">${cs.soll.toLocaleString('pl-PL')}</td>
-                  <td style="padding: 12px 16px; text-align: center;">
-                    <span style="display: inline-block; padding: 4px 12px; border-radius: 20px; font-weight: 600; font-size: 13px;
-                      background: ${cs.percent >= 100 ? '#dcfce7' : cs.percent >= 50 ? '#fef3c7' : '#fee2e2'};
-                      color: ${cs.percent >= 100 ? '#166534' : cs.percent >= 50 ? '#92400e' : '#991b1b'};">
-                      ${cs.percent.toFixed(1)}%
-                    </span>
-                  </td>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+          <div>
+            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">👥 ${t('export.customerStats')}</h2>
+            <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <thead>
+                <tr style="background: #1e293b; color: #fff;">
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.customer')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">#</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
                 </tr>
-              `).join('')}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                ${analyticsData.customerStats.slice(0, 10).map((cs, idx) => `
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">${cs.name}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.count}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.ist}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.soll}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
+                        background: ${cs.percent >= 100 ? '#dcfce7' : cs.percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                        color: ${cs.percent >= 100 ? '#166534' : cs.percent >= 50 ? '#92400e' : '#991b1b'};">
+                        ${cs.percent.toFixed(0)}%
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          
+          <div>
+            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🔬 ${t('export.testTypeStats')}</h2>
+            <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <thead>
+                <tr style="background: #1e293b; color: #fff;">
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.test')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">#</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${testStats.slice(0, 10).map((ts, idx) => `
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">${ts.name.substring(0, 18)}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.count}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.ist}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.soll}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
+                        background: ${ts.percent >= 100 ? '#dcfce7' : ts.percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                        color: ${ts.percent >= 100 ? '#166534' : ts.percent >= 50 ? '#92400e' : '#991b1b'};">
+                        ${ts.percent.toFixed(0)}%
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          
+          <div>
+            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📅 ${t('export.weeklyData')}</h2>
+            <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <thead>
+                <tr style="background: #1e293b; color: #fff;">
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.week')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${weeklyData.slice(0, 10).map((wd, idx) => {
+                  const pct = wd.soll > 0 ? (wd.ist / wd.soll * 100) : 0;
+                  return `
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">KW ${wd.week}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${wd.ist}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${wd.soll}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
+                        background: ${pct >= 100 ? '#dcfce7' : pct >= 50 ? '#fef3c7' : '#fee2e2'};
+                        color: ${pct >= 100 ? '#166534' : pct >= 50 ? '#92400e' : '#991b1b'};">
+                        ${pct.toFixed(0)}%
+                      </span>
+                    </td>
+                  </tr>
+                `}).join('')}
+              </tbody>
+            </table>
+          </div>
         </div>
-      `;
-      content.innerHTML += customerTableHTML;
-      
-      this.showExportProgress(true, 50, 'Dodawanie wykresów...');
-      
-      // Capture charts as images
-      const chartsContainer = document.createElement('div');
-      chartsContainer.style.cssText = 'margin-bottom: 24px;';
-      chartsContainer.innerHTML = `<h2 style="margin: 0 0 16px 0; font-size: 18px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 8px;">📈 Wykresy</h2>`;
-      
-      const chartsGrid = document.createElement('div');
-      chartsGrid.style.cssText = 'display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;';
-      
-      // Capture each chart canvas
-      const chartIds = ['weeklyChart', 'testChart', 'customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
-      for (const chartId of chartIds) {
-        const chartCanvas = document.getElementById(chartId) as HTMLCanvasElement;
-        if (chartCanvas) {
-          const chartWrapper = document.createElement('div');
-          chartWrapper.style.cssText = 'background: #fff; padding: 16px; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);';
-          
-          // Get chart title from parent
-          const chartParent = chartCanvas.closest('.chart-card, .analytics-chart');
-          const chartTitle = chartParent?.querySelector('h3, h4, .chart-title')?.textContent || chartId;
-          
-          const chartImg = document.createElement('img');
-          chartImg.src = chartCanvas.toDataURL('image/png');
-          chartImg.style.cssText = 'width: 100%; height: auto;';
-          
-          chartWrapper.innerHTML = `<h4 style="margin: 0 0 12px 0; font-size: 14px; color: #1e293b;">${chartTitle}</h4>`;
-          chartWrapper.appendChild(chartImg);
-          chartsGrid.appendChild(chartWrapper);
-        }
-      }
-      
-      chartsContainer.appendChild(chartsGrid);
-      content.innerHTML += chartsContainer.outerHTML;
-      
-      this.showExportProgress(true, 65, 'Dodawanie tabeli projektów...');
-      
-      // Projects table
-      const projects = this.getFilteredProjects();
-      const projectsTableHTML = `
-        <div style="margin-bottom: 24px;">
-          <h2 style="margin: 0 0 16px 0; font-size: 18px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 8px;">📋 Lista Projektów (${projects.length})</h2>
-          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); font-size: 11px;">
+        
+        <div>
+          <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📋 ${t('export.projectList')}</h2>
+          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 8px;">
             <thead>
               <tr style="background: #1e293b; color: #fff;">
-                <th style="padding: 10px 12px; text-align: left; font-weight: 600;">Klient</th>
-                <th style="padding: 10px 12px; text-align: left; font-weight: 600;">Typ</th>
-                <th style="padding: 10px 12px; text-align: left; font-weight: 600;">Part</th>
-                <th style="padding: 10px 12px; text-align: left; font-weight: 600;">Test</th>
-                <th style="padding: 10px 12px; text-align: center; font-weight: 600;">Ist</th>
-                <th style="padding: 10px 12px; text-align: center; font-weight: 600;">Soll</th>
-                <th style="padding: 10px 12px; text-align: center; font-weight: 600;">%</th>
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.type')}</th>
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.part')}</th>
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.test')}</th>
+                <th style="padding: 5px 6px; text-align: center; font-weight: 600;">IST</th>
+                <th style="padding: 5px 6px; text-align: center; font-weight: 600;">SOLL</th>
+                <th style="padding: 5px 6px; text-align: center; font-weight: 600;">%</th>
               </tr>
             </thead>
             <tbody>
-              ${projects.slice(0, 50).map((project, idx) => {
+              ${projects.slice(0, 18).map((project, idx) => {
                 const customer = this.state.customers.find(c => c.id === project.customer_id);
                 const type = this.state.types.find(t => t.id === project.type_id);
                 const part = this.state.parts.find(p => p.id === project.part_id);
@@ -5740,14 +5848,14 @@ class KappaApp {
                 
                 return `
                   <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-                    <td style="padding: 8px 12px;">${customer?.name || '-'}</td>
-                    <td style="padding: 8px 12px;">${type?.name || '-'}</td>
-                    <td style="padding: 8px 12px;">${part?.name || '-'}</td>
-                    <td style="padding: 8px 12px;">${test?.name || '-'}</td>
-                    <td style="padding: 8px 12px; text-align: center;">${istTotal}</td>
-                    <td style="padding: 8px 12px; text-align: center;">${sollTotal}</td>
-                    <td style="padding: 8px 12px; text-align: center;">
-                      <span style="padding: 2px 8px; border-radius: 10px; font-weight: 600;
+                    <td style="padding: 4px 6px;">${customer?.name || '-'}</td>
+                    <td style="padding: 4px 6px;">${type?.name || '-'}</td>
+                    <td style="padding: 4px 6px;">${(part?.name || '-').substring(0, 18)}</td>
+                    <td style="padding: 4px 6px;">${(test?.name || '-').substring(0, 18)}</td>
+                    <td style="padding: 4px 6px; text-align: center;">${istTotal}</td>
+                    <td style="padding: 4px 6px; text-align: center;">${sollTotal}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="padding: 1px 4px; border-radius: 6px; font-weight: 600;
                         background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
                         color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
                         ${percent.toFixed(0)}%
@@ -5756,86 +5864,292 @@ class KappaApp {
                   </tr>
                 `;
               }).join('')}
-              ${projects.length > 50 ? `<tr><td colspan="7" style="padding: 12px; text-align: center; color: #64748b;">... i ${projects.length - 50} więcej projektów</td></tr>` : ''}
             </tbody>
           </table>
+          ${projects.length > 18 ? `<p style="margin: 6px 0 0 0; font-size: 9px; color: #64748b; text-align: center;">${t('export.moreProjectsOnNextPages')} (+${projects.length - 18})</p>` : ''}
         </div>
       `;
-      content.innerHTML += projectsTableHTML;
       
-      pdfContainer.appendChild(content);
+      // Capture chart images before creating pages
+      this.showExportProgress(true, 30, t('export.addingCharts'));
+      const chartNames: { [key: string]: string } = {
+        'weeklyChart': t('export.chartWeeklyIstSoll'),
+        'testChart': t('export.chartTestDistribution'),
+        'customerBarChart': t('export.chartCustomerComparison'),
+        'velocityChart': t('export.chartVelocity'),
+        'radarChart': t('export.chartRadar'),
+        'trendChart': t('export.chartTrend')
+      };
       
-      // Footer
-      const footer = document.createElement('div');
-      footer.innerHTML = `
-        <div style="background: #1e293b; color: #fff; padding: 16px 32px; text-align: center; font-size: 11px;">
-          <p style="margin: 0; opacity: 0.8;">© ${new Date().getFullYear()} DRÄXLMAIER Group - Kappaplannung | Raport wygenerowany automatycznie</p>
-        </div>
-      `;
-      pdfContainer.appendChild(footer);
-      
-      document.body.appendChild(pdfContainer);
-      
-      this.showExportProgress(true, 75, 'Konwertowanie do obrazu...');
-      
-      // Wait a bit for images to load
-      await new Promise(resolve => setTimeout(resolve, 300));
-      
-      // Use html2canvas to capture
-      const canvas = await html2canvas(pdfContainer, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        width: 1200
-      });
-      
-      this.showExportProgress(true, 85, 'Tworzenie dokumentu PDF...');
-      
-      // Calculate PDF dimensions
-      const imgWidth = 210; // A4 width in mm
-      const pageHeight = 297; // A4 height in mm
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      
-      // Create PDF
-      const pdf = new jsPDF('p', 'mm', 'a4');
-      let heightLeft = imgHeight;
-      let position = 0;
-      
-      // Add first page
-      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
-      heightLeft -= pageHeight;
-      
-      // Add more pages if needed
-      while (heightLeft > 0) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
+      const chartIds = ['weeklyChart', 'testChart', 'customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
+      const chartImages: { [key: string]: string } = {};
+      for (const chartId of chartIds) {
+        const chartCanvas = document.getElementById(chartId) as HTMLCanvasElement;
+        if (chartCanvas) {
+          try {
+            chartImages[chartId] = chartCanvas.toDataURL('image/png');
+          } catch (e) {
+            console.error(`Error capturing chart ${chartId}:`, e);
+          }
+        }
       }
       
-      this.showExportProgress(true, 95, 'Zapisywanie pliku...');
+      // Add 2 charts to page 1 content
+      let page1ChartsHtml = `
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+      `;
+      if (chartImages['weeklyChart']) {
+        page1ChartsHtml += `
+          <div style="background: #fff; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+            <h4 style="margin: 0 0 4px 0; font-size: 10px; color: #1e293b;">📊 ${chartNames['weeklyChart']}</h4>
+            <img src="${chartImages['weeklyChart']}" style="width: 100%; height: auto; max-height: 100px; object-fit: contain;" />
+          </div>
+        `;
+      }
+      if (chartImages['testChart']) {
+        page1ChartsHtml += `
+          <div style="background: #fff; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+            <h4 style="margin: 0 0 4px 0; font-size: 10px; color: #1e293b;">📊 ${chartNames['testChart']}</h4>
+            <img src="${chartImages['testChart']}" style="width: 100%; height: auto; max-height: 100px; object-fit: contain;" />
+          </div>
+        `;
+      }
+      page1ChartsHtml += `</div>`;
+      
+      const fullPage1Content = kpiContent + page1ChartsHtml;
+      const page1 = createPageSection(fullPage1Content, true);
+      
+      this.showExportProgress(true, 35, t('export.addingCharts'));
+      
+      // PAGE 2: Remaining 4 Charts + Projects combined
+      // PAGE 2: Remaining 4 Charts + Projects combined
+      let chartsHtml = `<h2 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📈 ${t('export.charts')}</h2>`;
+      chartsHtml += `<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px;">`;
+      
+      // Show remaining 4 charts on page 2
+      const page2ChartIds = ['customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
+      for (const chartId of page2ChartIds) {
+        if (chartImages[chartId]) {
+          chartsHtml += `
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <h4 style="margin: 0 0 6px 0; font-size: 10px; color: #1e293b;">${chartNames[chartId] || chartId}</h4>
+              <img src="${chartImages[chartId]}" style="width: 100%; height: auto; max-height: 140px; object-fit: contain;" />
+            </div>
+          `;
+        }
+      }
+      chartsHtml += `</div>`;
+      
+      // Add projects list below charts on the same page
+      chartsHtml += `
+        <h2 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📋 ${t('export.projectList')} (${Math.min(projects.length, 20)} / ${projects.length})</h2>
+        <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 8px;">
+          <thead>
+            <tr style="background: #1e293b; color: #fff;">
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.type')}</th>
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.part')}</th>
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.test')}</th>
+              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">IST</th>
+              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">SOLL</th>
+              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">%</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      projects.slice(0, 20).forEach((project, idx) => {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const type = this.state.types.find(t => t.id === project.type_id);
+        const part = this.state.parts.find(p => p.id === project.part_id);
+        const test = this.state.tests.find(t => t.id === project.test_id);
+        
+        let istTotal = 0, sollTotal = 0;
+        for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
+          const wd = project.weeks?.[w.toString()];
+          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+        }
+        const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+        
+        chartsHtml += `
+          <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+            <td style="padding: 4px 6px;">${customer?.name || '-'}</td>
+            <td style="padding: 4px 6px;">${type?.name || '-'}</td>
+            <td style="padding: 4px 6px;">${(part?.name || '-').substring(0, 20)}</td>
+            <td style="padding: 4px 6px;">${(test?.name || '-').substring(0, 20)}</td>
+            <td style="padding: 4px 6px; text-align: center;">${istTotal}</td>
+            <td style="padding: 4px 6px; text-align: center;">${sollTotal}</td>
+            <td style="padding: 4px 6px; text-align: center;">
+              <span style="padding: 1px 4px; border-radius: 6px; font-weight: 600;
+                background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
+                ${percent.toFixed(0)}%
+              </span>
+            </td>
+          </tr>
+        `;
+      });
+      
+      chartsHtml += `</tbody></table>`;
+      if (projects.length > 20) {
+        chartsHtml += `<p style="margin: 6px 0 0 0; font-size: 9px; color: #64748b; text-align: center;">${t('export.moreProjectsOnNextPages')} (+${projects.length - 20})</p>`;
+      }
+      
+      const page2 = createPageSection(chartsHtml, true);
+      
+      this.showExportProgress(true, 55, t('export.addingProjects'));
+      
+      // PAGE 3+: Remaining Projects (if more than 20)
+      const projectsOnPage2 = 20;
+      const remainingProjects = projects.slice(projectsOnPage2);
+      const projectsPerPage = 35;
+      const totalProjectPages = Math.ceil(remainingProjects.length / projectsPerPage);
+      const projectPages: HTMLDivElement[] = [];
+      
+      for (let pageNum = 0; pageNum < totalProjectPages; pageNum++) {
+        const startIdx = pageNum * projectsPerPage;
+        const endIdx = Math.min(startIdx + projectsPerPage, remainingProjects.length);
+        const pageProjects = remainingProjects.slice(startIdx, endIdx);
+        const globalStartIdx = projectsOnPage2 + startIdx;
+        const globalEndIdx = projectsOnPage2 + endIdx;
+        
+        let projectsHtml = `
+          <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 5px;">
+            📋 ${t('export.projectList')} (${globalStartIdx + 1}-${globalEndIdx} / ${projects.length})
+          </h2>
+          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.06); font-size: 9px;">
+            <thead>
+              <tr style="background: #1e293b; color: #fff;">
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.type')}</th>
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.part')}</th>
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.test')}</th>
+                <th style="padding: 6px 8px; text-align: center; font-weight: 600;">IST</th>
+                <th style="padding: 6px 8px; text-align: center; font-weight: 600;">SOLL</th>
+                <th style="padding: 6px 8px; text-align: center; font-weight: 600;">%</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+        
+        pageProjects.forEach((project, idx) => {
+          const customer = this.state.customers.find(c => c.id === project.customer_id);
+          const type = this.state.types.find(t => t.id === project.type_id);
+          const part = this.state.parts.find(p => p.id === project.part_id);
+          const test = this.state.tests.find(t => t.id === project.test_id);
+          
+          let istTotal = 0, sollTotal = 0;
+          for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
+            const wd = project.weeks?.[w.toString()];
+            if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+          }
+          const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+          
+          projectsHtml += `
+            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+              <td style="padding: 5px 8px;">${customer?.name || '-'}</td>
+              <td style="padding: 5px 8px;">${type?.name || '-'}</td>
+              <td style="padding: 5px 8px;">${(part?.name || '-').substring(0, 22)}</td>
+              <td style="padding: 5px 8px;">${(test?.name || '-').substring(0, 22)}</td>
+              <td style="padding: 5px 8px; text-align: center;">${istTotal}</td>
+              <td style="padding: 5px 8px; text-align: center;">${sollTotal}</td>
+              <td style="padding: 5px 8px; text-align: center;">
+                <span style="padding: 1px 5px; border-radius: 6px; font-weight: 600;
+                  background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                  color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
+                  ${percent.toFixed(0)}%
+                </span>
+              </td>
+            </tr>
+          `;
+        });
+        
+        projectsHtml += `</tbody></table>`;
+        projectPages.push(createPageSection(projectsHtml, true));
+      }
+      
+      this.showExportProgress(true, 70, t('export.convertingImage'));
+      
+      // Create temporary container
+      const tempContainer = document.createElement('div');
+      tempContainer.style.cssText = 'position: fixed; left: -9999px; top: 0; z-index: -9999;';
+      document.body.appendChild(tempContainer);
+      
+      // Generate PDF
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfPageWidth = 210;
+      const pdfPageHeight = 297;
+      
+      const allPages = [page1, page2, ...projectPages];
+      
+      for (let i = 0; i < allPages.length; i++) {
+        this.showExportProgress(true, 70 + Math.round((i / allPages.length) * 25), t('export.creatingPdf'));
+        
+        tempContainer.innerHTML = '';
+        tempContainer.appendChild(allPages[i]);
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const canvas = await html2canvas(allPages[i], {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          width: 1000
+        });
+        
+        const imgWidth = pdfPageWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        
+        if (i > 0) pdf.addPage();
+        
+        // If content is taller than page, scale it down to fit
+        if (imgHeight > pdfPageHeight) {
+          const scale = pdfPageHeight / imgHeight;
+          const scaledWidth = imgWidth * scale;
+          const scaledHeight = imgHeight * scale;
+          const xOffset = (pdfPageWidth - scaledWidth) / 2;
+          pdf.addImage(canvas.toDataURL('image/png'), 'PNG', xOffset, 0, scaledWidth, scaledHeight);
+        } else {
+          pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, imgWidth, imgHeight);
+        }
+      }
+      
+      // Add page numbers
+      const totalPages = pdf.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(150, 150, 150);
+        pdf.text(`${i} / ${totalPages}`, pdfPageWidth - 15, pdfPageHeight - 5);
+      }
+      
+      // Cleanup
+      tempContainer.remove();
+      
+      this.showExportProgress(true, 95, t('export.savingFile'));
       
       // Save PDF
       const filename = `Kappaplannung_Analytics_${filterInfo.year}_KW${filterInfo.weekFrom.toString().padStart(2, '0')}-${filterInfo.weekTo.toString().padStart(2, '0')}_${new Date().toISOString().split('T')[0]}.pdf`;
       pdf.save(filename);
       
-      // Cleanup
-      pdfContainer.remove();
-      
       this.showExportProgress(false);
-      this.showToast('Raport PDF został wygenerowany!', 'success');
+      this.showToast(t('export.pdfGenerated'), 'success');
       
     } catch (error) {
       console.error('PDF export error:', error);
       this.showExportProgress(false);
-      this.showToast('Błąd podczas generowania PDF', 'error');
+      this.showToast(i18n.t('export.pdfError'), 'error');
     }
   }
 
   private async exportAnalyticsToExcel(): Promise<void> {
     try {
-      this.showExportProgress(true, 5, 'Przygotowywanie danych...');
+      const t = (key: string) => i18n.t(key);
+      const lang = i18n.getLanguage();
+      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
+      
+      this.showExportProgress(true, 5, t('export.preparingData'));
       
       const filterInfo = this.getFilterInfo();
       const workbook = new ExcelJS.Workbook();
@@ -5846,10 +6160,19 @@ class KappaApp {
       const analyticsData = this.calculateAnalyticsData();
       const projects = this.getFilteredProjects();
       
-      this.showExportProgress(true, 15, 'Tworzenie arkusza głównego Kappa...');
+      this.showExportProgress(true, 15, t('export.creatingMainSheet'));
       
-      // ==================== SHEET 1: Kappa Summary ====================
-      const summarySheet = workbook.addWorksheet('Kappa - Podsumowanie', {
+      // Sheet name translations
+      const sheetNames = {
+        summary: lang === 'de' ? 'Zusammenfassung' : lang === 'pl' ? 'Podsumowanie' : lang === 'ro' ? 'Rezumat' : 'Summary',
+        projects: lang === 'de' ? 'Projekte' : lang === 'pl' ? 'Projekty' : lang === 'ro' ? 'Proiecte' : 'Projects',
+        customers: lang === 'de' ? 'Kunden' : lang === 'pl' ? 'Klienci' : lang === 'ro' ? 'Clienți' : 'Customers',
+        weekly: lang === 'de' ? 'Wöchentlich' : lang === 'pl' ? 'Tygodniowe' : lang === 'ro' ? 'Săptămânal' : 'Weekly',
+        chartData: lang === 'de' ? 'Diagrammdaten' : lang === 'pl' ? 'Dane wykresów' : lang === 'ro' ? 'Date grafice' : 'Chart Data'
+      };
+      
+      // ==================== SHEET 1: Summary ====================
+      const summarySheet = workbook.addWorksheet(`Kappa - ${sheetNames.summary}`, {
         views: [{ state: 'frozen', ySplit: 6 }]
       });
       
@@ -5864,7 +6187,7 @@ class KappaApp {
       
       summarySheet.mergeCells('A2:H2');
       const subtitleCell = summarySheet.getCell('A2');
-      subtitleCell.value = 'Produkt Audit 360 - Raport Analityczny';
+      subtitleCell.value = `Produkt Audit 360 - ${t('export.analyticsReport')}`;
       subtitleCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
       subtitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
       subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
@@ -5873,7 +6196,7 @@ class KappaApp {
       // Filter info row
       summarySheet.mergeCells('A3:H3');
       const filterCell = summarySheet.getCell('A3');
-      filterCell.value = `Zakres danych: ${filterInfo.rangeText} | Data generowania: ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')} | Użytkownik: ${this.state.settings.userName || 'System'}`;
+      filterCell.value = `${t('export.dataRange')}: ${filterInfo.rangeText} | ${t('export.generatedAt')}: ${new Date().toLocaleDateString(dateLocale)} ${new Date().toLocaleTimeString(dateLocale)} | ${t('export.user')}: ${this.state.settings.userName || 'System'}`;
       filterCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF666666' } };
       filterCell.alignment = { horizontal: 'center', vertical: 'middle' };
       summarySheet.getRow(3).height = 25;
@@ -5881,14 +6204,18 @@ class KappaApp {
       // KPI Section title
       summarySheet.mergeCells('A5:H5');
       const kpiTitleCell = summarySheet.getCell('A5');
-      kpiTitleCell.value = '📊 KLUCZOWE WSKAŹNIKI WYDAJNOŚCI (KPI)';
+      kpiTitleCell.value = `📊 ${t('export.kpiTitle')}`;
       kpiTitleCell.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FF333333' } };
       kpiTitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
       
-      this.showExportProgress(true, 25, 'Dodawanie statystyk...');
+      this.showExportProgress(true, 25, t('export.addingStats'));
       
-      // KPI Data
-      const kpiHeaders = ['Wskaźnik', 'Wartość', 'Opis'];
+      // KPI Data headers
+      const kpiHeaders = [
+        lang === 'de' ? 'Kennzahl' : lang === 'pl' ? 'Wskaźnik' : lang === 'ro' ? 'Indicator' : 'Indicator',
+        lang === 'de' ? 'Wert' : lang === 'pl' ? 'Wartość' : lang === 'ro' ? 'Valoare' : 'Value',
+        lang === 'de' ? 'Beschreibung' : lang === 'pl' ? 'Opis' : lang === 'ro' ? 'Descriere' : 'Description'
+      ];
       const kpiHeaderRow = summarySheet.getRow(7);
       kpiHeaders.forEach((h, i) => {
         const cell = kpiHeaderRow.getCell(i + 1);
@@ -5898,18 +6225,27 @@ class KappaApp {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       });
       
-      // Set column widths
       summarySheet.getColumn(1).width = 35;
       summarySheet.getColumn(2).width = 20;
       summarySheet.getColumn(3).width = 50;
       
+      // KPI descriptions in current language
+      const kpiDescriptions = {
+        totalProjects: lang === 'de' ? 'Gesamtzahl aktiver Projekte' : lang === 'pl' ? 'Łączna liczba aktywnych projektów' : lang === 'ro' ? 'Numărul total de proiecte active' : 'Total number of active projects',
+        totalIst: lang === 'de' ? 'Abgeschlossene Tests im Zeitraum' : lang === 'pl' ? 'Zrealizowane testy w okresie' : lang === 'ro' ? 'Teste completate în perioadă' : 'Completed tests in period',
+        totalSoll: lang === 'de' ? 'Geplante Tests im Zeitraum' : lang === 'pl' ? 'Planowane testy w okresie' : lang === 'ro' ? 'Teste planificate în perioadă' : 'Planned tests in period',
+        realization: lang === 'de' ? 'Realisierungsgrad' : lang === 'pl' ? 'Stopień realizacji' : lang === 'ro' ? 'Grad de realizare' : 'Realization rate',
+        activeCustomers: lang === 'de' ? 'Kunden mit aktiven Projekten' : lang === 'pl' ? 'Klienci z aktywnymi projektami' : lang === 'ro' ? 'Clienți cu proiecte active' : 'Customers with active projects',
+        avgPerProject: lang === 'de' ? 'Durchschnittliche Tests pro Projekt' : lang === 'pl' ? 'Średnia testów na projekt' : lang === 'ro' ? 'Media testelor pe proiect' : 'Average tests per project'
+      };
+      
       const kpiData = [
-        ['Suma Projektów', analyticsData.totalProjects, 'Łączna liczba aktywnych projektów w systemie'],
-        ['Suma Testów Ist', analyticsData.totalIst.toLocaleString('pl-PL'), 'Zrealizowane testy w wybranym okresie'],
-        ['Suma Testów Soll', analyticsData.totalSoll.toLocaleString('pl-PL'), 'Planowane testy w wybranym okresie'],
-        ['Realizacja (%)', `${analyticsData.totalPercent.toFixed(1)}%`, 'Stopień realizacji planu testów'],
-        ['Aktywni Klienci', analyticsData.customerStats.length, 'Liczba klientów z aktywnymi projektami'],
-        ['Średnia na Projekt', Math.round(analyticsData.totalIst / Math.max(analyticsData.totalProjects, 1)), 'Średnia liczba testów na projekt']
+        [t('export.projects'), analyticsData.totalProjects, kpiDescriptions.totalProjects],
+        [t('export.testsIst'), analyticsData.totalIst.toLocaleString(dateLocale), kpiDescriptions.totalIst],
+        [t('export.testsSoll'), analyticsData.totalSoll.toLocaleString(dateLocale), kpiDescriptions.totalSoll],
+        [`${t('export.realization')} (%)`, `${analyticsData.totalPercent.toFixed(1)}%`, kpiDescriptions.realization],
+        [t('export.activeCustomers'), analyticsData.customerStats.length, kpiDescriptions.activeCustomers],
+        [t('export.avgPerProject'), Math.round(analyticsData.totalIst / Math.max(analyticsData.totalProjects, 1)), kpiDescriptions.avgPerProject]
       ];
       
       kpiData.forEach((row, idx) => {
@@ -5922,29 +6258,26 @@ class KappaApp {
           if (idx % 2 === 0) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
           }
-          // Highlight value column
           if (colIdx === 1) {
             cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF0097AC' } };
           }
         });
       });
       
-      this.showExportProgress(true, 35, 'Tworzenie arkusza projektów...');
+      this.showExportProgress(true, 35, t('export.creatingProjectsSheet'));
       
       // ==================== SHEET 2: Projects Details ====================
-      const projectsSheet = workbook.addWorksheet('Projekty - Szczegóły');
+      const projectsSheet = workbook.addWorksheet(`${sheetNames.projects}`);
       
-      // Header
       projectsSheet.mergeCells('A1:G1');
       const projTitle = projectsSheet.getCell('A1');
-      projTitle.value = 'Lista Projektów - Szczegółowe Statystyki';
+      projTitle.value = `${t('export.projectList')} - ${t('export.projectDetails')}`;
       projTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
       projTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
       projTitle.alignment = { horizontal: 'center', vertical: 'middle' };
       projectsSheet.getRow(1).height = 35;
       
-      // Headers
-      const projHeaders = ['Klient', 'Typ', 'Part', 'Test', 'Ist', 'Soll', 'Realizacja (%)'];
+      const projHeaders = [t('export.customer'), t('export.type'), t('export.part'), t('export.test'), 'IST', 'SOLL', `${t('export.realization')} (%)`];
       const projHeaderRow = projectsSheet.getRow(3);
       projHeaders.forEach((h, i) => {
         const cell = projHeaderRow.getCell(i + 1);
@@ -5954,12 +6287,10 @@ class KappaApp {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
       });
       
-      // Column widths
       [20, 15, 20, 20, 12, 12, 15].forEach((w, i) => {
         projectsSheet.getColumn(i + 1).width = w;
       });
       
-      // Data
       let rowIdx = 4;
       projects.forEach(project => {
         const customer = this.state.customers.find(c => c.id === project.customer_id);
@@ -5967,34 +6298,20 @@ class KappaApp {
         const part = this.state.parts.find(p => p.id === project.part_id);
         const test = this.state.tests.find(t => t.id === project.test_id);
         
-        // Calculate totals using weeks property
-        let istTotal = 0;
-        let sollTotal = 0;
+        let istTotal = 0, sollTotal = 0;
         for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
           const wd = project.weeks?.[week.toString()];
-          if (wd) {
-            istTotal += wd.ist || 0;
-            sollTotal += wd.soll || 0;
-          }
+          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
         }
         const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
         
         const row = projectsSheet.getRow(rowIdx);
-        [
-          customer?.name || '-',
-          type?.name || '-',
-          part?.name || '-',
-          test?.name || '-',
-          istTotal,
-          sollTotal,
-          `${percent.toFixed(1)}%`
-        ].forEach((val, colIdx) => {
+        [customer?.name || '-', type?.name || '-', part?.name || '-', test?.name || '-', istTotal, sollTotal, `${percent.toFixed(1)}%`].forEach((val, colIdx) => {
           const cell = row.getCell(colIdx + 1);
           cell.value = val;
           cell.font = { name: 'Arial', size: 10 };
           cell.alignment = { horizontal: colIdx >= 4 ? 'center' : 'left', vertical: 'middle' };
           
-          // Color based on percentage
           if (colIdx === 6) {
             if (percent >= 100) {
               cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4ADE80' } };
@@ -6007,8 +6324,6 @@ class KappaApp {
               cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF991B1B' } };
             }
           }
-          
-          // Alternate rows
           if (rowIdx % 2 === 0 && colIdx < 6) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
           }
@@ -6016,20 +6331,20 @@ class KappaApp {
         rowIdx++;
       });
       
-      this.showExportProgress(true, 50, 'Tworzenie arkusza klientów...');
+      this.showExportProgress(true, 50, t('export.creatingCustomersSheet'));
       
       // ==================== SHEET 3: Customers Statistics ====================
-      const customersSheet = workbook.addWorksheet('Klienci - Statystyki');
+      const customersSheet = workbook.addWorksheet(`${sheetNames.customers}`);
       
       customersSheet.mergeCells('A1:E1');
       const custTitle = customersSheet.getCell('A1');
-      custTitle.value = 'Statystyki Klientów';
+      custTitle.value = t('export.customerStats');
       custTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
       custTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
       custTitle.alignment = { horizontal: 'center', vertical: 'middle' };
       customersSheet.getRow(1).height = 35;
       
-      const custHeaders = ['Klient', 'Liczba Projektów', 'Testy Ist', 'Testy Soll', 'Realizacja (%)'];
+      const custHeaders = [t('export.customer'), t('export.count'), t('export.testsIst'), t('export.testsSoll'), `${t('export.realization')} (%)`];
       const custHeaderRow = customersSheet.getRow(3);
       custHeaders.forEach((h, i) => {
         const cell = custHeaderRow.getCell(i + 1);
@@ -6064,7 +6379,6 @@ class KappaApp {
               cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF991B1B' } };
             }
           }
-          
           if (rowIdx % 2 === 0 && colIdx < 4) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
           }
@@ -6072,20 +6386,20 @@ class KappaApp {
         rowIdx++;
       });
       
-      this.showExportProgress(true, 65, 'Tworzenie arkusza tygodniowego...');
+      this.showExportProgress(true, 65, t('export.creatingWeeklySheet'));
       
       // ==================== SHEET 4: Weekly Data ====================
-      const weeklySheet = workbook.addWorksheet('Dane Tygodniowe');
+      const weeklySheet = workbook.addWorksheet(`${sheetNames.weekly}`);
       
       weeklySheet.mergeCells('A1:D1');
       const weeklyTitle = weeklySheet.getCell('A1');
-      weeklyTitle.value = 'Dane Tygodniowe - Trend';
+      weeklyTitle.value = `${t('export.weeklyData')} - ${t('analytics.historicalTrend')}`;
       weeklyTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
       weeklyTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
       weeklyTitle.alignment = { horizontal: 'center', vertical: 'middle' };
       weeklySheet.getRow(1).height = 35;
       
-      const weeklyHeaders = ['Tydzień', 'Ist', 'Soll', 'Realizacja (%)'];
+      const weeklyHeaders = [t('export.week'), 'IST', 'SOLL', `${t('export.realization')} (%)`];
       const weeklyHeaderRow = weeklySheet.getRow(3);
       weeklyHeaders.forEach((h, i) => {
         const cell = weeklyHeaderRow.getCell(i + 1);
@@ -6102,17 +6416,12 @@ class KappaApp {
       rowIdx = 4;
       for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
         const weekKey = `KW${week.toString().padStart(2, '0')}`;
-        let weekIst = 0;
-        let weekSoll = 0;
+        let weekIst = 0, weekSoll = 0;
         
         projects.forEach(p => {
           const wd = p.weeks?.[week.toString()];
-          if (wd) {
-            weekIst += wd.ist || 0;
-            weekSoll += wd.soll || 0;
-          }
+          if (wd) { weekIst += wd.ist || 0; weekSoll += wd.soll || 0; }
         });
-        
         const percent = weekSoll > 0 ? (weekIst / weekSoll * 100) : 0;
         
         const row = weeklySheet.getRow(rowIdx);
@@ -6123,15 +6432,10 @@ class KappaApp {
           cell.alignment = { horizontal: 'center', vertical: 'middle' };
           
           if (colIdx === 3) {
-            if (percent >= 100) {
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4ADE80' } };
-            } else if (percent >= 50) {
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBBF24' } };
-            } else {
-              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF87171' } };
-            }
+            if (percent >= 100) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4ADE80' } };
+            else if (percent >= 50) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBBF24' } };
+            else cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF87171' } };
           }
-          
           if (rowIdx % 2 === 0 && colIdx < 3) {
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
           }
@@ -6139,32 +6443,35 @@ class KappaApp {
         rowIdx++;
       }
       
-      this.showExportProgress(true, 80, 'Tworzenie arkusza z wykresami...');
+      this.showExportProgress(true, 80, t('export.finalizingExcel'));
       
-      // ==================== SHEET 5: Charts Data (for Excel charts) ====================
-      const chartsSheet = workbook.addWorksheet('Dane Wykresów');
+      // ==================== SHEET 5: Charts Data (numerical only) ====================
+      const chartsSheet = workbook.addWorksheet(`${sheetNames.chartData}`);
       
-      chartsSheet.mergeCells('A1:C1');
+      chartsSheet.mergeCells('A1:D1');
       const chartsTitle = chartsSheet.getCell('A1');
-      chartsTitle.value = 'Dane do wykresów';
+      chartsTitle.value = t('export.charts');
       chartsTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
       chartsTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
       chartsTitle.alignment = { horizontal: 'center', vertical: 'middle' };
       chartsSheet.getRow(1).height = 35;
       
-      // Info about charts
       chartsSheet.mergeCells('A3:G3');
-      chartsSheet.getCell('A3').value = 'ℹ️ Poniżej znajdują się dane do tworzenia wykresów. Wykresy możesz utworzyć zaznaczając dane i wybierając "Wstaw wykres" w Excel.';
+      const chartInfo = lang === 'de' ? 'Unten finden Sie Daten zum Erstellen von Diagrammen. Wählen Sie Daten aus und klicken Sie auf "Diagramm einfügen" in Excel.' 
+                      : lang === 'pl' ? 'Poniżej znajdują się dane do tworzenia wykresów. Zaznacz dane i wybierz "Wstaw wykres" w Excel.'
+                      : lang === 'ro' ? 'Mai jos găsiți date pentru a crea grafice. Selectați datele și alegeți "Inserare grafic" în Excel.'
+                      : 'Below you will find data to create charts. Select data and choose "Insert Chart" in Excel.';
+      chartsSheet.getCell('A3').value = `ℹ️ ${chartInfo}`;
       chartsSheet.getCell('A3').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF666666' } };
       
       // Customer bar chart data
-      chartsSheet.getCell('A5').value = '📊 WYKRES KLIENTÓW (Ist vs Soll)';
+      chartsSheet.getCell('A5').value = `📊 ${t('export.chartCustomerComparison')}`;
       chartsSheet.getCell('A5').font = { name: 'Arial', size: 11, bold: true };
       
-      chartsSheet.getCell('A6').value = 'Klient';
-      chartsSheet.getCell('B6').value = 'Ist';
-      chartsSheet.getCell('C6').value = 'Soll';
-      chartsSheet.getCell('D6').value = 'Realizacja %';
+      chartsSheet.getCell('A6').value = t('export.customer');
+      chartsSheet.getCell('B6').value = 'IST';
+      chartsSheet.getCell('C6').value = 'SOLL';
+      chartsSheet.getCell('D6').value = `${t('export.realization')} %`;
       [chartsSheet.getCell('A6'), chartsSheet.getCell('B6'), chartsSheet.getCell('C6'), chartsSheet.getCell('D6')].forEach(cell => {
         cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
@@ -6182,28 +6489,22 @@ class KappaApp {
         chartsSheet.getCell(`B${rowIdx}`).value = cs.ist;
         chartsSheet.getCell(`C${rowIdx}`).value = cs.soll;
         chartsSheet.getCell(`D${rowIdx}`).value = cs.percent;
-        // Add data bar effect via conditional formatting alternative - use fill
         const percentCell = chartsSheet.getCell(`D${rowIdx}`);
-        if (cs.percent >= 100) {
-          percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
-        } else if (cs.percent >= 50) {
-          percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
-        } else {
-          percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
-        }
+        if (cs.percent >= 100) percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+        else if (cs.percent >= 50) percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+        else percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
         rowIdx++;
       });
       
       // Weekly trend data
       rowIdx += 2;
-      const weeklyStartRow = rowIdx;
-      chartsSheet.getCell(`A${rowIdx}`).value = '📈 DANE TYGODNIOWE (Trend)';
+      chartsSheet.getCell(`A${rowIdx}`).value = `📈 ${t('export.chartTrend')}`;
       chartsSheet.getCell(`A${rowIdx}`).font = { name: 'Arial', size: 11, bold: true };
       rowIdx++;
       
-      chartsSheet.getCell(`A${rowIdx}`).value = 'Tydzień';
-      chartsSheet.getCell(`B${rowIdx}`).value = 'Ist';
-      chartsSheet.getCell(`C${rowIdx}`).value = 'Soll';
+      chartsSheet.getCell(`A${rowIdx}`).value = t('export.week');
+      chartsSheet.getCell(`B${rowIdx}`).value = 'IST';
+      chartsSheet.getCell(`C${rowIdx}`).value = 'SOLL';
       chartsSheet.getCell(`D${rowIdx}`).value = '%';
       [chartsSheet.getCell(`A${rowIdx}`), chartsSheet.getCell(`B${rowIdx}`), chartsSheet.getCell(`C${rowIdx}`), chartsSheet.getCell(`D${rowIdx}`)].forEach(cell => {
         cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
@@ -6227,14 +6528,14 @@ class KappaApp {
         rowIdx++;
       }
       
-      // Pie chart data (status distribution)
+      // Status distribution data
       rowIdx += 2;
-      chartsSheet.getCell(`A${rowIdx}`).value = '🥧 WYKRES KOŁOWY (Rozkład realizacji)';
+      chartsSheet.getCell(`A${rowIdx}`).value = `🥧 ${t('export.statusDistribution')}`;
       chartsSheet.getCell(`A${rowIdx}`).font = { name: 'Arial', size: 11, bold: true };
       rowIdx++;
       
       chartsSheet.getCell(`A${rowIdx}`).value = 'Status';
-      chartsSheet.getCell(`B${rowIdx}`).value = 'Liczba projektów';
+      chartsSheet.getCell(`B${rowIdx}`).value = t('export.count');
       [chartsSheet.getCell(`A${rowIdx}`), chartsSheet.getCell(`B${rowIdx}`)].forEach(cell => {
         cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
@@ -6242,7 +6543,6 @@ class KappaApp {
       });
       rowIdx++;
       
-      // Calculate project status distribution
       let completed = 0, inProgress = 0, behind = 0;
       projects.forEach(p => {
         let pIst = 0, pSoll = 0;
@@ -6256,75 +6556,21 @@ class KappaApp {
         else behind++;
       });
       
-      chartsSheet.getCell(`A${rowIdx}`).value = '✅ Ukończone (≥100%)';
+      chartsSheet.getCell(`A${rowIdx}`).value = `✅ ${t('export.completedProjects')}`;
       chartsSheet.getCell(`B${rowIdx}`).value = completed;
       chartsSheet.getCell(`A${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
       rowIdx++;
       
-      chartsSheet.getCell(`A${rowIdx}`).value = '🟡 W trakcie (50-99%)';
+      chartsSheet.getCell(`A${rowIdx}`).value = `🟡 ${t('export.inProgressProjects')}`;
       chartsSheet.getCell(`B${rowIdx}`).value = inProgress;
       chartsSheet.getCell(`A${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
       rowIdx++;
       
-      chartsSheet.getCell(`A${rowIdx}`).value = '🔴 Opóźnione (<50%)';
+      chartsSheet.getCell(`A${rowIdx}`).value = `🔴 ${t('export.delayedProjects')}`;
       chartsSheet.getCell(`B${rowIdx}`).value = behind;
       chartsSheet.getCell(`A${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
       
-      this.showExportProgress(true, 85, 'Dodawanie obrazów wykresów...');
-      
-      // Add chart images to a new sheet
-      const imagesSheet = workbook.addWorksheet('Wykresy - Obrazy');
-      
-      imagesSheet.mergeCells('A1:H1');
-      const imgTitle = imagesSheet.getCell('A1');
-      imgTitle.value = 'Wykresy - Zrzuty ekranu';
-      imgTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
-      imgTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
-      imgTitle.alignment = { horizontal: 'center', vertical: 'middle' };
-      imagesSheet.getRow(1).height = 35;
-      
-      imagesSheet.getCell('A3').value = 'Poniżej znajdują się wykresy z aplikacji jako obrazy:';
-      imagesSheet.getCell('A3').font = { name: 'Arial', size: 10, italic: true };
-      
-      // Capture chart images and add them
-      const chartIds = ['weeklyChart', 'testChart', 'customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
-      let imgRow = 5;
-      
-      for (const chartId of chartIds) {
-        const chartCanvas = document.getElementById(chartId) as HTMLCanvasElement;
-        if (chartCanvas) {
-          try {
-            const chartParent = chartCanvas.closest('.chart-card, .analytics-chart');
-            const chartTitle = chartParent?.querySelector('h3, h4, .chart-title')?.textContent || chartId;
-            
-            // Add title
-            imagesSheet.getCell(`A${imgRow}`).value = chartTitle;
-            imagesSheet.getCell(`A${imgRow}`).font = { name: 'Arial', size: 11, bold: true };
-            imgRow++;
-            
-            // Get canvas data as base64
-            const base64 = chartCanvas.toDataURL('image/png').split(',')[1];
-            
-            // Add image to workbook
-            const imageId = workbook.addImage({
-              base64: base64,
-              extension: 'png',
-            });
-            
-            // Add image to sheet
-            imagesSheet.addImage(imageId, {
-              tl: { col: 0, row: imgRow - 1 },
-              ext: { width: 500, height: 300 }
-            });
-            
-            imgRow += 18; // Space for next chart
-          } catch (err) {
-            console.error(`Error adding chart ${chartId}:`, err);
-          }
-        }
-      }
-      
-      this.showExportProgress(true, 95, 'Finalizowanie pliku Excel...');
+      this.showExportProgress(true, 95, t('export.savingFile'));
       
       // Generate and download file
       const buffer = await workbook.xlsx.writeBuffer();
@@ -6333,12 +6579,12 @@ class KappaApp {
       saveAs(blob, filename);
       
       this.showExportProgress(false);
-      this.showToast('Raport Excel został wygenerowany! (5 arkuszy)', 'success');
+      this.showToast(t('export.excelGenerated'), 'success');
       
     } catch (error) {
       console.error('Excel export error:', error);
       this.showExportProgress(false);
-      this.showToast('Błąd podczas generowania Excel', 'error');
+      this.showToast(i18n.t('export.excelError'), 'error');
     }
   }
 
@@ -7621,6 +7867,7 @@ class KappaApp {
   
   // Modal eksportu
   private showExportModal(): void {
+    const t = (key: string) => i18n.t(key);
     const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
     
     const overlay = document.createElement('div');
@@ -7629,7 +7876,7 @@ class KappaApp {
       <div class="employee-modal" style="max-width: 450px;">
         <div class="employee-modal-header">
           <div class="employee-modal-info">
-            <h2>📥 Eksportuj grafik</h2>
+            <h2>📥 ${t('export.exportSchedule')}</h2>
             <div class="employee-modal-stats">
               <span class="employee-modal-stat">KW${this.scheduleCurrentWeek} (${weekDates.start.slice(0, 5)} - ${weekDates.end.slice(0, 5)})</span>
             </div>
@@ -7640,25 +7887,18 @@ class KappaApp {
         </div>
         <div class="employee-modal-body">
           <div style="display: flex; flex-direction: column; gap: 12px;">
-            <button class="sched-export-btn" data-format="csv">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-              <div>
-                <strong>Excel / CSV</strong>
-                <span>Arkusz kalkulacyjny</span>
-              </div>
-            </button>
             <button class="sched-export-btn" data-format="pdf">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2v2z"/></svg>
               <div>
                 <strong>PDF</strong>
-                <span>Dokument do wydruku</span>
+                <span>${t('export.pdfDescription')}</span>
               </div>
             </button>
-            <button class="sched-export-btn" data-format="json">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <button class="sched-export-btn" data-format="excel">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
               <div>
-                <strong>JSON</strong>
-                <span>Dane strukturalne</span>
+                <strong>Excel</strong>
+                <span>${t('export.excelDescription')}</span>
               </div>
             </button>
           </div>
@@ -7677,125 +7917,451 @@ class KappaApp {
     overlay.querySelectorAll('.sched-export-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const format = (btn as HTMLElement).dataset.format;
-        this.exportSchedule(format as 'csv' | 'pdf' | 'json');
+        if (format === 'pdf') {
+          this.exportScheduleToPdf();
+        } else if (format === 'excel') {
+          this.exportScheduleToExcel();
+        }
         overlay.remove();
       });
     });
   }
-  
-  private exportSchedule(format: 'csv' | 'pdf' | 'json'): void {
+
+  private getScheduleExportData(): {
+    weekKey: string;
+    weekDates: { start: string; end: string };
+    assignments: ScheduleAssignment[];
+    byShift: Map<number, { employee: string; employeeId: string; customer: string; type: string; scope: string }[]>;
+    byProject: Map<string, { customerName: string; typeName: string; employees: { name: string; shift: number; scope: string }[] }>;
+    stats: { totalEmployees: number; assignedEmployees: number; totalProjects: number; coveragePercent: number };
+  } {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
     const assignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    
-    // Przygotuj dane
-    const exportData = assignments.map((a: ScheduleAssignment) => {
+
+    // Group by shift
+    const byShift = new Map<number, { employee: string; employeeId: string; customer: string; type: string; scope: string }[]>();
+    [1, 2, 3].forEach(shift => byShift.set(shift, []));
+
+    // Group by project
+    const byProject = new Map<string, { customerName: string; typeName: string; employees: { name: string; shift: number; scope: string }[] }>();
+
+    assignments.forEach((a: ScheduleAssignment) => {
       const emp = this.state.employees.find(e => e.id === a.employeeId);
       const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
       const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
       const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
-      
-      let scope = 'Cały projekt';
-      if (a.scope === 'adhesion') scope = 'Przyczepność';
-      else if (a.scope === 'audit') scope = 'Audyt';
+
+      let scope = i18n.t('schedule.fullProject');
+      if (a.scope === 'adhesion') scope = i18n.t('schedule.adhesion');
+      else if (a.scope === 'audit') scope = i18n.t('schedule.audit');
       else if (a.testId) {
         const test = this.state.tests.find(t => t.id === a.testId);
         scope = test?.name || 'Test';
       } else if (a.partId) {
         const part = this.state.parts.find(p => p.id === a.partId);
-        scope = part?.name || 'Część';
+        scope = part?.name || i18n.t('schedule.part');
       }
-      
-      return {
-        pracownik: emp ? `${emp.firstName} ${emp.lastName}` : '?',
-        klient: customer?.name || '?',
-        typ: type?.name || '?',
-        zmiana: a.shift,
-        zakres: scope,
-        tydzien: weekKey
-      };
+
+      const employeeName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
+      const customerName = customer?.name || '?';
+      const typeName = type?.name || '?';
+
+      // Add to shift grouping
+      byShift.get(a.shift)?.push({
+        employee: employeeName,
+        employeeId: a.employeeId,
+        customer: customerName,
+        type: typeName,
+        scope
+      });
+
+      // Add to project grouping
+      const projectKey = `${customerName} - ${typeName}`;
+      if (!byProject.has(projectKey)) {
+        byProject.set(projectKey, { customerName, typeName, employees: [] });
+      }
+      byProject.get(projectKey)!.employees.push({ name: employeeName, shift: a.shift, scope });
     });
+
+    // Calculate statistics
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const assignedEmployeeIds = new Set(assignments.map((a: ScheduleAssignment) => a.employeeId));
+    const assignedCount = availableEmployees.filter(e => assignedEmployeeIds.has(e.id)).length;
     
-    if (format === 'csv') {
-      const headers = ['Pracownik', 'Klient', 'Typ', 'Zmiana', 'Zakres', 'Tydzień'];
-      const rows = exportData.map(d => [d.pracownik, d.klient, d.typ, d.zmiana, d.zakres, d.tydzien].join(';'));
-      const csv = [headers.join(';'), ...rows].join('\n');
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+
+    const stats = {
+      totalEmployees: availableEmployees.length,
+      assignedEmployees: assignedCount,
+      totalProjects: weekProjects.length,
+      coveragePercent: availableEmployees.length > 0 ? Math.round((assignedCount / availableEmployees.length) * 100) : 0
+    };
+
+    return { weekKey, weekDates, assignments, byShift, byProject, stats };
+  }
+
+  private async exportScheduleToPdf(): Promise<void> {
+    try {
+      const t = (key: string) => i18n.t(key);
+      const lang = i18n.getLanguage();
+      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
+
+      this.showExportProgress(true, 5, t('export.preparingReport'));
+
+      const data = this.getScheduleExportData();
+      const dateStr = new Date().toLocaleDateString(dateLocale);
+      const timeStr = new Date().toLocaleTimeString(dateLocale);
+
+      // A4 ratio: 1000px width = 1414px height
+      const pdfPageHeight = 1414;
+      const headerHeight = 110;
+      const footerHeight = 40;
+
+      const createPageSection = (content: string, includeHeader: boolean = false): HTMLDivElement => {
+        const section = document.createElement('div');
+        section.style.cssText = `width: 1000px; height: ${pdfPageHeight}px; background: #f8fafc; padding: 0; position: relative; overflow: hidden;`;
+
+        if (includeHeader) {
+          section.innerHTML = `
+            <div style="background: #000; color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
+                <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.85;">Produkt Audit 360</p>
+              </div>
+              <div style="text-align: right;">
+                <p style="margin: 0; font-size: 13px; opacity: 0.9;">${t('export.scheduleReport')}</p>
+                <p style="margin: 3px 0 0 0; font-size: 12px; opacity: 0.7;">${data.weekKey} (${data.weekDates.start} - ${data.weekDates.end})</p>
+              </div>
+            </div>
+            <div style="background: #0097AC; color: #fff; padding: 10px 28px; display: flex; justify-content: space-between; font-size: 11px;">
+              <span><strong>${t('export.generatedAt')}:</strong> ${dateStr} ${timeStr}</span>
+              <span><strong>${t('export.user')}:</strong> ${this.state.settings.userName || 'System'}</span>
+            </div>
+          `;
+        }
+
+        const contentHeight = pdfPageHeight - (includeHeader ? headerHeight : 0) - footerHeight;
+        section.innerHTML += `<div style="padding: 24px 28px; background: #f8fafc; min-height: ${contentHeight}px;">${content}</div>`;
+
+        section.innerHTML += `
+          <div style="background: #1e293b; color: #fff; padding: 12px 28px; text-align: center; font-size: 10px; position: absolute; bottom: 0; left: 0; right: 0;">
+            <p style="margin: 0; opacity: 0.8;">© ${new Date().getFullYear()} ${t('export.copyright')}</p>
+          </div>
+        `;
+
+        return section;
+      };
+
+      this.showExportProgress(true, 20, t('export.copyingContent'));
+
+      // KPI Cards
+      const kpiContent = `
+        <div style="margin-bottom: 16px;">
+          <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📊 ${t('export.kpiTitle')}</h2>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: #0097AC;">${data.stats.totalEmployees}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.totalEmployees')}</div>
+            </div>
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: #10b981;">${data.stats.assignedEmployees}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.assignedEmployees')}</div>
+            </div>
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: #6366f1;">${data.stats.totalProjects}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.projectsCount')}</div>
+            </div>
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: ${data.stats.coveragePercent >= 80 ? '#10b981' : data.stats.coveragePercent >= 50 ? '#f59e0b' : '#ef4444'};">${data.stats.coveragePercent}%</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.coverage')}</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Shift tables side by side
+      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
+      const shiftColors = ['#3b82f6', '#8b5cf6', '#f97316'];
       
-      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `grafik_${weekKey}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      
-      this.showToast('Wyeksportowano do CSV', 'success');
-    } else if (format === 'json') {
-      const json = JSON.stringify(exportData, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `grafik_${weekKey}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      
-      this.showToast('Wyeksportowano do JSON', 'success');
-    } else if (format === 'pdf') {
-      // Prosty eksport HTML do druku
-      const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Grafik ${weekKey}</title>
-            <style>
-              body { font-family: Arial, sans-serif; padding: 20px; }
-              h1 { font-size: 18px; margin-bottom: 5px; }
-              h2 { font-size: 14px; color: #666; margin-bottom: 20px; }
-              table { width: 100%; border-collapse: collapse; }
-              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
-              th { background: #f5f5f5; font-weight: 600; }
-              .shift-1 { background: rgba(37, 99, 235, 0.1); }
-              .shift-2 { background: rgba(124, 58, 237, 0.1); }
-              .shift-3 { background: rgba(234, 88, 12, 0.1); }
-            </style>
-          </head>
-          <body>
-            <h1>Grafik pracy - ${weekKey}</h1>
-            <h2>${weekDates.start} - ${weekDates.end}</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Pracownik</th>
-                  <th>Klient</th>
-                  <th>Typ</th>
-                  <th>Zmiana</th>
-                  <th>Zakres</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${exportData.map(d => `
-                  <tr>
-                    <td>${d.pracownik}</td>
-                    <td>${d.klient}</td>
-                    <td>${d.typ}</td>
-                    <td class="shift-${d.zmiana}">Zmiana ${d.zmiana}</td>
-                    <td>${d.zakres}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </body>
-          </html>
-        `);
-        printWindow.document.close();
-        printWindow.print();
+      let shiftsContent = `<div style="margin-bottom: 16px;">
+        <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">👥 ${t('export.assignmentsByShift')}</h2>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">`;
+
+      for (let shift = 1; shift <= 3; shift++) {
+        const shiftData = data.byShift.get(shift) || [];
+        shiftsContent += `
+          <div style="background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+            <div style="background: ${shiftColors[shift - 1]}; color: #fff; padding: 10px 14px; font-weight: 600; font-size: 13px;">
+              ${t('export.shift')} ${shift} - ${shiftNames[shift - 1]} (${shiftData.length})
+            </div>
+            <div style="padding: 8px 12px; max-height: 280px; overflow: hidden;">
+              ${shiftData.length > 0 ? shiftData.slice(0, 12).map(item => `
+                <div style="padding: 6px 0; border-bottom: 1px solid #f1f5f9; font-size: 11px;">
+                  <div style="font-weight: 600; color: #1e293b;">${item.employee}</div>
+                  <div style="color: #64748b; font-size: 10px;">${item.customer} • ${item.type}</div>
+                </div>
+              `).join('') + (shiftData.length > 12 ? `<div style="padding: 6px 0; color: #94a3b8; font-size: 10px; text-align: center;">+${shiftData.length - 12} ${t('export.more')}</div>` : '') : `
+                <div style="padding: 20px 0; text-align: center; color: #94a3b8; font-size: 11px;">${t('export.noAssignments')}</div>
+              `}
+            </div>
+          </div>`;
       }
-      
-      this.showToast('Otwarto okno drukowania', 'success');
+      shiftsContent += '</div></div>';
+
+      // Projects with employees
+      const projectRows = Array.from(data.byProject.entries());
+      let projectsContent = `<div style="margin-top: 8px;">
+        <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">🏢 ${t('export.projectAssignments')}</h2>
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+          <thead>
+            <tr style="background: #f8fafc;">
+              <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.project')}</th>
+              <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.employees')}</th>
+              <th style="padding: 10px 12px; text-align: center; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151; width: 80px;">${t('export.count')}</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+      projectRows.slice(0, 18).forEach(([key, proj], idx) => {
+        const employeeList = proj.employees.map(e => `${e.name} (${t('export.shift')} ${e.shift})`).join(', ');
+        projectsContent += `
+          <tr style="background: ${idx % 2 === 0 ? '#fff' : '#fafbfc'};">
+            <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9;">
+              <div style="font-weight: 600; color: #1e293b;">${proj.customerName}</div>
+              <div style="color: #64748b; font-size: 10px;">${proj.typeName}</div>
+            </td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; color: #475569;">${employeeList.length > 80 ? employeeList.slice(0, 80) + '...' : employeeList}</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 600; color: #0097AC;">${proj.employees.length}</td>
+          </tr>`;
+      });
+
+      projectsContent += '</tbody></table>';
+      if (projectRows.length > 18) {
+        projectsContent += `<div style="padding: 8px 12px; color: #64748b; font-size: 10px; text-align: center;">+${projectRows.length - 18} ${t('export.moreProjects')}</div>`;
+      }
+      projectsContent += '</div>';
+
+      // Create page 1
+      const page1Content = kpiContent + shiftsContent + projectsContent;
+      const page1 = createPageSection(page1Content, true);
+
+      this.showExportProgress(true, 50, t('export.renderingPages'));
+
+      // Render pages using html2canvas
+      const container = document.createElement('div');
+      container.style.cssText = 'position: absolute; left: -9999px; top: 0;';
+      document.body.appendChild(container);
+
+      container.appendChild(page1);
+
+      const pages: HTMLCanvasElement[] = [];
+      const canvas1 = await html2canvas(page1, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#f8fafc'
+      });
+      pages.push(canvas1);
+
+      // If more projects, create page 2
+      if (projectRows.length > 18) {
+        const remainingProjects = projectRows.slice(18);
+        let page2Content = `<div>
+          <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">🏢 ${t('export.projectAssignments')} (${t('export.continued')})</h2>
+          <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+            <thead>
+              <tr style="background: #f8fafc;">
+                <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.project')}</th>
+                <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.employees')}</th>
+                <th style="padding: 10px 12px; text-align: center; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151; width: 80px;">${t('export.count')}</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+        remainingProjects.slice(0, 35).forEach(([key, proj], idx) => {
+          const employeeList = proj.employees.map(e => `${e.name} (${t('export.shift')} ${e.shift})`).join(', ');
+          page2Content += `
+            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#fafbfc'};">
+              <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9;">
+                <div style="font-weight: 600; color: #1e293b;">${proj.customerName}</div>
+                <div style="color: #64748b; font-size: 10px;">${proj.typeName}</div>
+              </td>
+              <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; color: #475569;">${employeeList.length > 80 ? employeeList.slice(0, 80) + '...' : employeeList}</td>
+              <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 600; color: #0097AC;">${proj.employees.length}</td>
+            </tr>`;
+        });
+        page2Content += '</tbody></table></div>';
+
+        const page2 = createPageSection(page2Content, false);
+        container.appendChild(page2);
+
+        const canvas2 = await html2canvas(page2, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#f8fafc'
+        });
+        pages.push(canvas2);
+      }
+
+      document.body.removeChild(container);
+
+      this.showExportProgress(true, 80, t('export.generatingFile'));
+
+      // Create PDF
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+      pages.forEach((canvas, index) => {
+        if (index > 0) pdf.addPage();
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
+      });
+
+      this.showExportProgress(true, 95, t('export.savingFile'));
+
+      pdf.save(`grafik_${data.weekKey}.pdf`);
+
+      this.showExportProgress(false, 100);
+      this.showToast(t('export.pdfExported'), 'success');
+
+    } catch (error) {
+      console.error('Schedule PDF export error:', error);
+      this.showExportProgress(false, 0);
+      this.showToast(i18n.t('export.exportError'), 'error');
+    }
+  }
+
+  private async exportScheduleToExcel(): Promise<void> {
+    try {
+      const t = (key: string) => i18n.t(key);
+      const ExcelJS = await import('exceljs');
+
+      this.showExportProgress(true, 10, t('export.preparingData'));
+
+      const data = this.getScheduleExportData();
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Produkt Audit 360';
+      workbook.created = new Date();
+
+      // Colors
+      const headerBg = '000000';
+      const headerText = 'FFFFFF';
+      const tealBg = '0097AC';
+      const altRowBg = 'F8FAFC';
+
+      this.showExportProgress(true, 30, t('export.creatingSheets'));
+
+      // Sheet 1: Summary
+      const summarySheet = workbook.addWorksheet(t('export.summary'));
+      summarySheet.columns = [
+        { header: '', key: 'label', width: 30 },
+        { header: '', key: 'value', width: 25 }
+      ];
+
+      summarySheet.addRow([t('export.scheduleReport'), '']);
+      summarySheet.getRow(1).font = { bold: true, size: 16 };
+      summarySheet.addRow([t('export.week'), data.weekKey]);
+      summarySheet.addRow([t('export.dateRange'), `${data.weekDates.start} - ${data.weekDates.end}`]);
+      summarySheet.addRow([t('export.generatedAt'), new Date().toLocaleString()]);
+      summarySheet.addRow(['', '']);
+      summarySheet.addRow([t('export.totalEmployees'), data.stats.totalEmployees]);
+      summarySheet.addRow([t('export.assignedEmployees'), data.stats.assignedEmployees]);
+      summarySheet.addRow([t('export.projectsCount'), data.stats.totalProjects]);
+      summarySheet.addRow([t('export.coverage'), `${data.stats.coveragePercent}%`]);
+
+      this.showExportProgress(true, 50, t('export.creatingSheets'));
+
+      // Sheet 2: All Assignments
+      const assignmentsSheet = workbook.addWorksheet(t('export.assignments'));
+      assignmentsSheet.columns = [
+        { header: t('export.employee'), key: 'employee', width: 25 },
+        { header: t('export.customer'), key: 'customer', width: 25 },
+        { header: t('export.type'), key: 'type', width: 20 },
+        { header: t('export.shift'), key: 'shift', width: 12 },
+        { header: t('export.scope'), key: 'scope', width: 20 }
+      ];
+
+      // Style header
+      const headerRow = assignmentsSheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: headerText } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: headerBg } };
+      headerRow.alignment = { horizontal: 'center' };
+
+      // Add data rows
+      let rowIndex = 2;
+      [1, 2, 3].forEach(shift => {
+        const shiftData = data.byShift.get(shift) || [];
+        shiftData.forEach(item => {
+          assignmentsSheet.addRow({
+            employee: item.employee,
+            customer: item.customer,
+            type: item.type,
+            shift: shift,
+            scope: item.scope
+          });
+          if (rowIndex % 2 === 0) {
+            assignmentsSheet.getRow(rowIndex).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
+          }
+          rowIndex++;
+        });
+      });
+
+      this.showExportProgress(true, 70, t('export.creatingSheets'));
+
+      // Sheet 3: By Shift
+      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
+      for (let shift = 1; shift <= 3; shift++) {
+        const shiftSheet = workbook.addWorksheet(`${t('export.shift')} ${shift} - ${shiftNames[shift - 1]}`);
+        shiftSheet.columns = [
+          { header: t('export.employee'), key: 'employee', width: 25 },
+          { header: t('export.customer'), key: 'customer', width: 25 },
+          { header: t('export.type'), key: 'type', width: 20 },
+          { header: t('export.scope'), key: 'scope', width: 20 }
+        ];
+
+        const shiftHeaderRow = shiftSheet.getRow(1);
+        shiftHeaderRow.font = { bold: true, color: { argb: headerText } };
+        shiftHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tealBg } };
+
+        const shiftData = data.byShift.get(shift) || [];
+        shiftData.forEach((item, idx) => {
+          shiftSheet.addRow({
+            employee: item.employee,
+            customer: item.customer,
+            type: item.type,
+            scope: item.scope
+          });
+          if (idx % 2 === 1) {
+            shiftSheet.getRow(idx + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
+          }
+        });
+      }
+
+      this.showExportProgress(true, 90, t('export.savingFile'));
+
+      // Generate and download
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grafik_${data.weekKey}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showExportProgress(false, 100);
+      this.showToast(t('export.excelExported'), 'success');
+
+    } catch (error) {
+      console.error('Schedule Excel export error:', error);
+      this.showExportProgress(false, 0);
+      this.showToast(i18n.t('export.exportError'), 'error');
     }
   }
 
