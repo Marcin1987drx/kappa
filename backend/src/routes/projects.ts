@@ -25,6 +25,7 @@ projectsRouter.get('/', (req, res) => {
         part_id: project.part_id,
         test_id: project.test_id,
         weeks: weeksObj,
+        timePerUnit: project.time_per_unit || 0,
         created_at: project.created_at,
         updated_at: project.updated_at
       };
@@ -63,12 +64,12 @@ projectsRouter.get('/:id', (req, res) => {
 // Create project
 projectsRouter.post('/', (req, res) => {
   try {
-    const { id, customer_id, type_id, part_id, test_id, weeks, created_at, updated_at } = req.body;
+    const { id, customer_id, type_id, part_id, test_id, weeks, timePerUnit, created_at, updated_at } = req.body;
     
     runQuery(`
-      INSERT INTO projects (id, customer_id, type_id, part_id, test_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `, [id, customer_id, type_id, part_id, test_id, created_at, updated_at]);
+      INSERT INTO projects (id, customer_id, type_id, part_id, test_id, time_per_unit, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [id, customer_id, type_id, part_id, test_id, timePerUnit || 0, created_at, updated_at]);
 
     // Insert weeks data
     if (weeks) {
@@ -90,13 +91,13 @@ projectsRouter.post('/', (req, res) => {
 // Update project
 projectsRouter.put('/:id', (req, res) => {
   try {
-    const { customer_id, type_id, part_id, test_id, weeks, updated_at } = req.body;
+    const { customer_id, type_id, part_id, test_id, weeks, timePerUnit, updated_at } = req.body;
     
     runQuery(`
       UPDATE projects 
-      SET customer_id = ?, type_id = ?, part_id = ?, test_id = ?, updated_at = ?
+      SET customer_id = ?, type_id = ?, part_id = ?, test_id = ?, time_per_unit = ?, updated_at = ?
       WHERE id = ?
-    `, [customer_id, type_id, part_id, test_id, updated_at, req.params.id]);
+    `, [customer_id, type_id, part_id, test_id, timePerUnit || 0, updated_at, req.params.id]);
 
     // Update weeks data
     if (weeks) {

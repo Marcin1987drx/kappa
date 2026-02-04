@@ -13,7 +13,9 @@
     "chart.js": "^4.4.1",
     "exceljs": "^4.4.0",
     "file-saver": "^2.0.5",
-    "idb": "^8.0.0"
+    "html2canvas": "^1.4.1",
+    "idb": "^8.0.0",
+    "jspdf": "^4.1.0"
   },
   "devDependencies": {
     "@types/file-saver": "^2.0.7",

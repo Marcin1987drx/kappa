@@ -69,10 +69,19 @@ async function initDatabase() {
       type_id TEXT NOT NULL,
       part_id TEXT NOT NULL,
       test_id TEXT NOT NULL,
+      time_per_unit INTEGER DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     )
   `);
+
+  // Add time_per_unit column if it doesn't exist (migration)
+  try {
+    db.run(`ALTER TABLE projects ADD COLUMN time_per_unit INTEGER DEFAULT 0`);
+    console.log('✅ Added time_per_unit column to projects table');
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS project_weeks (
