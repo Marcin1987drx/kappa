@@ -1,8 +1,12 @@
 import { i18n } from './i18n';
+import { api } from './api/client';
+import { db } from './database';
 import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus } from './types';
 import { Chart, registerables } from 'chart.js';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
+import html2canvas from 'html2canvas';
+import jsPDF from 'jspdf';
 
 Chart.register(...registerables);
 
@@ -31,115 +35,6 @@ const EMPLOYEE_COLORS = [
   '#607D8B', '#F44336'
 ];
 
-// ==================== IndexedDB Database ====================
-class Database {
-  private db: IDBDatabase | null = null;
-  private readonly DB_NAME = 'KappaPlannungDB';
-  private readonly DB_VERSION = 5;
-
-  async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
-
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve();
-      };
-
-      request.onupgradeneeded = (event) => {
-        const db = (event.target as IDBOpenDBRequest).result;
-        
-        if (!db.objectStoreNames.contains('customers')) {
-          db.createObjectStore('customers', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('types')) {
-          db.createObjectStore('types', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('parts')) {
-          db.createObjectStore('parts', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('tests')) {
-          db.createObjectStore('tests', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('projects')) {
-          db.createObjectStore('projects', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('settings')) {
-          db.createObjectStore('settings', { keyPath: 'key' });
-        }
-        if (!db.objectStoreNames.contains('comments')) {
-          db.createObjectStore('comments', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('logs')) {
-          db.createObjectStore('logs', { keyPath: 'id' });
-        }
-        // New stores for Schedule module
-        if (!db.objectStoreNames.contains('employees')) {
-          db.createObjectStore('employees', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('scheduleEntries')) {
-          db.createObjectStore('scheduleEntries', { keyPath: 'id' });
-        }
-        // New stores for enhanced Schedule (v5)
-        if (!db.objectStoreNames.contains('scheduleAssignments')) {
-          db.createObjectStore('scheduleAssignments', { keyPath: 'id' });
-        }
-        if (!db.objectStoreNames.contains('projectComments')) {
-          db.createObjectStore('projectComments', { keyPath: 'id' });
-        }
-      };
-    });
-  }
-
-  private getStore(storeName: string, mode: IDBTransactionMode = 'readonly'): IDBObjectStore {
-    if (!this.db) throw new Error('Database not initialized');
-    return this.db.transaction(storeName, mode).objectStore(storeName);
-  }
-
-  async getAll<T>(storeName: string): Promise<T[]> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName).getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async get<T>(storeName: string, key: string): Promise<T | undefined> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName).get(key);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async put<T>(storeName: string, item: T): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName, 'readwrite').put(item);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async delete(storeName: string, key: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName, 'readwrite').delete(key);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-
-  async clear(storeName: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = this.getStore(storeName, 'readwrite').clear();
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
-  }
-}
-
-const db = new Database();
-
 // ==================== Comment Interface ====================
 interface Comment {
   id: string;
@@ -147,21 +42,6 @@ interface Comment {
   week: string;
   text: string;
   createdAt: number;
-}
-
-// ==================== Schedule Change Log Interface ====================
-interface ScheduleChangeLog {
-  id: string;
-  timestamp: number;
-  userName: string;
-  actionType: 'add' | 'remove' | 'move' | 'status_change';
-  employeeName: string;
-  projectName: string;
-  customerName: string;
-  typeName: string;
-  week: string;
-  shift?: number;
-  details?: string;
 }
 
 // ==================== Main Application ====================
@@ -194,7 +74,6 @@ class KappaApp {
 
   private comments: Comment[] = [];
   private logs: ActivityLog[] = [];
-  private scheduleChangeLogs: ScheduleChangeLog[] = [];
   private weeklyChart: Chart | null = null;
   private testChart: Chart | null = null;
   private trendChart: Chart | null = null;
@@ -212,16 +91,29 @@ class KappaApp {
   // Active cell for keyboard navigation
   private activeCell: { projectId: string; week: number; type: 'ist' | 'soll' } | null = null;
 
+  // Absence module state
+  private absenceYear: number = new Date().getFullYear();
+  private absenceViewMode: 'calendar' | 'list' | 'heatmap' | 'employees' = 'calendar';
+  private absenceCalendarMonth: number = new Date().getMonth();
+  private absenceFilterEmployee: string = '';
+  private absenceFilterType: string = '';
+  private absenceFilterMonth: string = '';
+  private absenceTypes: any[] = [];
+  private absences: any[] = [];
+  private absenceLimits: any[] = [];
+  private holidays: any[] = [];
+  private absenceEventsInitialized: boolean = false;
+
   async init(): Promise<void> {
     try {
       await db.init();
       await this.loadData();
       
-      // Load pinned projects from localStorage
-      this.loadPinnedProjects();
+      // Load pinned projects from database
+      await this.loadPinnedProjects();
       
-      // Load item tags from localStorage
-      this.loadItemTags();
+      // Load item tags from database
+      await this.loadItemTags();
       
       // Load example data if database is empty
       if (this.state.projects.length === 0 && this.state.customers.length === 0) {
@@ -500,20 +392,58 @@ class KappaApp {
     document.getElementById('importData')?.addEventListener('click', () => this.importData());
 
     // Toolbar collapse toggle
-    document.getElementById('toggleToolbarExpand')?.addEventListener('click', () => {
+    document.getElementById('toggleToolbarExpand')?.addEventListener('click', async () => {
       const toolbar = document.getElementById('planningToolbar');
       if (toolbar) {
         toolbar.classList.toggle('collapsed');
-        // Save preference
-        localStorage.setItem('toolbarCollapsed', toolbar.classList.contains('collapsed') ? 'true' : 'false');
+        // Save preference to database
+        await db.setPreference('toolbarCollapsed', toolbar.classList.contains('collapsed'));
       }
     });
 
-    // Restore toolbar state
-    const toolbarCollapsed = localStorage.getItem('toolbarCollapsed');
-    if (toolbarCollapsed === 'true') {
-      document.getElementById('planningToolbar')?.classList.add('collapsed');
-    }
+    // Restore toolbar state from database
+    db.getPreference('toolbarCollapsed').then(collapsed => {
+      if (collapsed === true) {
+        document.getElementById('planningToolbar')?.classList.add('collapsed');
+      }
+    });
+
+    // Sliding Stats Panel - Tab toggle
+    document.getElementById('statsPanelTab')?.addEventListener('click', () => {
+      const panel = document.getElementById('statsSlidePanel');
+      panel?.classList.add('open');
+      this.updateStatsPanel();
+    });
+
+    // Sliding Stats Panel - Close button
+    document.getElementById('statsPanelClose')?.addEventListener('click', () => {
+      const panel = document.getElementById('statsSlidePanel');
+      panel?.classList.remove('open');
+    });
+
+    // Click outside to close panel
+    document.addEventListener('click', (e) => {
+      const panel = document.getElementById('statsSlidePanel');
+      const target = e.target as HTMLElement;
+      if (panel?.classList.contains('open') && 
+          !panel.contains(target) && 
+          !target.closest('#statsPanelTab')) {
+        panel.classList.remove('open');
+      }
+    });
+
+    // Quick action buttons
+    document.getElementById('quickAddProject')?.addEventListener('click', () => {
+      this.showAddProjectModal();
+    });
+
+    document.getElementById('quickExport')?.addEventListener('click', () => {
+      this.exportData();
+    });
+
+    document.getElementById('quickAnalytics')?.addEventListener('click', () => {
+      this.showAnalyticsModal();
+    });
 
     // Projects view buttons
     document.getElementById('addCustomer')?.addEventListener('click', () => this.showAddModal('customer'));
@@ -576,16 +506,8 @@ class KappaApp {
     // Logs view buttons
     document.getElementById('exportLogs')?.addEventListener('click', () => this.exportLogs());
     document.getElementById('clearLogs')?.addEventListener('click', () => this.clearLogs());
-    
-    // Open logs from settings
-    document.getElementById('openLogsView')?.addEventListener('click', () => {
-      this.switchView('logs');
-    });
-    
-    // Back to settings from logs
-    document.getElementById('backToSettings')?.addEventListener('click', () => {
-      this.switchView('settings');
-    });
+    document.getElementById('openLogsView')?.addEventListener('click', () => this.switchView('logs'));
+    document.getElementById('backToSettings')?.addEventListener('click', () => this.switchView('settings'));
 
     // Modal close
     document.querySelector('.modal-close')?.addEventListener('click', () => this.hideModal());
@@ -621,23 +543,23 @@ class KappaApp {
   }
   
   // Toggle project pin status
-  private togglePin(projectId: string): void {
+  private async togglePin(projectId: string): Promise<void> {
     if (this.pinnedProjects.has(projectId)) {
       this.pinnedProjects.delete(projectId);
     } else {
       this.pinnedProjects.add(projectId);
     }
-    // Save pinned projects to localStorage
-    localStorage.setItem('pinnedProjects', JSON.stringify([...this.pinnedProjects]));
+    // Save pinned projects to database
+    await db.setPreference('pinnedProjects', [...this.pinnedProjects]);
     this.renderPlanningGrid();
   }
   
-  // Load pinned projects from localStorage
-  private loadPinnedProjects(): void {
+  // Load pinned projects from database
+  private async loadPinnedProjects(): Promise<void> {
     try {
-      const saved = localStorage.getItem('pinnedProjects');
-      if (saved) {
-        this.pinnedProjects = new Set(JSON.parse(saved));
+      const saved = await db.getPreference('pinnedProjects');
+      if (saved && Array.isArray(saved)) {
+        this.pinnedProjects = new Set(saved);
       }
     } catch (e) {
       console.warn('Failed to load pinned projects:', e);
@@ -926,6 +848,9 @@ class KappaApp {
       case 'schedule':
         this.renderScheduleView();
         break;
+      case 'absences':
+        this.renderAbsencesView();
+        break;
       case 'logs':
         this.renderLogsView();
         break;
@@ -941,6 +866,182 @@ class KappaApp {
     const diff = now.getTime() - start.getTime();
     const oneWeek = 1000 * 60 * 60 * 24 * 7;
     return Math.floor(diff / oneWeek) + 1;
+  }
+
+  // ==================== Focus/Advanced Mode ====================
+  private async togglePlanningMode(): Promise<void> {
+    const planningView = document.getElementById('planningView');
+    const modeLabel = document.getElementById('modeLabelText');
+    
+    if (planningView && modeLabel) {
+      const isAdvanced = planningView.classList.toggle('advanced-mode');
+      modeLabel.textContent = isAdvanced ? 'Advanced' : 'Focus';
+      
+      // Save preference
+      await db.setPreference('planningAdvancedMode', isAdvanced);
+      
+      // Update stats panel if in advanced mode
+      if (isAdvanced) {
+        this.updateStatsPanel();
+      }
+    }
+  }
+
+  private updateStatsPanel(): void {
+    const currentWeek = this.getCurrentWeek();
+    const currentYear = this.state.selectedYear;
+    const currentWeekKey = `${currentYear}-KW${String(currentWeek).padStart(2, '0')}`;
+    
+    // Projects stats - only Kappa related
+    const totalProjects = this.state.projects.length;
+    
+    let totalIst = 0;
+    let totalSoll = 0;
+    let completedProjects = 0;
+    let delayedProjects = 0;
+    let activeProjects = 0;
+    
+    this.state.projects.forEach(p => {
+      const weekData = p.weeks?.[currentWeekKey];
+      if (weekData) {
+        totalIst += weekData.ist || 0;
+        totalSoll += weekData.soll || 0;
+        
+        if (weekData.soll > 0) {
+          activeProjects++;
+          if (weekData.ist >= weekData.soll) {
+            completedProjects++;
+          } else if (weekData.ist < weekData.soll * 0.5) {
+            delayedProjects++;
+          }
+        }
+      }
+    });
+
+    const progressPercent = totalSoll > 0 ? Math.round((totalIst / totalSoll) * 100) : 0;
+
+    // Update stats cards
+    const statTotal = document.getElementById('statTotalProjects');
+    const statActive = document.getElementById('statActiveProjects');
+    const statCompleted = document.getElementById('statCompletedProjects');
+    const statDelayed = document.getElementById('statDelayedProjects');
+    
+    if (statTotal) statTotal.textContent = String(totalProjects);
+    if (statActive) statActive.textContent = String(activeProjects);
+    if (statCompleted) statCompleted.textContent = String(completedProjects);
+    if (statDelayed) statDelayed.textContent = String(delayedProjects);
+    
+    // Update week/year info
+    const currentWeekNum = document.getElementById('currentWeekNum');
+    const currentYearNum = document.getElementById('currentYearNum');
+    if (currentWeekNum) currentWeekNum.textContent = String(currentWeek);
+    if (currentYearNum) currentYearNum.textContent = String(currentYear);
+    
+    // Update IST/SOLL progress
+    const weeklyIst = document.getElementById('weeklyIstDone');
+    const weeklySoll = document.getElementById('weeklySollTotal');
+    const weeklyProgress = document.getElementById('weeklyProgressBar');
+    const weeklyPercent = document.getElementById('weeklyProgressPercent');
+    
+    if (weeklyIst) weeklyIst.textContent = String(totalIst);
+    if (weeklySoll) weeklySoll.textContent = String(totalSoll);
+    if (weeklyProgress) weeklyProgress.style.width = `${Math.min(progressPercent, 100)}%`;
+    if (weeklyPercent) weeklyPercent.textContent = `${progressPercent}%`;
+
+    // Update alerts - only Kappa related
+    const alertsList = document.getElementById('alertsList');
+    if (alertsList) {
+      let alertsHtml = '';
+      if (delayedProjects > 0) {
+        alertsHtml += `<div class="alert-item alert-danger">
+          <span class="alert-icon">🔴</span>
+          <span class="alert-text">${delayedProjects} projekt${delayedProjects > 1 ? 'ów' : ''} < 50% realizacji</span>
+        </div>`;
+      }
+      const noSollProjects = this.state.projects.filter(p => {
+        const weekData = p.weeks?.[currentWeekKey];
+        return !weekData || !weekData.soll;
+      }).length;
+      if (noSollProjects > 0) {
+        alertsHtml += `<div class="alert-item alert-warning">
+          <span class="alert-icon">⚠️</span>
+          <span class="alert-text">${noSollProjects} bez planu SOLL</span>
+        </div>`;
+      }
+      if (!alertsHtml) {
+        alertsHtml = `<div class="alert-item alert-success">
+          <span class="alert-icon">✅</span>
+          <span class="alert-text">Wszystko w porządku!</span>
+        </div>`;
+      }
+      alertsList.innerHTML = alertsHtml;
+    }
+
+    // Update priority list (top projects behind schedule)
+    const priorityList = document.getElementById('priorityList');
+    if (priorityList) {
+      const topProjects = this.getTopPriorityProjects();
+      if (topProjects.length > 0) {
+        const priorityHtml = topProjects.map((p, idx) => {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          const test = this.state.tests.find(t => t.id === p.test_id);
+          const weekData = p.weeks?.[currentWeekKey];
+          const percent = weekData && weekData.soll > 0 
+            ? Math.round((weekData.ist / weekData.soll) * 100) 
+            : 0;
+          return `<div class="priority-item" data-project-id="${p.id}">
+            <span class="priority-badge p${idx + 1}">${idx + 1}</span>
+            <span class="priority-name">${customer?.name || 'N/A'}</span>
+            <span class="priority-percent">${percent}%</span>
+          </div>`;
+        }).join('');
+        priorityList.innerHTML = priorityHtml;
+        
+        // Add click handlers
+        priorityList.querySelectorAll('.priority-item').forEach(item => {
+          item.addEventListener('click', () => {
+            const projectId = item.getAttribute('data-project-id');
+            if (projectId) this.highlightProject(projectId);
+          });
+        });
+      } else {
+        priorityList.innerHTML = '<div class="priority-empty">Brak projektów do pokazania</div>';
+      }
+    }
+  }
+
+  private showAnalyticsModal(): void {
+    // Switch to analytics view
+    this.switchView('analytics');
+  }
+
+  private getTopPriorityProjects(): Project[] {
+    const currentWeekKey = `${this.state.selectedYear}-KW${String(this.getCurrentWeek()).padStart(2, '0')}`;
+    
+    // Sort by how behind they are (lowest IST/SOLL ratio first)
+    return [...this.state.projects]
+      .filter(p => {
+        const weekData = p.weeks?.[currentWeekKey];
+        return weekData && weekData.soll > 0 && weekData.ist < weekData.soll;
+      })
+      .sort((a, b) => {
+        const aWeek = a.weeks?.[currentWeekKey];
+        const bWeek = b.weeks?.[currentWeekKey];
+        const aRatio = aWeek ? (aWeek.ist / aWeek.soll) : 1;
+        const bRatio = bWeek ? (bWeek.ist / bWeek.soll) : 1;
+        return aRatio - bRatio;
+      })
+      .slice(0, 5);
+  }
+
+  private highlightProject(projectId: string): void {
+    // Scroll to project and highlight it
+    const projectRow = document.querySelector(`[data-project-id="${projectId}"]`);
+    if (projectRow) {
+      projectRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      projectRow.classList.add('highlighted');
+      setTimeout(() => projectRow.classList.remove('highlighted'), 2000);
+    }
   }
 
   private renderPlanningGrid(): void {
@@ -1807,7 +1908,22 @@ class KappaApp {
       const newTime = parseInt(input.value) || 0;
       project.timePerUnit = newTime;
       project.updated_at = Date.now();
+      
+      // Save to IndexedDB
       await db.put('projects', project);
+      
+      // Also save to backend database
+      try {
+        await api.updateProject(project);
+      } catch (err) {
+        console.error('Error saving time to backend:', err);
+      }
+      
+      // Update state
+      const stateProject = this.state.projects.find(p => p.id === project.id);
+      if (stateProject) {
+        stateProject.timePerUnit = newTime;
+      }
       
       // Update cell display
       const timeValue = cell.querySelector('.time-value');
@@ -2575,15 +2691,15 @@ class KappaApp {
     }, 10);
   }
   
-  private saveItemTags(): void {
-    localStorage.setItem('itemTags', JSON.stringify([...this.itemTags]));
+  private async saveItemTags(): Promise<void> {
+    await db.setPreference('itemTags', [...this.itemTags]);
   }
   
-  private loadItemTags(): void {
+  private async loadItemTags(): Promise<void> {
     try {
-      const saved = localStorage.getItem('itemTags');
-      if (saved) {
-        this.itemTags = new Map(JSON.parse(saved));
+      const saved = await db.getPreference('itemTags');
+      if (saved && Array.isArray(saved)) {
+        this.itemTags = new Map(saved);
       }
     } catch (e) {
       console.warn('Failed to load item tags:', e);
@@ -2942,12 +3058,19 @@ class KappaApp {
     this.setupAnalyticsEventListeners();
     // Advanced Analytics
     this.renderAdvancedAnalytics();
+    // AI Insights
+    this.renderAIInsights();
+    // New charts
+    this.renderVelocityChart();
+    this.renderRadarChart();
   }
 
   private analyticsOptionsUnlocked: boolean = false;
   private projectStoppages: Map<string, Set<string>> = new Map(); // projectId -> Set of weeks
   private analyticsWeekFrom: number = 1;
   private analyticsWeekTo: number = 52;
+  private velocityChart: Chart | null = null;
+  private radarChart: Chart | null = null;
 
   private setupAnalyticsEventListeners(): void {
     // Initialize week filter dropdowns
@@ -2966,7 +3089,35 @@ class KappaApp {
       this.toggleAnalyticsOptions();
     });
 
-    // Export analytics button
+    // Export dropdown toggle
+    const exportBtn = document.getElementById('exportAnalyticsBtn');
+    const exportDropdownContainer = exportBtn?.closest('.export-dropdown-container');
+    
+    exportBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      exportDropdownContainer?.classList.toggle('open');
+    });
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+      if (exportDropdownContainer && !exportDropdownContainer.contains(e.target as Node)) {
+        exportDropdownContainer.classList.remove('open');
+      }
+    });
+    
+    // Export to PDF button
+    document.getElementById('exportToPdf')?.addEventListener('click', () => {
+      exportDropdownContainer?.classList.remove('open');
+      this.exportAnalyticsToPdf();
+    });
+    
+    // Export to Excel button
+    document.getElementById('exportToExcel')?.addEventListener('click', () => {
+      exportDropdownContainer?.classList.remove('open');
+      this.exportAnalyticsToExcel();
+    });
+
+    // Legacy export analytics button (fallback)
     document.getElementById('exportAnalytics')?.addEventListener('click', () => this.exportData());
 
     // Filter status
@@ -3134,10 +3285,16 @@ class KappaApp {
 
   // Helper to get week data with year-aware key lookup
   private getWeekData(project: Project, weekKey: string): { ist: number; soll: number; stoppage?: boolean; productionLack?: boolean } {
-    // Use ONLY year-prefixed key (e.g., "2026-KW05") - no fallback to old keys
-    // This ensures each year has its own separate data
+    // Try year-prefixed key first (e.g., "2026-KW05")
     const yearWeekKey = `${this.state.selectedYear}-${weekKey}`;
-    return project.weeks[yearWeekKey] || { ist: 0, soll: 0 };
+    if (project.weeks[yearWeekKey]) {
+      return project.weeks[yearWeekKey];
+    }
+    // Fallback to old format (KW05) for backwards compatibility with unmigrated data
+    if (project.weeks[weekKey]) {
+      return project.weeks[weekKey];
+    }
+    return { ist: 0, soll: 0 };
   }
 
   // Helper to iterate over all weeks of a project for the selected year
@@ -3174,6 +3331,9 @@ class KappaApp {
     }
   }
 
+  private analyticsSortColumn: string = '';
+  private analyticsSortDirection: 'asc' | 'desc' = 'asc';
+
   private renderAnalyticsTable(): void {
     const tbody = document.getElementById('analyticsTableBody');
     if (!tbody) return;
@@ -3182,7 +3342,8 @@ class KappaApp {
 
     tbody.innerHTML = '';
 
-    this.state.projects.forEach((project) => {
+    // Prepare data with calculated values
+    const projectsData = this.state.projects.map((project) => {
       const customer = this.state.customers.find(c => c.id === project.customer_id);
       const type = this.state.types.find(t => t.id === project.type_id);
       const part = this.state.parts.find(p => p.id === project.part_id);
@@ -3192,10 +3353,8 @@ class KappaApp {
       let totalSoll = 0;
       let hasStoppage = this.projectStoppages.has(project.id);
 
-      // Use year-aware week data lookup
       for (let w = 1; w <= 52; w++) {
         const weekKey = `KW${w.toString().padStart(2, '0')}`;
-        // Apply week filter
         if (!this.isWeekInFilter(weekKey)) continue;
         const data = this.getWeekData(project, weekKey);
         totalIst += data.ist;
@@ -3204,50 +3363,100 @@ class KappaApp {
 
       const percentage = totalSoll > 0 ? Math.round((totalIst / totalSoll) * 100) : 0;
       
-      // Determine status
       let status: 'complete' | 'partial' | 'zero' | 'stoppage' = 'zero';
-      if (hasStoppage) {
-        status = 'stoppage';
-      } else if (totalSoll === 0) {
-        status = 'zero';
-      } else if (totalIst >= totalSoll) {
-        status = 'complete';
-      } else if (totalIst > 0) {
-        status = 'partial';
+      if (hasStoppage) status = 'stoppage';
+      else if (totalSoll === 0) status = 'zero';
+      else if (totalIst >= totalSoll) status = 'complete';
+      else if (totalIst > 0) status = 'partial';
+
+      return {
+        project,
+        customer: customer?.name || '-',
+        type: type?.name || '-',
+        part: part?.name || '-',
+        test: test?.name || '-',
+        testColor: (test as any)?.color || '#0097AC',
+        totalIst,
+        totalSoll,
+        percentage,
+        status,
+        hasStoppage
+      };
+    });
+
+    // Apply filter
+    let filteredData = projectsData.filter(d => filterStatus === 'all' || filterStatus === d.status);
+
+    // Apply sorting
+    if (this.analyticsSortColumn) {
+      filteredData.sort((a, b) => {
+        let valA: any, valB: any;
+        switch (this.analyticsSortColumn) {
+          case 'customer': valA = a.customer; valB = b.customer; break;
+          case 'type': valA = a.type; valB = b.type; break;
+          case 'part': valA = a.part; valB = b.part; break;
+          case 'test': valA = a.test; valB = b.test; break;
+          case 'ist': valA = a.totalIst; valB = b.totalIst; break;
+          case 'soll': valA = a.totalSoll; valB = b.totalSoll; break;
+          case 'percent': valA = a.percentage; valB = b.percentage; break;
+          default: return 0;
+        }
+        if (typeof valA === 'string') {
+          return this.analyticsSortDirection === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+        }
+        return this.analyticsSortDirection === 'asc' ? valA - valB : valB - valA;
+      });
+    }
+
+    // Update header sort indicators
+    document.querySelectorAll('.th-sortable').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if ((th as HTMLElement).dataset.sort === this.analyticsSortColumn) {
+        th.classList.add(this.analyticsSortDirection === 'asc' ? 'sort-asc' : 'sort-desc');
       }
+    });
 
-      // Apply filter
-      if (filterStatus !== 'all' && filterStatus !== status) return;
-
+    // Render rows
+    filteredData.forEach((d) => {
       const tr = document.createElement('tr');
-      tr.dataset.projectId = project.id;
+      tr.dataset.projectId = d.project.id;
+      
+      // Row color based on percentage
+      let rowClass = '';
+      if (d.totalSoll > 0) {
+        if (d.percentage >= 100) rowClass = 'row-success';
+        else if (d.percentage >= 80) rowClass = 'row-good';
+        else if (d.percentage >= 50) rowClass = 'row-warning';
+        else rowClass = 'row-danger';
+      }
+      tr.className = rowClass;
       
       tr.innerHTML = `
-        <td class="td-sticky">${customer?.name || '-'}</td>
-        <td>${type?.name || '-'}</td>
-        <td>${part?.name || '-'}</td>
+        <td class="td-sticky">${d.customer}</td>
+        <td>${d.type}</td>
+        <td>${d.part}</td>
         <td>
-          <span class="test-badge" style="background: ${(test as any)?.color || '#0097AC'}">
-            ${test?.name || '-'}
+          <span class="test-badge" style="background: ${d.testColor}">
+            ${d.test}
           </span>
         </td>
         <td class="status-cell">
-          ${this.getStatusSvg(status)}
+          ${this.getStatusSvg(d.status)}
         </td>
-        <td class="ist-cell">${totalIst}</td>
-        <td class="soll-cell">${totalSoll}</td>
-        <td class="percentage-cell ${percentage >= 100 ? 'pct-100' : percentage > 0 ? 'pct-partial' : 'pct-zero'}">
-          ${totalSoll > 0 ? percentage + '%' : '-'}
+        <td class="ist-cell">${d.totalIst}</td>
+        <td class="soll-cell">${d.totalSoll}</td>
+        <td class="percentage-cell ${d.percentage >= 100 ? 'pct-100' : d.percentage > 0 ? 'pct-partial' : 'pct-zero'}">
+          ${d.totalSoll > 0 ? d.percentage + '%' : '-'}
         </td>
         <td class="analytics-options-col ${this.analyticsOptionsUnlocked ? '' : 'hidden'}">
           <div class="options-cell">
-            <button class="btn-option btn-stoppage ${hasStoppage ? 'active' : ''}" title="Oznacz postój" data-project-id="${project.id}">
+            <button class="btn-option btn-stoppage ${d.hasStoppage ? 'active' : ''}" title="Oznacz postój" data-project-id="${d.project.id}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
               </svg>
             </button>
-            <button class="btn-option btn-details" title="Szczegóły" data-project-id="${project.id}">
+            <button class="btn-option btn-details" title="Szczegóły" data-project-id="${d.project.id}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="12" y1="16" x2="12" y2="12"/>
@@ -3266,6 +3475,22 @@ class KappaApp {
       btn.addEventListener('click', (e) => {
         const projectId = (e.currentTarget as HTMLElement).dataset.projectId;
         if (projectId) this.showStoppagePopup(projectId, e as MouseEvent);
+      });
+    });
+
+    // Add event listeners for sorting
+    document.querySelectorAll('.th-sortable').forEach(th => {
+      th.addEventListener('click', () => {
+        const sortKey = (th as HTMLElement).dataset.sort;
+        if (!sortKey) return;
+        
+        if (this.analyticsSortColumn === sortKey) {
+          this.analyticsSortDirection = this.analyticsSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+          this.analyticsSortColumn = sortKey;
+          this.analyticsSortDirection = 'asc';
+        }
+        this.renderAnalyticsTable();
       });
     });
   }
@@ -3571,9 +3796,364 @@ class KappaApp {
     }
   }
 
+  // ==================== AI INSIGHTS ====================
+  private renderAIInsights(): void {
+    const container = document.getElementById('aiInsightsList');
+    if (!container) return;
+
+    const insights: { type: 'positive' | 'negative' | 'warning' | 'info'; text: string; meta: string }[] = [];
+    const currentWeek = this.getCurrentWeek();
+
+    // Calculate various metrics
+    let totalIst = 0, totalSoll = 0;
+    let prevWeekIst = 0, prevWeekSoll = 0;
+    let currentWeekIst = 0, currentWeekSoll = 0;
+    let stoppageCount = 0;
+    const customerPerformance: { [name: string]: { ist: number; soll: number } } = {};
+    const testPerformance: { [name: string]: { ist: number; soll: number } } = {};
+
+    this.state.projects.forEach(project => {
+      const customer = this.state.customers.find(c => c.id === project.customer_id);
+      const test = this.state.tests.find(t => t.id === project.test_id);
+      const customerName = customer?.name || 'Unknown';
+      const testName = test?.name || 'Unknown';
+
+      if (!customerPerformance[customerName]) customerPerformance[customerName] = { ist: 0, soll: 0 };
+      if (!testPerformance[testName]) testPerformance[testName] = { ist: 0, soll: 0 };
+
+      for (let w = this.analyticsWeekFrom; w <= this.analyticsWeekTo; w++) {
+        const weekKey = `KW${w.toString().padStart(2, '0')}`;
+        const data = this.getWeekData(project, weekKey);
+        totalIst += data.ist;
+        totalSoll += data.soll;
+        customerPerformance[customerName].ist += data.ist;
+        customerPerformance[customerName].soll += data.soll;
+        testPerformance[testName].ist += data.ist;
+        testPerformance[testName].soll += data.soll;
+
+        if (w === currentWeek) {
+          currentWeekIst += data.ist;
+          currentWeekSoll += data.soll;
+        }
+        if (w === currentWeek - 1) {
+          prevWeekIst += data.ist;
+          prevWeekSoll += data.soll;
+        }
+        if (data.stoppage) stoppageCount++;
+      }
+    });
+
+    // Overall realization
+    const overallRate = totalSoll > 0 ? Math.round((totalIst / totalSoll) * 100) : 0;
+    if (overallRate >= 90) {
+      insights.push({ type: 'positive', text: `Świetna realizacja! Ogólny wskaźnik wynosi ${overallRate}%.`, meta: 'Bazując na danych IST/SOLL' });
+    } else if (overallRate >= 70) {
+      insights.push({ type: 'info', text: `Realizacja na poziomie ${overallRate}%. Jeszcze ${totalSoll - totalIst} testów do wykonania.`, meta: 'Możliwe do nadrobienia' });
+    } else if (overallRate >= 50) {
+      insights.push({ type: 'warning', text: `Uwaga! Realizacja tylko ${overallRate}%. Rozważ zwiększenie zasobów.`, meta: 'Wymaga uwagi' });
+    } else {
+      insights.push({ type: 'negative', text: `Krytycznie niska realizacja: ${overallRate}%. Pilne działania wymagane!`, meta: 'Priorytet wysoki' });
+    }
+
+    // Week over week comparison
+    const currentWeekRate = currentWeekSoll > 0 ? Math.round((currentWeekIst / currentWeekSoll) * 100) : 0;
+    const prevWeekRate = prevWeekSoll > 0 ? Math.round((prevWeekIst / prevWeekSoll) * 100) : 0;
+    const weekChange = currentWeekRate - prevWeekRate;
+
+    if (weekChange > 10) {
+      insights.push({ type: 'positive', text: `Wzrost o ${weekChange}pp vs poprzedni tydzień!`, meta: `KW${currentWeek}: ${currentWeekRate}% vs KW${currentWeek-1}: ${prevWeekRate}%` });
+    } else if (weekChange < -10) {
+      insights.push({ type: 'negative', text: `Spadek o ${Math.abs(weekChange)}pp vs poprzedni tydzień.`, meta: `KW${currentWeek}: ${currentWeekRate}% vs KW${currentWeek-1}: ${prevWeekRate}%` });
+    }
+
+    // Best/worst customer
+    const customerRates = Object.entries(customerPerformance)
+      .filter(([_, d]) => d.soll > 0)
+      .map(([name, d]) => ({ name, rate: Math.round((d.ist / d.soll) * 100) }))
+      .sort((a, b) => b.rate - a.rate);
+
+    if (customerRates.length > 0) {
+      const best = customerRates[0];
+      const worst = customerRates[customerRates.length - 1];
+      if (best.rate >= 90) {
+        insights.push({ type: 'positive', text: `Najlepszy klient: ${best.name} (${best.rate}%)`, meta: 'Wzorowa współpraca' });
+      }
+      if (worst.rate < 50 && customerRates.length > 1) {
+        insights.push({ type: 'warning', text: `Wymaga uwagi: ${worst.name} (tylko ${worst.rate}%)`, meta: 'Rozważ kontakt z klientem' });
+      }
+    }
+
+    // Best/worst test type
+    const testRates = Object.entries(testPerformance)
+      .filter(([_, d]) => d.soll > 0)
+      .map(([name, d]) => ({ name, rate: Math.round((d.ist / d.soll) * 100) }))
+      .sort((a, b) => b.rate - a.rate);
+
+    if (testRates.length > 1) {
+      const best = testRates[0];
+      const worst = testRates[testRates.length - 1];
+      if (best.rate - worst.rate > 30) {
+        insights.push({ type: 'info', text: `Duża różnica między testami: ${best.name} (${best.rate}%) vs ${worst.name} (${worst.rate}%)`, meta: 'Rozważ przesunięcie zasobów' });
+      }
+    }
+
+    // Stoppage alert
+    if (stoppageCount > 0) {
+      insights.push({ type: 'negative', text: `Wykryto ${stoppageCount} tygodni ze STOPPAGE.`, meta: 'Wpływa na realizację celów' });
+    }
+
+    // Backlog insight
+    const backlog = totalSoll - totalIst;
+    if (backlog > 0) {
+      const weeksLeft = 52 - currentWeek;
+      const avgPerWeek = weeksLeft > 0 ? Math.ceil(backlog / weeksLeft) : backlog;
+      insights.push({ type: 'info', text: `Zaległości: ${backlog} testów. Wymagane ~${avgPerWeek}/tydzień do końca roku.`, meta: `${weeksLeft} tygodni pozostało` });
+    }
+
+    // Render insights
+    const iconMap = {
+      positive: '↑',
+      negative: '↓',
+      warning: '!',
+      info: 'i'
+    };
+
+    container.innerHTML = insights.slice(0, 5).map(insight => `
+      <div class="ai-insight-item ${insight.type}">
+        <div class="ai-insight-icon">${iconMap[insight.type]}</div>
+        <div class="ai-insight-content">
+          <p class="ai-insight-text">${insight.text}</p>
+          <div class="ai-insight-meta">${insight.meta}</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ==================== VELOCITY CHART ====================
+  private renderVelocityChart(): void {
+    const canvas = document.getElementById('velocityChart') as HTMLCanvasElement;
+    if (!canvas) return;
+
+    if (this.velocityChart) this.velocityChart.destroy();
+
+    const weeks: string[] = [];
+    const velocityData: number[] = [];
+    const avgLine: number[] = [];
+
+    // Calculate velocity per week
+    for (let w = this.analyticsWeekFrom; w <= this.analyticsWeekTo; w++) {
+      const weekKey = `KW${w.toString().padStart(2, '0')}`;
+      weeks.push(weekKey);
+
+      let weekIst = 0;
+      this.state.projects.forEach(p => {
+        const data = this.getWeekData(p, weekKey);
+        weekIst += data.ist;
+      });
+      velocityData.push(weekIst);
+    }
+
+    // Calculate moving average
+    const windowSize = 4;
+    for (let i = 0; i < velocityData.length; i++) {
+      const start = Math.max(0, i - windowSize + 1);
+      const slice = velocityData.slice(start, i + 1);
+      avgLine.push(Math.round(slice.reduce((a, b) => a + b, 0) / slice.length));
+    }
+
+    const isDark = this.state.settings.darkMode;
+
+    this.velocityChart = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: weeks,
+        datasets: [
+          {
+            type: 'bar',
+            label: 'Wykonane (IST)',
+            data: velocityData,
+            backgroundColor: 'rgba(0, 151, 172, 0.6)',
+            borderColor: '#0097AC',
+            borderWidth: 1,
+            borderRadius: 4,
+          },
+          {
+            type: 'line',
+            label: 'Średnia krocząca',
+            data: avgLine,
+            borderColor: '#10B981',
+            borderWidth: 2,
+            pointRadius: 0,
+            tension: 0.4,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { color: isDark ? '#FFF' : '#333', font: { size: 10 }, boxWidth: 12, padding: 8 },
+          },
+        },
+        scales: {
+          x: { ticks: { color: isDark ? '#FFF' : '#333', font: { size: 9 } }, grid: { display: false } },
+          y: { ticks: { color: isDark ? '#FFF' : '#333' }, beginAtZero: true, grid: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' } },
+        },
+      },
+    });
+  }
+
+  // ==================== RADAR CHART ====================
+  private renderRadarChart(): void {
+    const canvas = document.getElementById('radarChart') as HTMLCanvasElement;
+    if (!canvas) return;
+
+    if (this.radarChart) this.radarChart.destroy();
+
+    const testData: { name: string; rate: number }[] = [];
+
+    this.state.tests.forEach(test => {
+      let ist = 0, soll = 0;
+      this.state.projects.filter(p => p.test_id === test.id).forEach(p => {
+        for (let w = this.analyticsWeekFrom; w <= this.analyticsWeekTo; w++) {
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          const data = this.getWeekData(p, weekKey);
+          ist += data.ist;
+          soll += data.soll;
+        }
+      });
+      const rate = soll > 0 ? Math.round((ist / soll) * 100) : 0;
+      testData.push({ name: test.name, rate: Math.min(rate, 100) });
+    });
+
+    const isDark = this.state.settings.darkMode;
+
+    this.radarChart = new Chart(canvas, {
+      type: 'radar',
+      data: {
+        labels: testData.map(d => d.name),
+        datasets: [{
+          label: 'Realizacja %',
+          data: testData.map(d => d.rate),
+          backgroundColor: 'rgba(0, 151, 172, 0.2)',
+          borderColor: '#0097AC',
+          borderWidth: 2,
+          pointBackgroundColor: '#0097AC',
+          pointRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { color: isDark ? '#FFF' : '#333', font: { size: 10 }, boxWidth: 12, padding: 8 },
+          },
+        },
+        scales: {
+          r: {
+            beginAtZero: true,
+            max: 100,
+            ticks: { color: isDark ? '#FFF' : '#333', backdropColor: 'transparent', font: { size: 9 } },
+            grid: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' },
+            pointLabels: { color: isDark ? '#FFF' : '#333', font: { size: 9 } },
+          },
+        },
+      },
+    });
+  }
+
   private renderCharts(): void {
     this.renderWeeklyChart();
     this.renderTestChart();
+    this.renderCustomerBarChart();
+  }
+
+  private customerBarChart: any = null;
+
+  private renderCustomerBarChart(): void {
+    const canvas = document.getElementById('customerBarChart') as HTMLCanvasElement;
+    if (!canvas) return;
+
+    if (this.customerBarChart) this.customerBarChart.destroy();
+
+    // Aggregate data per customer
+    const customerData: { [name: string]: { ist: number; soll: number } } = {};
+    
+    this.state.projects.forEach(project => {
+      const customer = this.state.customers.find(c => c.id === project.customer_id);
+      const name = customer?.name || 'Unknown';
+      if (!customerData[name]) customerData[name] = { ist: 0, soll: 0 };
+      
+      for (let w = this.analyticsWeekFrom; w <= this.analyticsWeekTo; w++) {
+        const weekKey = `KW${w.toString().padStart(2, '0')}`;
+        const data = this.getWeekData(project, weekKey);
+        customerData[name].ist += data.ist;
+        customerData[name].soll += data.soll;
+      }
+    });
+
+    const labels = Object.keys(customerData);
+    const istValues = labels.map(l => customerData[l].ist);
+    const sollValues = labels.map(l => customerData[l].soll);
+    const isDark = this.state.settings.darkMode;
+
+    this.customerBarChart = new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'IST',
+            data: istValues,
+            backgroundColor: '#10B981',
+            borderRadius: 4,
+            barPercentage: 0.7,
+          },
+          {
+            label: 'SOLL',
+            data: sollValues,
+            backgroundColor: '#0097AC',
+            borderRadius: 4,
+            barPercentage: 0.7,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'y',
+        plugins: { 
+          legend: { 
+            position: 'top',
+            labels: { 
+              color: isDark ? '#FFF' : '#333',
+              font: { size: 11 },
+              boxWidth: 12,
+              padding: 8
+            } 
+          } 
+        },
+        scales: {
+          x: { 
+            ticks: { color: isDark ? '#FFF' : '#333' },
+            beginAtZero: true,
+            grid: { color: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)' }
+          },
+          y: { 
+            ticks: { 
+              color: isDark ? '#FFF' : '#333',
+              font: { size: 11 }
+            },
+            grid: { display: false }
+          },
+        },
+      },
+    });
   }
 
   private renderWeeklyChart(): void {
@@ -4226,6 +4806,82 @@ class KappaApp {
     document.getElementById('modal')?.classList.remove('active');
   }
 
+  private async showWeeklyReport(): Promise<void> {
+    try {
+      const currentWeek = this.getCurrentWeek();
+      const currentYear = new Date().getFullYear();
+      const weekKey = `${currentYear}-KW${String(currentWeek).padStart(2, '0')}`;
+      
+      // Get assignments for current week
+      const assignments = await db.getScheduleAssignments();
+      const weekAssignments = assignments.filter((a: ScheduleAssignment) => 
+        a.week === weekKey
+      );
+      
+      // Calculate stats
+      const employees = [...new Set(weekAssignments.map(a => a.employeeId))];
+      const projects = [...new Set(weekAssignments.map(a => a.projectId))];
+      const shifts = weekAssignments.reduce((acc, a) => {
+        acc[String(a.shift)] = (acc[String(a.shift)] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+      
+      const totalHours = weekAssignments.reduce((sum, a) => {
+        // Shift is 1, 2, or 3, each is 8 hours
+        return sum + 8;
+      }, 0);
+      
+      const content = `
+        <h3 style="margin-bottom: 20px;">📊 Weekly Report - KW ${currentWeek}/${currentYear}</h3>
+        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-bottom: 20px;">
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: var(--color-primary);">${weekAssignments.length}</div>
+            <div style="color: var(--color-text-secondary);">Total Assignments</div>
+          </div>
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: #10b981;">${employees.length}</div>
+            <div style="color: var(--color-text-secondary);">Active Employees</div>
+          </div>
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: #3b82f6;">${projects.length}</div>
+            <div style="color: var(--color-text-secondary);">Active Projects</div>
+          </div>
+          <div style="background: var(--color-bg-secondary); padding: 16px; border-radius: 8px; text-align: center;">
+            <div style="font-size: 2rem; font-weight: 700; color: #f59e0b;">${totalHours}h</div>
+            <div style="color: var(--color-text-secondary);">Total Hours</div>
+          </div>
+        </div>
+        <h4 style="margin-bottom: 12px;">Shift Distribution</h4>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          ${Object.entries(shifts).map(([shift, count]) => `
+            <span style="background: var(--color-bg-tertiary); padding: 6px 12px; border-radius: 4px;">
+              ${shift}: <strong>${count}</strong>
+            </span>
+          `).join('')}
+        </div>
+      `;
+      
+      const modal = document.getElementById('modal')!;
+      const modalContent = modal.querySelector('.modal-content')!;
+      modalContent.innerHTML = `
+        <div class="modal-header">
+          <h3>📊 Weekly Report</h3>
+          <button class="modal-close" onclick="document.getElementById('modal').classList.remove('active')">×</button>
+        </div>
+        <div class="modal-body">
+          ${content}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="document.getElementById('modal').classList.remove('active')">Close</button>
+        </div>
+      `;
+      modal.classList.add('active');
+    } catch (error) {
+      console.error('Error generating weekly report:', error);
+      this.showToast('Error generating weekly report', 'error');
+    }
+  }
+
   private async exportData(): Promise<void> {
     try {
       const workbook = new ExcelJS.Workbook();
@@ -4848,6 +5504,1140 @@ class KappaApp {
       console.error('Export error:', error);
       this.showToast(i18n.t('messages.errorOccurred'), 'error');
     }
+  }
+
+  // ==================== Analytics Export Functions ====================
+  
+  private showExportProgress(show: boolean, progress: number = 0, message: string = ''): void {
+    let overlay = document.getElementById('exportProgressOverlay');
+    
+    if (!overlay && show) {
+      overlay = document.createElement('div');
+      overlay.id = 'exportProgressOverlay';
+      overlay.className = 'export-progress-overlay';
+      overlay.innerHTML = `
+        <div class="export-progress-modal">
+          <div class="export-progress-icon">
+            <svg class="spinner" viewBox="0 0 50 50">
+              <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-dasharray="89, 200" stroke-dashoffset="-35"></circle>
+            </svg>
+          </div>
+          <h3 class="export-progress-title">Generowanie raportu...</h3>
+          <p class="export-progress-message" id="exportProgressMessage">${message}</p>
+          <div class="export-progress-bar">
+            <div class="export-progress-bar-fill" id="exportProgressBarFill" style="width: ${progress}%"></div>
+          </div>
+          <span class="export-progress-percent" id="exportProgressPercent">${progress}%</span>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      setTimeout(() => overlay?.classList.add('show'), 10);
+    } else if (overlay) {
+      if (show) {
+        overlay.classList.add('show');
+        const msgEl = document.getElementById('exportProgressMessage');
+        const barFill = document.getElementById('exportProgressBarFill');
+        const percentEl = document.getElementById('exportProgressPercent');
+        if (msgEl) msgEl.textContent = message;
+        if (barFill) barFill.style.width = `${progress}%`;
+        if (percentEl) percentEl.textContent = `${progress}%`;
+      } else {
+        overlay.classList.remove('show');
+        setTimeout(() => overlay?.remove(), 300);
+      }
+    }
+  }
+
+  private getFilterInfo(): { year: number; weekFrom: number; weekTo: number; rangeText: string } {
+    const fromSelect = document.getElementById('analyticsWeekFrom') as HTMLSelectElement;
+    const toSelect = document.getElementById('analyticsWeekTo') as HTMLSelectElement;
+    
+    const weekFrom = fromSelect ? parseInt(fromSelect.value) || 1 : 1;
+    const weekTo = toSelect ? parseInt(toSelect.value) || 52 : 52;
+    const year = this.state.selectedYear;
+    
+    const rangeText = weekFrom === 1 && weekTo === 52 
+      ? `Cały rok ${year}` 
+      : `KW${weekFrom.toString().padStart(2, '0')} - KW${weekTo.toString().padStart(2, '0')} ${year}`;
+    
+    return { year, weekFrom, weekTo, rangeText };
+  }
+
+  private async exportAnalyticsToPdf(): Promise<void> {
+    try {
+      const t = (key: string) => i18n.t(key);
+      const lang = i18n.getLanguage();
+      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
+      
+      this.showExportProgress(true, 5, t('export.preparingReport'));
+      
+      const filterInfo = this.getFilterInfo();
+      const analyticsView = document.getElementById('analyticsView');
+      if (!analyticsView) throw new Error('Analytics view not found');
+      
+      this.showExportProgress(true, 10, t('export.creatingHeader'));
+      
+      // Get analytics data
+      const analyticsData = this.calculateAnalyticsData();
+      const projects = this.getFilteredProjects();
+      
+      const dateStr = new Date().toLocaleDateString(dateLocale);
+      const timeStr = new Date().toLocaleTimeString(dateLocale);
+      
+      // Helper to create a page section - A4 ratio: 1000px width = 1414px height
+      const pageHeight = 1414;
+      const headerHeight = 110; // black + teal headers
+      const footerHeight = 40;
+      
+      const createPageSection = (content: string, includeHeader: boolean = false): HTMLDivElement => {
+        const section = document.createElement('div');
+        section.style.cssText = `width: 1000px; height: ${pageHeight}px; background: #f8fafc; padding: 0; position: relative; overflow: hidden;`;
+        
+        if (includeHeader) {
+          section.innerHTML = `
+            <div style="background: #000; color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
+                <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.85;">Produkt Audit 360</p>
+              </div>
+              <div style="text-align: right;">
+                <p style="margin: 0; font-size: 13px; opacity: 0.9;">${t('export.analyticsReport')}</p>
+                <p style="margin: 3px 0 0 0; font-size: 12px; opacity: 0.7;">${filterInfo.rangeText}</p>
+              </div>
+            </div>
+            <div style="background: #0097AC; color: #fff; padding: 10px 28px; display: flex; justify-content: space-between; font-size: 11px;">
+              <span><strong>${t('export.generatedAt')}:</strong> ${dateStr} ${timeStr}</span>
+              <span><strong>${t('export.user')}:</strong> ${this.state.settings.userName || 'System'}</span>
+            </div>
+          `;
+        }
+        
+        const contentHeight = pageHeight - (includeHeader ? headerHeight : 0) - footerHeight;
+        section.innerHTML += `<div style="padding: 24px 28px; background: #f8fafc; min-height: ${contentHeight}px;">${content}</div>`;
+        
+        // Add footer - positioned at bottom
+        section.innerHTML += `
+          <div style="background: #1e293b; color: #fff; padding: 12px 28px; text-align: center; font-size: 10px; position: absolute; bottom: 0; left: 0; right: 0;">
+            <p style="margin: 0; opacity: 0.8;">© ${new Date().getFullYear()} ${t('export.copyright')}</p>
+          </div>
+        `;
+        
+        return section;
+      };
+      
+      this.showExportProgress(true, 20, t('export.copyingContent'));
+      
+      // Calculate test type statistics
+      const testTypeStats = new Map<string, { name: string; count: number; ist: number; soll: number }>();
+      const filterInfo2 = this.getFilterInfo();
+      projects.forEach(project => {
+        const test = this.state.tests.find(t => t.id === project.test_id);
+        const testName = test?.name || 'Unknown';
+        
+        if (!testTypeStats.has(project.test_id)) {
+          testTypeStats.set(project.test_id, { name: testName, count: 0, ist: 0, soll: 0 });
+        }
+        
+        const ts = testTypeStats.get(project.test_id)!;
+        ts.count++;
+        
+        for (let week = filterInfo2.weekFrom; week <= filterInfo2.weekTo; week++) {
+          const wd = project.weeks?.[week.toString()];
+          if (wd) {
+            ts.ist += wd.ist || 0;
+            ts.soll += wd.soll || 0;
+          }
+        }
+      });
+      
+      const testStats = Array.from(testTypeStats.values())
+        .map(ts => ({ ...ts, percent: ts.soll > 0 ? (ts.ist / ts.soll * 100) : 0 }))
+        .sort((a, b) => b.count - a.count);
+      
+      // Calculate status distribution
+      let completedCount = 0, inProgressCount = 0, delayedCount = 0, notStartedCount = 0;
+      projects.forEach(project => {
+        let istTotal = 0, sollTotal = 0;
+        for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+          const wd = project.weeks?.[w.toString()];
+          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+        }
+        const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+        if (sollTotal === 0) notStartedCount++;
+        else if (percent >= 100) completedCount++;
+        else if (percent >= 50) inProgressCount++;
+        else delayedCount++;
+      });
+      
+      // Calculate weekly data
+      const weeklyData: { week: number; ist: number; soll: number }[] = [];
+      for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+        let weekIst = 0, weekSoll = 0;
+        projects.forEach(project => {
+          const wd = project.weeks?.[w.toString()];
+          if (wd) { weekIst += wd.ist || 0; weekSoll += wd.soll || 0; }
+        });
+        weeklyData.push({ week: w, ist: weekIst, soll: weekSoll });
+      }
+      
+      // PAGE 1: KPI + Customer Statistics + Test Type Stats + Status + Projects
+      const kpiContent = `
+        <div style="margin-bottom: 12px;">
+          <h2 style="margin: 0 0 8px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📊 ${t('export.kpiTitle')}</h2>
+          <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px;">
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #0097AC;">${analyticsData.totalProjects}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.projects')}</div>
+            </div>
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #10b981;">${analyticsData.totalIst.toLocaleString(dateLocale)}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.testsIst')}</div>
+            </div>
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #6366f1;">${analyticsData.totalSoll.toLocaleString(dateLocale)}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.testsSoll')}</div>
+            </div>
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: ${analyticsData.totalPercent >= 100 ? '#10b981' : analyticsData.totalPercent >= 50 ? '#f59e0b' : '#ef4444'};">${analyticsData.totalPercent.toFixed(1)}%</div>
+              <div style="font-size: 9px; color: #64748b;">${t('export.realization')}</div>
+            </div>
+            <div style="background: #dcfce7; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #166534;">${completedCount}</div>
+              <div style="font-size: 9px; color: #166534;">${t('export.completedProjects')}</div>
+            </div>
+            <div style="background: #fef3c7; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #92400e;">${inProgressCount}</div>
+              <div style="font-size: 9px; color: #92400e;">${t('export.inProgressProjects')}</div>
+            </div>
+            <div style="background: #fee2e2; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #991b1b;">${delayedCount}</div>
+              <div style="font-size: 9px; color: #991b1b;">${t('export.delayedProjects')}</div>
+            </div>
+            <div style="background: #f1f5f9; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <div style="font-size: 22px; font-weight: 700; color: #64748b;">${notStartedCount}</div>
+              <div style="font-size: 9px; color: #64748b;">${t('analytics.pending')}</div>
+            </div>
+          </div>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+          <div>
+            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">👥 ${t('export.customerStats')}</h2>
+            <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <thead>
+                <tr style="background: #1e293b; color: #fff;">
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.customer')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">#</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${analyticsData.customerStats.slice(0, 10).map((cs, idx) => `
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">${cs.name}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.count}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.ist}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.soll}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
+                        background: ${cs.percent >= 100 ? '#dcfce7' : cs.percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                        color: ${cs.percent >= 100 ? '#166534' : cs.percent >= 50 ? '#92400e' : '#991b1b'};">
+                        ${cs.percent.toFixed(0)}%
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          
+          <div>
+            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🔬 ${t('export.testTypeStats')}</h2>
+            <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <thead>
+                <tr style="background: #1e293b; color: #fff;">
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.test')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">#</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${testStats.slice(0, 10).map((ts, idx) => `
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">${ts.name.substring(0, 18)}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.count}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.ist}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.soll}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
+                        background: ${ts.percent >= 100 ? '#dcfce7' : ts.percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                        color: ${ts.percent >= 100 ? '#166534' : ts.percent >= 50 ? '#92400e' : '#991b1b'};">
+                        ${ts.percent.toFixed(0)}%
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+          
+          <div>
+            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📅 ${t('export.weeklyData')}</h2>
+            <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <thead>
+                <tr style="background: #1e293b; color: #fff;">
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.week')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${weeklyData.slice(0, 10).map((wd, idx) => {
+                  const pct = wd.soll > 0 ? (wd.ist / wd.soll * 100) : 0;
+                  return `
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">KW ${wd.week}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${wd.ist}</td>
+                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${wd.soll}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
+                        background: ${pct >= 100 ? '#dcfce7' : pct >= 50 ? '#fef3c7' : '#fee2e2'};
+                        color: ${pct >= 100 ? '#166534' : pct >= 50 ? '#92400e' : '#991b1b'};">
+                        ${pct.toFixed(0)}%
+                      </span>
+                    </td>
+                  </tr>
+                `}).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        <div>
+          <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📋 ${t('export.projectList')}</h2>
+          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 8px;">
+            <thead>
+              <tr style="background: #1e293b; color: #fff;">
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.type')}</th>
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.part')}</th>
+                <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.test')}</th>
+                <th style="padding: 5px 6px; text-align: center; font-weight: 600;">IST</th>
+                <th style="padding: 5px 6px; text-align: center; font-weight: 600;">SOLL</th>
+                <th style="padding: 5px 6px; text-align: center; font-weight: 600;">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${projects.slice(0, 18).map((project, idx) => {
+                const customer = this.state.customers.find(c => c.id === project.customer_id);
+                const type = this.state.types.find(t => t.id === project.type_id);
+                const part = this.state.parts.find(p => p.id === project.part_id);
+                const test = this.state.tests.find(t => t.id === project.test_id);
+                
+                let istTotal = 0, sollTotal = 0;
+                for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
+                  const wd = project.weeks?.[w.toString()];
+                  if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+                }
+                const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+                
+                return `
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+                    <td style="padding: 4px 6px;">${customer?.name || '-'}</td>
+                    <td style="padding: 4px 6px;">${type?.name || '-'}</td>
+                    <td style="padding: 4px 6px;">${(part?.name || '-').substring(0, 18)}</td>
+                    <td style="padding: 4px 6px;">${(test?.name || '-').substring(0, 18)}</td>
+                    <td style="padding: 4px 6px; text-align: center;">${istTotal}</td>
+                    <td style="padding: 4px 6px; text-align: center;">${sollTotal}</td>
+                    <td style="padding: 4px 6px; text-align: center;">
+                      <span style="padding: 1px 4px; border-radius: 6px; font-weight: 600;
+                        background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                        color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
+                        ${percent.toFixed(0)}%
+                      </span>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+          ${projects.length > 18 ? `<p style="margin: 6px 0 0 0; font-size: 9px; color: #64748b; text-align: center;">${t('export.moreProjectsOnNextPages')} (+${projects.length - 18})</p>` : ''}
+        </div>
+      `;
+      
+      // Capture chart images before creating pages
+      this.showExportProgress(true, 30, t('export.addingCharts'));
+      const chartNames: { [key: string]: string } = {
+        'weeklyChart': t('export.chartWeeklyIstSoll'),
+        'testChart': t('export.chartTestDistribution'),
+        'customerBarChart': t('export.chartCustomerComparison'),
+        'velocityChart': t('export.chartVelocity'),
+        'radarChart': t('export.chartRadar'),
+        'trendChart': t('export.chartTrend')
+      };
+      
+      const chartIds = ['weeklyChart', 'testChart', 'customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
+      const chartImages: { [key: string]: string } = {};
+      for (const chartId of chartIds) {
+        const chartCanvas = document.getElementById(chartId) as HTMLCanvasElement;
+        if (chartCanvas) {
+          try {
+            chartImages[chartId] = chartCanvas.toDataURL('image/png');
+          } catch (e) {
+            console.error(`Error capturing chart ${chartId}:`, e);
+          }
+        }
+      }
+      
+      // Add 2 charts to page 1 content
+      let page1ChartsHtml = `
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+      `;
+      if (chartImages['weeklyChart']) {
+        page1ChartsHtml += `
+          <div style="background: #fff; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+            <h4 style="margin: 0 0 4px 0; font-size: 10px; color: #1e293b;">📊 ${chartNames['weeklyChart']}</h4>
+            <img src="${chartImages['weeklyChart']}" style="width: 100%; height: auto; max-height: 100px; object-fit: contain;" />
+          </div>
+        `;
+      }
+      if (chartImages['testChart']) {
+        page1ChartsHtml += `
+          <div style="background: #fff; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+            <h4 style="margin: 0 0 4px 0; font-size: 10px; color: #1e293b;">📊 ${chartNames['testChart']}</h4>
+            <img src="${chartImages['testChart']}" style="width: 100%; height: auto; max-height: 100px; object-fit: contain;" />
+          </div>
+        `;
+      }
+      page1ChartsHtml += `</div>`;
+      
+      const fullPage1Content = kpiContent + page1ChartsHtml;
+      const page1 = createPageSection(fullPage1Content, true);
+      
+      this.showExportProgress(true, 35, t('export.addingCharts'));
+      
+      // PAGE 2: Remaining 4 Charts + Projects combined
+      // PAGE 2: Remaining 4 Charts + Projects combined
+      let chartsHtml = `<h2 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📈 ${t('export.charts')}</h2>`;
+      chartsHtml += `<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px;">`;
+      
+      // Show remaining 4 charts on page 2
+      const page2ChartIds = ['customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
+      for (const chartId of page2ChartIds) {
+        if (chartImages[chartId]) {
+          chartsHtml += `
+            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
+              <h4 style="margin: 0 0 6px 0; font-size: 10px; color: #1e293b;">${chartNames[chartId] || chartId}</h4>
+              <img src="${chartImages[chartId]}" style="width: 100%; height: auto; max-height: 140px; object-fit: contain;" />
+            </div>
+          `;
+        }
+      }
+      chartsHtml += `</div>`;
+      
+      // Add projects list below charts on the same page
+      chartsHtml += `
+        <h2 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📋 ${t('export.projectList')} (${Math.min(projects.length, 20)} / ${projects.length})</h2>
+        <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 8px;">
+          <thead>
+            <tr style="background: #1e293b; color: #fff;">
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.type')}</th>
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.part')}</th>
+              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.test')}</th>
+              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">IST</th>
+              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">SOLL</th>
+              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">%</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      
+      projects.slice(0, 20).forEach((project, idx) => {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const type = this.state.types.find(t => t.id === project.type_id);
+        const part = this.state.parts.find(p => p.id === project.part_id);
+        const test = this.state.tests.find(t => t.id === project.test_id);
+        
+        let istTotal = 0, sollTotal = 0;
+        for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
+          const wd = project.weeks?.[w.toString()];
+          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+        }
+        const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+        
+        chartsHtml += `
+          <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+            <td style="padding: 4px 6px;">${customer?.name || '-'}</td>
+            <td style="padding: 4px 6px;">${type?.name || '-'}</td>
+            <td style="padding: 4px 6px;">${(part?.name || '-').substring(0, 20)}</td>
+            <td style="padding: 4px 6px;">${(test?.name || '-').substring(0, 20)}</td>
+            <td style="padding: 4px 6px; text-align: center;">${istTotal}</td>
+            <td style="padding: 4px 6px; text-align: center;">${sollTotal}</td>
+            <td style="padding: 4px 6px; text-align: center;">
+              <span style="padding: 1px 4px; border-radius: 6px; font-weight: 600;
+                background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
+                ${percent.toFixed(0)}%
+              </span>
+            </td>
+          </tr>
+        `;
+      });
+      
+      chartsHtml += `</tbody></table>`;
+      if (projects.length > 20) {
+        chartsHtml += `<p style="margin: 6px 0 0 0; font-size: 9px; color: #64748b; text-align: center;">${t('export.moreProjectsOnNextPages')} (+${projects.length - 20})</p>`;
+      }
+      
+      const page2 = createPageSection(chartsHtml, true);
+      
+      this.showExportProgress(true, 55, t('export.addingProjects'));
+      
+      // PAGE 3+: Remaining Projects (if more than 20)
+      const projectsOnPage2 = 20;
+      const remainingProjects = projects.slice(projectsOnPage2);
+      const projectsPerPage = 35;
+      const totalProjectPages = Math.ceil(remainingProjects.length / projectsPerPage);
+      const projectPages: HTMLDivElement[] = [];
+      
+      for (let pageNum = 0; pageNum < totalProjectPages; pageNum++) {
+        const startIdx = pageNum * projectsPerPage;
+        const endIdx = Math.min(startIdx + projectsPerPage, remainingProjects.length);
+        const pageProjects = remainingProjects.slice(startIdx, endIdx);
+        const globalStartIdx = projectsOnPage2 + startIdx;
+        const globalEndIdx = projectsOnPage2 + endIdx;
+        
+        let projectsHtml = `
+          <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 5px;">
+            📋 ${t('export.projectList')} (${globalStartIdx + 1}-${globalEndIdx} / ${projects.length})
+          </h2>
+          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.06); font-size: 9px;">
+            <thead>
+              <tr style="background: #1e293b; color: #fff;">
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.type')}</th>
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.part')}</th>
+                <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.test')}</th>
+                <th style="padding: 6px 8px; text-align: center; font-weight: 600;">IST</th>
+                <th style="padding: 6px 8px; text-align: center; font-weight: 600;">SOLL</th>
+                <th style="padding: 6px 8px; text-align: center; font-weight: 600;">%</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+        
+        pageProjects.forEach((project, idx) => {
+          const customer = this.state.customers.find(c => c.id === project.customer_id);
+          const type = this.state.types.find(t => t.id === project.type_id);
+          const part = this.state.parts.find(p => p.id === project.part_id);
+          const test = this.state.tests.find(t => t.id === project.test_id);
+          
+          let istTotal = 0, sollTotal = 0;
+          for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
+            const wd = project.weeks?.[w.toString()];
+            if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+          }
+          const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+          
+          projectsHtml += `
+            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
+              <td style="padding: 5px 8px;">${customer?.name || '-'}</td>
+              <td style="padding: 5px 8px;">${type?.name || '-'}</td>
+              <td style="padding: 5px 8px;">${(part?.name || '-').substring(0, 22)}</td>
+              <td style="padding: 5px 8px;">${(test?.name || '-').substring(0, 22)}</td>
+              <td style="padding: 5px 8px; text-align: center;">${istTotal}</td>
+              <td style="padding: 5px 8px; text-align: center;">${sollTotal}</td>
+              <td style="padding: 5px 8px; text-align: center;">
+                <span style="padding: 1px 5px; border-radius: 6px; font-weight: 600;
+                  background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
+                  color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
+                  ${percent.toFixed(0)}%
+                </span>
+              </td>
+            </tr>
+          `;
+        });
+        
+        projectsHtml += `</tbody></table>`;
+        projectPages.push(createPageSection(projectsHtml, true));
+      }
+      
+      this.showExportProgress(true, 70, t('export.convertingImage'));
+      
+      // Create temporary container
+      const tempContainer = document.createElement('div');
+      tempContainer.style.cssText = 'position: fixed; left: -9999px; top: 0; z-index: -9999;';
+      document.body.appendChild(tempContainer);
+      
+      // Generate PDF
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfPageWidth = 210;
+      const pdfPageHeight = 297;
+      
+      const allPages = [page1, page2, ...projectPages];
+      
+      for (let i = 0; i < allPages.length; i++) {
+        this.showExportProgress(true, 70 + Math.round((i / allPages.length) * 25), t('export.creatingPdf'));
+        
+        tempContainer.innerHTML = '';
+        tempContainer.appendChild(allPages[i]);
+        
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const canvas = await html2canvas(allPages[i], {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff',
+          width: 1000
+        });
+        
+        const imgWidth = pdfPageWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        
+        if (i > 0) pdf.addPage();
+        
+        // If content is taller than page, scale it down to fit
+        if (imgHeight > pdfPageHeight) {
+          const scale = pdfPageHeight / imgHeight;
+          const scaledWidth = imgWidth * scale;
+          const scaledHeight = imgHeight * scale;
+          const xOffset = (pdfPageWidth - scaledWidth) / 2;
+          pdf.addImage(canvas.toDataURL('image/png'), 'PNG', xOffset, 0, scaledWidth, scaledHeight);
+        } else {
+          pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, imgWidth, imgHeight);
+        }
+      }
+      
+      // Add page numbers
+      const totalPages = pdf.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setTextColor(150, 150, 150);
+        pdf.text(`${i} / ${totalPages}`, pdfPageWidth - 15, pdfPageHeight - 5);
+      }
+      
+      // Cleanup
+      tempContainer.remove();
+      
+      this.showExportProgress(true, 95, t('export.savingFile'));
+      
+      // Save PDF
+      const filename = `Kappaplannung_Analytics_${filterInfo.year}_KW${filterInfo.weekFrom.toString().padStart(2, '0')}-${filterInfo.weekTo.toString().padStart(2, '0')}_${new Date().toISOString().split('T')[0]}.pdf`;
+      pdf.save(filename);
+      
+      this.showExportProgress(false);
+      this.showToast(t('export.pdfGenerated'), 'success');
+      
+    } catch (error) {
+      console.error('PDF export error:', error);
+      this.showExportProgress(false);
+      this.showToast(i18n.t('export.pdfError'), 'error');
+    }
+  }
+
+  private async exportAnalyticsToExcel(): Promise<void> {
+    try {
+      const t = (key: string) => i18n.t(key);
+      const lang = i18n.getLanguage();
+      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
+      
+      this.showExportProgress(true, 5, t('export.preparingData'));
+      
+      const filterInfo = this.getFilterInfo();
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Kappaplannung - DRÄXLMAIER Group';
+      workbook.created = new Date();
+      
+      // Get analytics data
+      const analyticsData = this.calculateAnalyticsData();
+      const projects = this.getFilteredProjects();
+      
+      this.showExportProgress(true, 15, t('export.creatingMainSheet'));
+      
+      // Sheet name translations
+      const sheetNames = {
+        summary: lang === 'de' ? 'Zusammenfassung' : lang === 'pl' ? 'Podsumowanie' : lang === 'ro' ? 'Rezumat' : 'Summary',
+        projects: lang === 'de' ? 'Projekte' : lang === 'pl' ? 'Projekty' : lang === 'ro' ? 'Proiecte' : 'Projects',
+        customers: lang === 'de' ? 'Kunden' : lang === 'pl' ? 'Klienci' : lang === 'ro' ? 'Clienți' : 'Customers',
+        weekly: lang === 'de' ? 'Wöchentlich' : lang === 'pl' ? 'Tygodniowe' : lang === 'ro' ? 'Săptămânal' : 'Weekly',
+        chartData: lang === 'de' ? 'Diagrammdaten' : lang === 'pl' ? 'Dane wykresów' : lang === 'ro' ? 'Date grafice' : 'Chart Data'
+      };
+      
+      // ==================== SHEET 1: Summary ====================
+      const summarySheet = workbook.addWorksheet(`Kappa - ${sheetNames.summary}`, {
+        views: [{ state: 'frozen', ySplit: 6 }]
+      });
+      
+      // Header - DRÄXLMAIER Group branding
+      summarySheet.mergeCells('A1:H1');
+      const titleCell = summarySheet.getCell('A1');
+      titleCell.value = 'DRÄXLMAIER Group';
+      titleCell.font = { name: 'Arial', size: 20, bold: true, color: { argb: 'FFFFFFFF' } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF000000' } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      summarySheet.getRow(1).height = 40;
+      
+      summarySheet.mergeCells('A2:H2');
+      const subtitleCell = summarySheet.getCell('A2');
+      subtitleCell.value = `Produkt Audit 360 - ${t('export.analyticsReport')}`;
+      subtitleCell.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+      subtitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
+      subtitleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      summarySheet.getRow(2).height = 30;
+      
+      // Filter info row
+      summarySheet.mergeCells('A3:H3');
+      const filterCell = summarySheet.getCell('A3');
+      filterCell.value = `${t('export.dataRange')}: ${filterInfo.rangeText} | ${t('export.generatedAt')}: ${new Date().toLocaleDateString(dateLocale)} ${new Date().toLocaleTimeString(dateLocale)} | ${t('export.user')}: ${this.state.settings.userName || 'System'}`;
+      filterCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF666666' } };
+      filterCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      summarySheet.getRow(3).height = 25;
+      
+      // KPI Section title
+      summarySheet.mergeCells('A5:H5');
+      const kpiTitleCell = summarySheet.getCell('A5');
+      kpiTitleCell.value = `📊 ${t('export.kpiTitle')}`;
+      kpiTitleCell.font = { name: 'Arial', size: 12, bold: true, color: { argb: 'FF333333' } };
+      kpiTitleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+      
+      this.showExportProgress(true, 25, t('export.addingStats'));
+      
+      // KPI Data headers
+      const kpiHeaders = [
+        lang === 'de' ? 'Kennzahl' : lang === 'pl' ? 'Wskaźnik' : lang === 'ro' ? 'Indicator' : 'Indicator',
+        lang === 'de' ? 'Wert' : lang === 'pl' ? 'Wartość' : lang === 'ro' ? 'Valoare' : 'Value',
+        lang === 'de' ? 'Beschreibung' : lang === 'pl' ? 'Opis' : lang === 'ro' ? 'Descriere' : 'Description'
+      ];
+      const kpiHeaderRow = summarySheet.getRow(7);
+      kpiHeaders.forEach((h, i) => {
+        const cell = kpiHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+      
+      summarySheet.getColumn(1).width = 35;
+      summarySheet.getColumn(2).width = 20;
+      summarySheet.getColumn(3).width = 50;
+      
+      // KPI descriptions in current language
+      const kpiDescriptions = {
+        totalProjects: lang === 'de' ? 'Gesamtzahl aktiver Projekte' : lang === 'pl' ? 'Łączna liczba aktywnych projektów' : lang === 'ro' ? 'Numărul total de proiecte active' : 'Total number of active projects',
+        totalIst: lang === 'de' ? 'Abgeschlossene Tests im Zeitraum' : lang === 'pl' ? 'Zrealizowane testy w okresie' : lang === 'ro' ? 'Teste completate în perioadă' : 'Completed tests in period',
+        totalSoll: lang === 'de' ? 'Geplante Tests im Zeitraum' : lang === 'pl' ? 'Planowane testy w okresie' : lang === 'ro' ? 'Teste planificate în perioadă' : 'Planned tests in period',
+        realization: lang === 'de' ? 'Realisierungsgrad' : lang === 'pl' ? 'Stopień realizacji' : lang === 'ro' ? 'Grad de realizare' : 'Realization rate',
+        activeCustomers: lang === 'de' ? 'Kunden mit aktiven Projekten' : lang === 'pl' ? 'Klienci z aktywnymi projektami' : lang === 'ro' ? 'Clienți cu proiecte active' : 'Customers with active projects',
+        avgPerProject: lang === 'de' ? 'Durchschnittliche Tests pro Projekt' : lang === 'pl' ? 'Średnia testów na projekt' : lang === 'ro' ? 'Media testelor pe proiect' : 'Average tests per project'
+      };
+      
+      const kpiData = [
+        [t('export.projects'), analyticsData.totalProjects, kpiDescriptions.totalProjects],
+        [t('export.testsIst'), analyticsData.totalIst.toLocaleString(dateLocale), kpiDescriptions.totalIst],
+        [t('export.testsSoll'), analyticsData.totalSoll.toLocaleString(dateLocale), kpiDescriptions.totalSoll],
+        [`${t('export.realization')} (%)`, `${analyticsData.totalPercent.toFixed(1)}%`, kpiDescriptions.realization],
+        [t('export.activeCustomers'), analyticsData.customerStats.length, kpiDescriptions.activeCustomers],
+        [t('export.avgPerProject'), Math.round(analyticsData.totalIst / Math.max(analyticsData.totalProjects, 1)), kpiDescriptions.avgPerProject]
+      ];
+      
+      kpiData.forEach((row, idx) => {
+        const dataRow = summarySheet.getRow(8 + idx);
+        row.forEach((val, colIdx) => {
+          const cell = dataRow.getCell(colIdx + 1);
+          cell.value = val;
+          cell.font = { name: 'Arial', size: 10 };
+          cell.alignment = { horizontal: colIdx === 1 ? 'center' : 'left', vertical: 'middle' };
+          if (idx % 2 === 0) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+          }
+          if (colIdx === 1) {
+            cell.font = { name: 'Arial', size: 11, bold: true, color: { argb: 'FF0097AC' } };
+          }
+        });
+      });
+      
+      this.showExportProgress(true, 35, t('export.creatingProjectsSheet'));
+      
+      // ==================== SHEET 2: Projects Details ====================
+      const projectsSheet = workbook.addWorksheet(`${sheetNames.projects}`);
+      
+      projectsSheet.mergeCells('A1:G1');
+      const projTitle = projectsSheet.getCell('A1');
+      projTitle.value = `${t('export.projectList')} - ${t('export.projectDetails')}`;
+      projTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+      projTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
+      projTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+      projectsSheet.getRow(1).height = 35;
+      
+      const projHeaders = [t('export.customer'), t('export.type'), t('export.part'), t('export.test'), 'IST', 'SOLL', `${t('export.realization')} (%)`];
+      const projHeaderRow = projectsSheet.getRow(3);
+      projHeaders.forEach((h, i) => {
+        const cell = projHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+      
+      [20, 15, 20, 20, 12, 12, 15].forEach((w, i) => {
+        projectsSheet.getColumn(i + 1).width = w;
+      });
+      
+      let rowIdx = 4;
+      projects.forEach(project => {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const type = this.state.types.find(t => t.id === project.type_id);
+        const part = this.state.parts.find(p => p.id === project.part_id);
+        const test = this.state.tests.find(t => t.id === project.test_id);
+        
+        let istTotal = 0, sollTotal = 0;
+        for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
+          const wd = project.weeks?.[week.toString()];
+          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+        }
+        const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
+        
+        const row = projectsSheet.getRow(rowIdx);
+        [customer?.name || '-', type?.name || '-', part?.name || '-', test?.name || '-', istTotal, sollTotal, `${percent.toFixed(1)}%`].forEach((val, colIdx) => {
+          const cell = row.getCell(colIdx + 1);
+          cell.value = val;
+          cell.font = { name: 'Arial', size: 10 };
+          cell.alignment = { horizontal: colIdx >= 4 ? 'center' : 'left', vertical: 'middle' };
+          
+          if (colIdx === 6) {
+            if (percent >= 100) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4ADE80' } };
+              cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF166534' } };
+            } else if (percent >= 50) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBBF24' } };
+              cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF92400E' } };
+            } else {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF87171' } };
+              cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF991B1B' } };
+            }
+          }
+          if (rowIdx % 2 === 0 && colIdx < 6) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+          }
+        });
+        rowIdx++;
+      });
+      
+      this.showExportProgress(true, 50, t('export.creatingCustomersSheet'));
+      
+      // ==================== SHEET 3: Customers Statistics ====================
+      const customersSheet = workbook.addWorksheet(`${sheetNames.customers}`);
+      
+      customersSheet.mergeCells('A1:E1');
+      const custTitle = customersSheet.getCell('A1');
+      custTitle.value = t('export.customerStats');
+      custTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+      custTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
+      custTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+      customersSheet.getRow(1).height = 35;
+      
+      const custHeaders = [t('export.customer'), t('export.count'), t('export.testsIst'), t('export.testsSoll'), `${t('export.realization')} (%)`];
+      const custHeaderRow = customersSheet.getRow(3);
+      custHeaders.forEach((h, i) => {
+        const cell = custHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+      
+      [25, 18, 15, 15, 15].forEach((w, i) => {
+        customersSheet.getColumn(i + 1).width = w;
+      });
+      
+      rowIdx = 4;
+      analyticsData.customerStats.forEach((cs: any) => {
+        const row = customersSheet.getRow(rowIdx);
+        [cs.name, cs.count, cs.ist, cs.soll, `${cs.percent.toFixed(1)}%`].forEach((val, colIdx) => {
+          const cell = row.getCell(colIdx + 1);
+          cell.value = val;
+          cell.font = { name: 'Arial', size: 10 };
+          cell.alignment = { horizontal: colIdx > 0 ? 'center' : 'left', vertical: 'middle' };
+          
+          if (colIdx === 4) {
+            if (cs.percent >= 100) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4ADE80' } };
+              cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF166534' } };
+            } else if (cs.percent >= 50) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBBF24' } };
+              cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF92400E' } };
+            } else {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF87171' } };
+              cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FF991B1B' } };
+            }
+          }
+          if (rowIdx % 2 === 0 && colIdx < 4) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+          }
+        });
+        rowIdx++;
+      });
+      
+      this.showExportProgress(true, 65, t('export.creatingWeeklySheet'));
+      
+      // ==================== SHEET 4: Weekly Data ====================
+      const weeklySheet = workbook.addWorksheet(`${sheetNames.weekly}`);
+      
+      weeklySheet.mergeCells('A1:D1');
+      const weeklyTitle = weeklySheet.getCell('A1');
+      weeklyTitle.value = `${t('export.weeklyData')} - ${t('analytics.historicalTrend')}`;
+      weeklyTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+      weeklyTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
+      weeklyTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+      weeklySheet.getRow(1).height = 35;
+      
+      const weeklyHeaders = [t('export.week'), 'IST', 'SOLL', `${t('export.realization')} (%)`];
+      const weeklyHeaderRow = weeklySheet.getRow(3);
+      weeklyHeaders.forEach((h, i) => {
+        const cell = weeklyHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+      
+      [15, 15, 15, 18].forEach((w, i) => {
+        weeklySheet.getColumn(i + 1).width = w;
+      });
+      
+      rowIdx = 4;
+      for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
+        const weekKey = `KW${week.toString().padStart(2, '0')}`;
+        let weekIst = 0, weekSoll = 0;
+        
+        projects.forEach(p => {
+          const wd = p.weeks?.[week.toString()];
+          if (wd) { weekIst += wd.ist || 0; weekSoll += wd.soll || 0; }
+        });
+        const percent = weekSoll > 0 ? (weekIst / weekSoll * 100) : 0;
+        
+        const row = weeklySheet.getRow(rowIdx);
+        [weekKey, weekIst, weekSoll, `${percent.toFixed(1)}%`].forEach((val, colIdx) => {
+          const cell = row.getCell(colIdx + 1);
+          cell.value = val;
+          cell.font = { name: 'Arial', size: 10 };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          
+          if (colIdx === 3) {
+            if (percent >= 100) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4ADE80' } };
+            else if (percent >= 50) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFBBF24' } };
+            else cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF87171' } };
+          }
+          if (rowIdx % 2 === 0 && colIdx < 3) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+          }
+        });
+        rowIdx++;
+      }
+      
+      this.showExportProgress(true, 80, t('export.finalizingExcel'));
+      
+      // ==================== SHEET 5: Charts Data (numerical only) ====================
+      const chartsSheet = workbook.addWorksheet(`${sheetNames.chartData}`);
+      
+      chartsSheet.mergeCells('A1:D1');
+      const chartsTitle = chartsSheet.getCell('A1');
+      chartsTitle.value = t('export.charts');
+      chartsTitle.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+      chartsTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0097AC' } };
+      chartsTitle.alignment = { horizontal: 'center', vertical: 'middle' };
+      chartsSheet.getRow(1).height = 35;
+      
+      chartsSheet.mergeCells('A3:G3');
+      const chartInfo = lang === 'de' ? 'Unten finden Sie Daten zum Erstellen von Diagrammen. Wählen Sie Daten aus und klicken Sie auf "Diagramm einfügen" in Excel.' 
+                      : lang === 'pl' ? 'Poniżej znajdują się dane do tworzenia wykresów. Zaznacz dane i wybierz "Wstaw wykres" w Excel.'
+                      : lang === 'ro' ? 'Mai jos găsiți date pentru a crea grafice. Selectați datele și alegeți "Inserare grafic" în Excel.'
+                      : 'Below you will find data to create charts. Select data and choose "Insert Chart" in Excel.';
+      chartsSheet.getCell('A3').value = `ℹ️ ${chartInfo}`;
+      chartsSheet.getCell('A3').font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF666666' } };
+      
+      // Customer bar chart data
+      chartsSheet.getCell('A5').value = `📊 ${t('export.chartCustomerComparison')}`;
+      chartsSheet.getCell('A5').font = { name: 'Arial', size: 11, bold: true };
+      
+      chartsSheet.getCell('A6').value = t('export.customer');
+      chartsSheet.getCell('B6').value = 'IST';
+      chartsSheet.getCell('C6').value = 'SOLL';
+      chartsSheet.getCell('D6').value = `${t('export.realization')} %`;
+      [chartsSheet.getCell('A6'), chartsSheet.getCell('B6'), chartsSheet.getCell('C6'), chartsSheet.getCell('D6')].forEach(cell => {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { horizontal: 'center' };
+      });
+      
+      chartsSheet.getColumn(1).width = 25;
+      chartsSheet.getColumn(2).width = 15;
+      chartsSheet.getColumn(3).width = 15;
+      chartsSheet.getColumn(4).width = 15;
+      
+      rowIdx = 7;
+      analyticsData.customerStats.forEach((cs: any) => {
+        chartsSheet.getCell(`A${rowIdx}`).value = cs.name;
+        chartsSheet.getCell(`B${rowIdx}`).value = cs.ist;
+        chartsSheet.getCell(`C${rowIdx}`).value = cs.soll;
+        chartsSheet.getCell(`D${rowIdx}`).value = cs.percent;
+        const percentCell = chartsSheet.getCell(`D${rowIdx}`);
+        if (cs.percent >= 100) percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+        else if (cs.percent >= 50) percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+        else percentCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+        rowIdx++;
+      });
+      
+      // Weekly trend data
+      rowIdx += 2;
+      chartsSheet.getCell(`A${rowIdx}`).value = `📈 ${t('export.chartTrend')}`;
+      chartsSheet.getCell(`A${rowIdx}`).font = { name: 'Arial', size: 11, bold: true };
+      rowIdx++;
+      
+      chartsSheet.getCell(`A${rowIdx}`).value = t('export.week');
+      chartsSheet.getCell(`B${rowIdx}`).value = 'IST';
+      chartsSheet.getCell(`C${rowIdx}`).value = 'SOLL';
+      chartsSheet.getCell(`D${rowIdx}`).value = '%';
+      [chartsSheet.getCell(`A${rowIdx}`), chartsSheet.getCell(`B${rowIdx}`), chartsSheet.getCell(`C${rowIdx}`), chartsSheet.getCell(`D${rowIdx}`)].forEach(cell => {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { horizontal: 'center' };
+      });
+      rowIdx++;
+      
+      for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
+        let weekIst = 0, weekSoll = 0;
+        projects.forEach(p => {
+          const wd = p.weeks?.[week.toString()];
+          if (wd) { weekIst += wd.ist || 0; weekSoll += wd.soll || 0; }
+        });
+        const percent = weekSoll > 0 ? (weekIst / weekSoll * 100) : 0;
+        
+        chartsSheet.getCell(`A${rowIdx}`).value = `KW${week.toString().padStart(2, '0')}`;
+        chartsSheet.getCell(`B${rowIdx}`).value = weekIst;
+        chartsSheet.getCell(`C${rowIdx}`).value = weekSoll;
+        chartsSheet.getCell(`D${rowIdx}`).value = Math.round(percent);
+        rowIdx++;
+      }
+      
+      // Status distribution data
+      rowIdx += 2;
+      chartsSheet.getCell(`A${rowIdx}`).value = `🥧 ${t('export.statusDistribution')}`;
+      chartsSheet.getCell(`A${rowIdx}`).font = { name: 'Arial', size: 11, bold: true };
+      rowIdx++;
+      
+      chartsSheet.getCell(`A${rowIdx}`).value = 'Status';
+      chartsSheet.getCell(`B${rowIdx}`).value = t('export.count');
+      [chartsSheet.getCell(`A${rowIdx}`), chartsSheet.getCell(`B${rowIdx}`)].forEach(cell => {
+        cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E293B' } };
+        cell.alignment = { horizontal: 'center' };
+      });
+      rowIdx++;
+      
+      let completed = 0, inProgress = 0, behind = 0;
+      projects.forEach(p => {
+        let pIst = 0, pSoll = 0;
+        for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
+          const wd = p.weeks?.[w.toString()];
+          if (wd) { pIst += wd.ist || 0; pSoll += wd.soll || 0; }
+        }
+        const pct = pSoll > 0 ? (pIst / pSoll * 100) : 0;
+        if (pct >= 100) completed++;
+        else if (pct >= 50) inProgress++;
+        else behind++;
+      });
+      
+      chartsSheet.getCell(`A${rowIdx}`).value = `✅ ${t('export.completedProjects')}`;
+      chartsSheet.getCell(`B${rowIdx}`).value = completed;
+      chartsSheet.getCell(`A${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
+      rowIdx++;
+      
+      chartsSheet.getCell(`A${rowIdx}`).value = `🟡 ${t('export.inProgressProjects')}`;
+      chartsSheet.getCell(`B${rowIdx}`).value = inProgress;
+      chartsSheet.getCell(`A${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+      rowIdx++;
+      
+      chartsSheet.getCell(`A${rowIdx}`).value = `🔴 ${t('export.delayedProjects')}`;
+      chartsSheet.getCell(`B${rowIdx}`).value = behind;
+      chartsSheet.getCell(`A${rowIdx}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
+      
+      this.showExportProgress(true, 95, t('export.savingFile'));
+      
+      // Generate and download file
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const filename = `Kappaplannung_Analytics_${filterInfo.year}_KW${filterInfo.weekFrom.toString().padStart(2, '0')}-${filterInfo.weekTo.toString().padStart(2, '0')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+      saveAs(blob, filename);
+      
+      this.showExportProgress(false);
+      this.showToast(t('export.excelGenerated'), 'success');
+      
+    } catch (error) {
+      console.error('Excel export error:', error);
+      this.showExportProgress(false);
+      this.showToast(i18n.t('export.excelError'), 'error');
+    }
+  }
+
+  private calculateAnalyticsData(): {
+    totalProjects: number;
+    totalIst: number;
+    totalSoll: number;
+    totalPercent: number;
+    customerStats: Array<{ name: string; count: number; ist: number; soll: number; percent: number }>;
+  } {
+    const filterInfo = this.getFilterInfo();
+    const projects = this.getFilteredProjects();
+    
+    let totalIst = 0;
+    let totalSoll = 0;
+    const customerMap = new Map<string, { name: string; count: number; ist: number; soll: number }>();
+    
+    projects.forEach(project => {
+      const customer = this.state.customers.find(c => c.id === project.customer_id);
+      const customerName = customer?.name || 'Unknown';
+      
+      if (!customerMap.has(project.customer_id)) {
+        customerMap.set(project.customer_id, { name: customerName, count: 0, ist: 0, soll: 0 });
+      }
+      
+      const cs = customerMap.get(project.customer_id)!;
+      cs.count++;
+      
+      // Use weeks property (not weekData)
+      for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
+        const weekKey = week.toString();
+        const wd = project.weeks?.[weekKey];
+        if (wd) {
+          totalIst += wd.ist || 0;
+          totalSoll += wd.soll || 0;
+          cs.ist += wd.ist || 0;
+          cs.soll += wd.soll || 0;
+        }
+      }
+    });
+    
+    const customerStats = Array.from(customerMap.values()).map(cs => ({
+      ...cs,
+      percent: cs.soll > 0 ? (cs.ist / cs.soll * 100) : 0
+    })).sort((a, b) => b.ist - a.ist);
+    
+    return {
+      totalProjects: projects.length,
+      totalIst,
+      totalSoll,
+      totalPercent: totalSoll > 0 ? (totalIst / totalSoll * 100) : 0,
+      customerStats
+    };
   }
 
   private importData(): void {
@@ -5593,37 +7383,37 @@ class KappaApp {
   private draggedEmployeeId: string | null = null;
   private draggedEmployeeScope: 'project' | 'audit' | 'adhesion' | 'specific' = 'project';
   
-  private loadPinnedScheduleProjects(): void {
+  private async loadPinnedScheduleProjects(): Promise<void> {
     try {
-      const saved = localStorage.getItem('pinnedScheduleProjects');
-      if (saved) {
-        this.pinnedScheduleProjects = new Set(JSON.parse(saved));
+      const saved = await db.getPreference('pinnedScheduleProjects');
+      if (saved && Array.isArray(saved)) {
+        this.pinnedScheduleProjects = new Set(saved);
       }
     } catch (e) {
       console.warn('Failed to load pinned schedule projects');
     }
   }
   
-  private toggleScheduleProjectPin(groupKey: string): void {
+  private async toggleScheduleProjectPin(groupKey: string): Promise<void> {
     if (this.pinnedScheduleProjects.has(groupKey)) {
       this.pinnedScheduleProjects.delete(groupKey);
     } else {
       this.pinnedScheduleProjects.add(groupKey);
     }
-    localStorage.setItem('pinnedScheduleProjects', JSON.stringify([...this.pinnedScheduleProjects]));
+    await db.setPreference('pinnedScheduleProjects', [...this.pinnedScheduleProjects]);
     this.renderScheduleProjectsPanel();
   }
   
-  private renderScheduleView(): void {
-    this.loadPinnedScheduleProjects();
+  private async renderScheduleView(): Promise<void> {
+    await this.loadPinnedScheduleProjects();
+    // Load absences for schedule integration
+    await this.loadAbsenceData();
     this.setupScheduleEventListeners();
     this.renderScheduleFilters();
     this.renderScheduleWeekNav();
     this.renderScheduleEmployeePanel();
     this.renderScheduleAlerts();
     this.renderScheduleContent();
-    this.renderScheduleStats();
-    this.renderScheduleHistory();
   }
   
   private renderScheduleFilters(): void {
@@ -5819,6 +7609,41 @@ class KappaApp {
     
     // Statystyki pracownika
     document.getElementById('employeeStatsBtn')?.addEventListener('click', () => this.showEmployeeStatsModal());
+    
+    // Klikalne panele statystyk i historii
+    document.getElementById('statsPanelContainer')?.addEventListener('click', () => this.showStatsModal());
+    document.getElementById('historyPanelContainer')?.addEventListener('click', () => this.showHistoryPanel());
+    
+    // Schedule sidebar toggle/close
+    document.getElementById('schedSidebarToggle')?.addEventListener('click', () => {
+      const sidebar = document.getElementById('schedSidebar');
+      const scheduleView = document.getElementById('scheduleView');
+      const container = document.querySelector('.sched-container');
+      if (sidebar) {
+        sidebar.classList.add('open');
+      }
+      if (scheduleView) {
+        scheduleView.classList.add('sidebar-open');
+      }
+      if (container) {
+        container.classList.add('sidebar-open');
+      }
+    });
+    
+    document.getElementById('schedSidebarClose')?.addEventListener('click', () => {
+      const sidebar = document.getElementById('schedSidebar');
+      const scheduleView = document.getElementById('scheduleView');
+      const container = document.querySelector('.sched-container');
+      if (sidebar) {
+        sidebar.classList.remove('open');
+      }
+      if (scheduleView) {
+        scheduleView.classList.remove('sidebar-open');
+      }
+      if (container) {
+        container.classList.remove('sidebar-open');
+      }
+    });
   }
   
   // Mini kalendarz miesięczny
@@ -5961,56 +7786,72 @@ class KappaApp {
   }
   
   // Panel historii zmian
-  private showHistoryPanel(): void {
-    // Pobierz historię z localStorage (jeśli jest)
-    const historyJson = localStorage.getItem('kappa_schedule_history') || '[]';
-    let logs: Array<{action: string; type: string; details: string; timestamp: number}> = [];
-    try {
-      logs = JSON.parse(historyJson);
-    } catch (e) {
-      logs = [];
-    }
+  private async showHistoryPanel(): Promise<void> {
+    // Pobierz historię z lokalnego stanu (this.logs)
+    let logs = this.logs
+      .filter(log => log.entityType === 'Assignment' || log.entityType === 'Employee' || log.entityType === 'ScheduleEntry')
+      .slice(0, 100); // Max 100 wpisów
     
-    logs = logs.slice(-20).reverse();
+    // Filtruj tylko wpisy z ostatnich 30 dni
+    const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+    logs = logs
+      .filter(log => log.timestamp >= thirtyDaysAgo)
+      .sort((a, b) => b.timestamp - a.timestamp);
+    
+    // Grupuj po datach
+    const groupedLogs = new Map<string, typeof logs>();
+    logs.forEach(log => {
+      const date = new Date(log.timestamp).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit' });
+      if (!groupedLogs.has(date)) {
+        groupedLogs.set(date, []);
+      }
+      groupedLogs.get(date)!.push(log);
+    });
     
     const overlay = document.createElement('div');
     overlay.className = 'employee-modal-overlay';
     overlay.innerHTML = `
-      <div class="employee-modal" style="max-width: 500px;">
+      <div class="employee-modal" style="max-width: 550px;">
         <div class="employee-modal-header">
           <div class="employee-modal-info">
-            <h2>📋 Historia zmian</h2>
+            <h2>📋 Historia zmian (ostatnie 30 dni)</h2>
+            <span style="font-size: 0.75rem; color: var(--color-text-muted);">${logs.length} zmian</span>
           </div>
           <button class="employee-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
-        <div class="employee-modal-body">
+        <div class="employee-modal-body" style="max-height: 70vh;">
           <div class="sched-history-list">
-            ${logs.length > 0 ? logs.map((log: any) => {
-              const isAdded = log.action === 'added' || log.action === 'created';
-              const isRemoved = log.action === 'deleted' || log.action === 'removed';
-              const iconClass = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
-              const iconSvg = isAdded 
-                ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-                : isRemoved
-                ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
-                : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
-              
-              const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
-                day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
-              });
-              
-              return `
-                <div class="sched-history-item">
-                  <div class="sched-history-icon ${iconClass}">${iconSvg}</div>
-                  <div class="sched-history-content">
-                    <div class="sched-history-text">${log.details || `${log.action} ${log.type}`}</div>
-                    <div class="sched-history-time">${time}</div>
-                  </div>
-                </div>
-              `;
-            }).join('') : '<p style="padding: 20px; text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>'}
+            ${logs.length > 0 ? [...groupedLogs.entries()].map(([date, dayLogs]) => `
+              <div class="sched-history-date-group">
+                <div class="sched-history-date-header">${date}</div>
+                ${dayLogs.map((log: any) => {
+                  const isAdded = log.action === 'added' || log.action === 'created';
+                  const isRemoved = log.action === 'deleted' || log.action === 'removed';
+                  const iconClass = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
+                  const iconSvg = isAdded 
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+                    : isRemoved
+                    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+                    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+                  
+                  const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
+                    hour: '2-digit', minute: '2-digit' 
+                  });
+                  
+                  return `
+                    <div class="sched-history-item">
+                      <div class="sched-history-icon ${iconClass}">${iconSvg}</div>
+                      <div class="sched-history-content">
+                        <div class="sched-history-text">${log.entityName || ''}${log.details ? ` - ${log.details}` : ''}</div>
+                        <div class="sched-history-time">${time}</div>
+                      </div>
+                    </div>
+                  `;
+                }).join('')}
+              </div>
+            `).join('') : '<p style="padding: 20px; text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>'}
           </div>
         </div>
       </div>
@@ -6026,6 +7867,7 @@ class KappaApp {
   
   // Modal eksportu
   private showExportModal(): void {
+    const t = (key: string) => i18n.t(key);
     const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
     
     const overlay = document.createElement('div');
@@ -6034,7 +7876,7 @@ class KappaApp {
       <div class="employee-modal" style="max-width: 450px;">
         <div class="employee-modal-header">
           <div class="employee-modal-info">
-            <h2>📥 Eksportuj grafik</h2>
+            <h2>📥 ${t('export.exportSchedule')}</h2>
             <div class="employee-modal-stats">
               <span class="employee-modal-stat">KW${this.scheduleCurrentWeek} (${weekDates.start.slice(0, 5)} - ${weekDates.end.slice(0, 5)})</span>
             </div>
@@ -6045,25 +7887,18 @@ class KappaApp {
         </div>
         <div class="employee-modal-body">
           <div style="display: flex; flex-direction: column; gap: 12px;">
-            <button class="sched-export-btn" data-format="csv">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-              <div>
-                <strong>Excel / CSV</strong>
-                <span>Arkusz kalkulacyjny</span>
-              </div>
-            </button>
             <button class="sched-export-btn" data-format="pdf">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2v2z"/></svg>
               <div>
                 <strong>PDF</strong>
-                <span>Dokument do wydruku</span>
+                <span>${t('export.pdfDescription')}</span>
               </div>
             </button>
-            <button class="sched-export-btn" data-format="json">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <button class="sched-export-btn" data-format="excel">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
               <div>
-                <strong>JSON</strong>
-                <span>Dane strukturalne</span>
+                <strong>Excel</strong>
+                <span>${t('export.excelDescription')}</span>
               </div>
             </button>
           </div>
@@ -6082,125 +7917,451 @@ class KappaApp {
     overlay.querySelectorAll('.sched-export-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const format = (btn as HTMLElement).dataset.format;
-        this.exportSchedule(format as 'csv' | 'pdf' | 'json');
+        if (format === 'pdf') {
+          this.exportScheduleToPdf();
+        } else if (format === 'excel') {
+          this.exportScheduleToExcel();
+        }
         overlay.remove();
       });
     });
   }
-  
-  private exportSchedule(format: 'csv' | 'pdf' | 'json'): void {
+
+  private getScheduleExportData(): {
+    weekKey: string;
+    weekDates: { start: string; end: string };
+    assignments: ScheduleAssignment[];
+    byShift: Map<number, { employee: string; employeeId: string; customer: string; type: string; scope: string }[]>;
+    byProject: Map<string, { customerName: string; typeName: string; employees: { name: string; shift: number; scope: string }[] }>;
+    stats: { totalEmployees: number; assignedEmployees: number; totalProjects: number; coveragePercent: number };
+  } {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
     const assignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    
-    // Przygotuj dane
-    const exportData = assignments.map((a: ScheduleAssignment) => {
+
+    // Group by shift
+    const byShift = new Map<number, { employee: string; employeeId: string; customer: string; type: string; scope: string }[]>();
+    [1, 2, 3].forEach(shift => byShift.set(shift, []));
+
+    // Group by project
+    const byProject = new Map<string, { customerName: string; typeName: string; employees: { name: string; shift: number; scope: string }[] }>();
+
+    assignments.forEach((a: ScheduleAssignment) => {
       const emp = this.state.employees.find(e => e.id === a.employeeId);
       const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
       const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
       const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
-      
-      let scope = 'Cały projekt';
-      if (a.scope === 'adhesion') scope = 'Przyczepność';
-      else if (a.scope === 'audit') scope = 'Audyt';
+
+      let scope = i18n.t('schedule.fullProject');
+      if (a.scope === 'adhesion') scope = i18n.t('schedule.adhesion');
+      else if (a.scope === 'audit') scope = i18n.t('schedule.audit');
       else if (a.testId) {
         const test = this.state.tests.find(t => t.id === a.testId);
         scope = test?.name || 'Test';
       } else if (a.partId) {
         const part = this.state.parts.find(p => p.id === a.partId);
-        scope = part?.name || 'Część';
+        scope = part?.name || i18n.t('schedule.part');
       }
-      
-      return {
-        pracownik: emp ? `${emp.firstName} ${emp.lastName}` : '?',
-        klient: customer?.name || '?',
-        typ: type?.name || '?',
-        zmiana: a.shift,
-        zakres: scope,
-        tydzien: weekKey
-      };
+
+      const employeeName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
+      const customerName = customer?.name || '?';
+      const typeName = type?.name || '?';
+
+      // Add to shift grouping
+      byShift.get(a.shift)?.push({
+        employee: employeeName,
+        employeeId: a.employeeId,
+        customer: customerName,
+        type: typeName,
+        scope
+      });
+
+      // Add to project grouping
+      const projectKey = `${customerName} - ${typeName}`;
+      if (!byProject.has(projectKey)) {
+        byProject.set(projectKey, { customerName, typeName, employees: [] });
+      }
+      byProject.get(projectKey)!.employees.push({ name: employeeName, shift: a.shift, scope });
     });
+
+    // Calculate statistics
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const assignedEmployeeIds = new Set(assignments.map((a: ScheduleAssignment) => a.employeeId));
+    const assignedCount = availableEmployees.filter(e => assignedEmployeeIds.has(e.id)).length;
     
-    if (format === 'csv') {
-      const headers = ['Pracownik', 'Klient', 'Typ', 'Zmiana', 'Zakres', 'Tydzień'];
-      const rows = exportData.map(d => [d.pracownik, d.klient, d.typ, d.zmiana, d.zakres, d.tydzien].join(';'));
-      const csv = [headers.join(';'), ...rows].join('\n');
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+
+    const stats = {
+      totalEmployees: availableEmployees.length,
+      assignedEmployees: assignedCount,
+      totalProjects: weekProjects.length,
+      coveragePercent: availableEmployees.length > 0 ? Math.round((assignedCount / availableEmployees.length) * 100) : 0
+    };
+
+    return { weekKey, weekDates, assignments, byShift, byProject, stats };
+  }
+
+  private async exportScheduleToPdf(): Promise<void> {
+    try {
+      const t = (key: string) => i18n.t(key);
+      const lang = i18n.getLanguage();
+      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
+
+      this.showExportProgress(true, 5, t('export.preparingReport'));
+
+      const data = this.getScheduleExportData();
+      const dateStr = new Date().toLocaleDateString(dateLocale);
+      const timeStr = new Date().toLocaleTimeString(dateLocale);
+
+      // A4 ratio: 1000px width = 1414px height
+      const pdfPageHeight = 1414;
+      const headerHeight = 110;
+      const footerHeight = 40;
+
+      const createPageSection = (content: string, includeHeader: boolean = false): HTMLDivElement => {
+        const section = document.createElement('div');
+        section.style.cssText = `width: 1000px; height: ${pdfPageHeight}px; background: #f8fafc; padding: 0; position: relative; overflow: hidden;`;
+
+        if (includeHeader) {
+          section.innerHTML = `
+            <div style="background: #000; color: #fff; padding: 20px 28px; display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h1 style="margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
+                <p style="margin: 5px 0 0 0; font-size: 14px; opacity: 0.85;">Produkt Audit 360</p>
+              </div>
+              <div style="text-align: right;">
+                <p style="margin: 0; font-size: 13px; opacity: 0.9;">${t('export.scheduleReport')}</p>
+                <p style="margin: 3px 0 0 0; font-size: 12px; opacity: 0.7;">${data.weekKey} (${data.weekDates.start} - ${data.weekDates.end})</p>
+              </div>
+            </div>
+            <div style="background: #0097AC; color: #fff; padding: 10px 28px; display: flex; justify-content: space-between; font-size: 11px;">
+              <span><strong>${t('export.generatedAt')}:</strong> ${dateStr} ${timeStr}</span>
+              <span><strong>${t('export.user')}:</strong> ${this.state.settings.userName || 'System'}</span>
+            </div>
+          `;
+        }
+
+        const contentHeight = pdfPageHeight - (includeHeader ? headerHeight : 0) - footerHeight;
+        section.innerHTML += `<div style="padding: 24px 28px; background: #f8fafc; min-height: ${contentHeight}px;">${content}</div>`;
+
+        section.innerHTML += `
+          <div style="background: #1e293b; color: #fff; padding: 12px 28px; text-align: center; font-size: 10px; position: absolute; bottom: 0; left: 0; right: 0;">
+            <p style="margin: 0; opacity: 0.8;">© ${new Date().getFullYear()} ${t('export.copyright')}</p>
+          </div>
+        `;
+
+        return section;
+      };
+
+      this.showExportProgress(true, 20, t('export.copyingContent'));
+
+      // KPI Cards
+      const kpiContent = `
+        <div style="margin-bottom: 16px;">
+          <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📊 ${t('export.kpiTitle')}</h2>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: #0097AC;">${data.stats.totalEmployees}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.totalEmployees')}</div>
+            </div>
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: #10b981;">${data.stats.assignedEmployees}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.assignedEmployees')}</div>
+            </div>
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: #6366f1;">${data.stats.totalProjects}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.projectsCount')}</div>
+            </div>
+            <div style="background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+              <div style="font-size: 28px; font-weight: 700; color: ${data.stats.coveragePercent >= 80 ? '#10b981' : data.stats.coveragePercent >= 50 ? '#f59e0b' : '#ef4444'};">${data.stats.coveragePercent}%</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.coverage')}</div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Shift tables side by side
+      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
+      const shiftColors = ['#3b82f6', '#8b5cf6', '#f97316'];
       
-      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `grafik_${weekKey}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      
-      this.showToast('Wyeksportowano do CSV', 'success');
-    } else if (format === 'json') {
-      const json = JSON.stringify(exportData, null, 2);
-      const blob = new Blob([json], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `grafik_${weekKey}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      
-      this.showToast('Wyeksportowano do JSON', 'success');
-    } else if (format === 'pdf') {
-      // Prosty eksport HTML do druku
-      const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        printWindow.document.write(`
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <title>Grafik ${weekKey}</title>
-            <style>
-              body { font-family: Arial, sans-serif; padding: 20px; }
-              h1 { font-size: 18px; margin-bottom: 5px; }
-              h2 { font-size: 14px; color: #666; margin-bottom: 20px; }
-              table { width: 100%; border-collapse: collapse; }
-              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
-              th { background: #f5f5f5; font-weight: 600; }
-              .shift-1 { background: rgba(37, 99, 235, 0.1); }
-              .shift-2 { background: rgba(124, 58, 237, 0.1); }
-              .shift-3 { background: rgba(234, 88, 12, 0.1); }
-            </style>
-          </head>
-          <body>
-            <h1>Grafik pracy - ${weekKey}</h1>
-            <h2>${weekDates.start} - ${weekDates.end}</h2>
-            <table>
-              <thead>
-                <tr>
-                  <th>Pracownik</th>
-                  <th>Klient</th>
-                  <th>Typ</th>
-                  <th>Zmiana</th>
-                  <th>Zakres</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${exportData.map(d => `
-                  <tr>
-                    <td>${d.pracownik}</td>
-                    <td>${d.klient}</td>
-                    <td>${d.typ}</td>
-                    <td class="shift-${d.zmiana}">Zmiana ${d.zmiana}</td>
-                    <td>${d.zakres}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </body>
-          </html>
-        `);
-        printWindow.document.close();
-        printWindow.print();
+      let shiftsContent = `<div style="margin-bottom: 16px;">
+        <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">👥 ${t('export.assignmentsByShift')}</h2>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;">`;
+
+      for (let shift = 1; shift <= 3; shift++) {
+        const shiftData = data.byShift.get(shift) || [];
+        shiftsContent += `
+          <div style="background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+            <div style="background: ${shiftColors[shift - 1]}; color: #fff; padding: 10px 14px; font-weight: 600; font-size: 13px;">
+              ${t('export.shift')} ${shift} - ${shiftNames[shift - 1]} (${shiftData.length})
+            </div>
+            <div style="padding: 8px 12px; max-height: 280px; overflow: hidden;">
+              ${shiftData.length > 0 ? shiftData.slice(0, 12).map(item => `
+                <div style="padding: 6px 0; border-bottom: 1px solid #f1f5f9; font-size: 11px;">
+                  <div style="font-weight: 600; color: #1e293b;">${item.employee}</div>
+                  <div style="color: #64748b; font-size: 10px;">${item.customer} • ${item.type}</div>
+                </div>
+              `).join('') + (shiftData.length > 12 ? `<div style="padding: 6px 0; color: #94a3b8; font-size: 10px; text-align: center;">+${shiftData.length - 12} ${t('export.more')}</div>` : '') : `
+                <div style="padding: 20px 0; text-align: center; color: #94a3b8; font-size: 11px;">${t('export.noAssignments')}</div>
+              `}
+            </div>
+          </div>`;
       }
-      
-      this.showToast('Otwarto okno drukowania', 'success');
+      shiftsContent += '</div></div>';
+
+      // Projects with employees
+      const projectRows = Array.from(data.byProject.entries());
+      let projectsContent = `<div style="margin-top: 8px;">
+        <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">🏢 ${t('export.projectAssignments')}</h2>
+        <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+          <thead>
+            <tr style="background: #f8fafc;">
+              <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.project')}</th>
+              <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.employees')}</th>
+              <th style="padding: 10px 12px; text-align: center; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151; width: 80px;">${t('export.count')}</th>
+            </tr>
+          </thead>
+          <tbody>`;
+
+      projectRows.slice(0, 18).forEach(([key, proj], idx) => {
+        const employeeList = proj.employees.map(e => `${e.name} (${t('export.shift')} ${e.shift})`).join(', ');
+        projectsContent += `
+          <tr style="background: ${idx % 2 === 0 ? '#fff' : '#fafbfc'};">
+            <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9;">
+              <div style="font-weight: 600; color: #1e293b;">${proj.customerName}</div>
+              <div style="color: #64748b; font-size: 10px;">${proj.typeName}</div>
+            </td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; color: #475569;">${employeeList.length > 80 ? employeeList.slice(0, 80) + '...' : employeeList}</td>
+            <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 600; color: #0097AC;">${proj.employees.length}</td>
+          </tr>`;
+      });
+
+      projectsContent += '</tbody></table>';
+      if (projectRows.length > 18) {
+        projectsContent += `<div style="padding: 8px 12px; color: #64748b; font-size: 10px; text-align: center;">+${projectRows.length - 18} ${t('export.moreProjects')}</div>`;
+      }
+      projectsContent += '</div>';
+
+      // Create page 1
+      const page1Content = kpiContent + shiftsContent + projectsContent;
+      const page1 = createPageSection(page1Content, true);
+
+      this.showExportProgress(true, 50, t('export.renderingPages'));
+
+      // Render pages using html2canvas
+      const container = document.createElement('div');
+      container.style.cssText = 'position: absolute; left: -9999px; top: 0;';
+      document.body.appendChild(container);
+
+      container.appendChild(page1);
+
+      const pages: HTMLCanvasElement[] = [];
+      const canvas1 = await html2canvas(page1, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#f8fafc'
+      });
+      pages.push(canvas1);
+
+      // If more projects, create page 2
+      if (projectRows.length > 18) {
+        const remainingProjects = projectRows.slice(18);
+        let page2Content = `<div>
+          <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">🏢 ${t('export.projectAssignments')} (${t('export.continued')})</h2>
+          <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+            <thead>
+              <tr style="background: #f8fafc;">
+                <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.project')}</th>
+                <th style="padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151;">${t('export.employees')}</th>
+                <th style="padding: 10px 12px; text-align: center; font-weight: 600; border-bottom: 2px solid #e2e8f0; color: #374151; width: 80px;">${t('export.count')}</th>
+              </tr>
+            </thead>
+            <tbody>`;
+
+        remainingProjects.slice(0, 35).forEach(([key, proj], idx) => {
+          const employeeList = proj.employees.map(e => `${e.name} (${t('export.shift')} ${e.shift})`).join(', ');
+          page2Content += `
+            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#fafbfc'};">
+              <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9;">
+                <div style="font-weight: 600; color: #1e293b;">${proj.customerName}</div>
+                <div style="color: #64748b; font-size: 10px;">${proj.typeName}</div>
+              </td>
+              <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; color: #475569;">${employeeList.length > 80 ? employeeList.slice(0, 80) + '...' : employeeList}</td>
+              <td style="padding: 8px 12px; border-bottom: 1px solid #f1f5f9; text-align: center; font-weight: 600; color: #0097AC;">${proj.employees.length}</td>
+            </tr>`;
+        });
+        page2Content += '</tbody></table></div>';
+
+        const page2 = createPageSection(page2Content, false);
+        container.appendChild(page2);
+
+        const canvas2 = await html2canvas(page2, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#f8fafc'
+        });
+        pages.push(canvas2);
+      }
+
+      document.body.removeChild(container);
+
+      this.showExportProgress(true, 80, t('export.generatingFile'));
+
+      // Create PDF
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+
+      pages.forEach((canvas, index) => {
+        if (index > 0) pdf.addPage();
+        const imgData = canvas.toDataURL('image/jpeg', 0.95);
+        pdf.addImage(imgData, 'JPEG', 0, 0, 210, 297);
+      });
+
+      this.showExportProgress(true, 95, t('export.savingFile'));
+
+      pdf.save(`grafik_${data.weekKey}.pdf`);
+
+      this.showExportProgress(false, 100);
+      this.showToast(t('export.pdfExported'), 'success');
+
+    } catch (error) {
+      console.error('Schedule PDF export error:', error);
+      this.showExportProgress(false, 0);
+      this.showToast(i18n.t('export.exportError'), 'error');
+    }
+  }
+
+  private async exportScheduleToExcel(): Promise<void> {
+    try {
+      const t = (key: string) => i18n.t(key);
+      const ExcelJS = await import('exceljs');
+
+      this.showExportProgress(true, 10, t('export.preparingData'));
+
+      const data = this.getScheduleExportData();
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Produkt Audit 360';
+      workbook.created = new Date();
+
+      // Colors
+      const headerBg = '000000';
+      const headerText = 'FFFFFF';
+      const tealBg = '0097AC';
+      const altRowBg = 'F8FAFC';
+
+      this.showExportProgress(true, 30, t('export.creatingSheets'));
+
+      // Sheet 1: Summary
+      const summarySheet = workbook.addWorksheet(t('export.summary'));
+      summarySheet.columns = [
+        { header: '', key: 'label', width: 30 },
+        { header: '', key: 'value', width: 25 }
+      ];
+
+      summarySheet.addRow([t('export.scheduleReport'), '']);
+      summarySheet.getRow(1).font = { bold: true, size: 16 };
+      summarySheet.addRow([t('export.week'), data.weekKey]);
+      summarySheet.addRow([t('export.dateRange'), `${data.weekDates.start} - ${data.weekDates.end}`]);
+      summarySheet.addRow([t('export.generatedAt'), new Date().toLocaleString()]);
+      summarySheet.addRow(['', '']);
+      summarySheet.addRow([t('export.totalEmployees'), data.stats.totalEmployees]);
+      summarySheet.addRow([t('export.assignedEmployees'), data.stats.assignedEmployees]);
+      summarySheet.addRow([t('export.projectsCount'), data.stats.totalProjects]);
+      summarySheet.addRow([t('export.coverage'), `${data.stats.coveragePercent}%`]);
+
+      this.showExportProgress(true, 50, t('export.creatingSheets'));
+
+      // Sheet 2: All Assignments
+      const assignmentsSheet = workbook.addWorksheet(t('export.assignments'));
+      assignmentsSheet.columns = [
+        { header: t('export.employee'), key: 'employee', width: 25 },
+        { header: t('export.customer'), key: 'customer', width: 25 },
+        { header: t('export.type'), key: 'type', width: 20 },
+        { header: t('export.shift'), key: 'shift', width: 12 },
+        { header: t('export.scope'), key: 'scope', width: 20 }
+      ];
+
+      // Style header
+      const headerRow = assignmentsSheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: headerText } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: headerBg } };
+      headerRow.alignment = { horizontal: 'center' };
+
+      // Add data rows
+      let rowIndex = 2;
+      [1, 2, 3].forEach(shift => {
+        const shiftData = data.byShift.get(shift) || [];
+        shiftData.forEach(item => {
+          assignmentsSheet.addRow({
+            employee: item.employee,
+            customer: item.customer,
+            type: item.type,
+            shift: shift,
+            scope: item.scope
+          });
+          if (rowIndex % 2 === 0) {
+            assignmentsSheet.getRow(rowIndex).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
+          }
+          rowIndex++;
+        });
+      });
+
+      this.showExportProgress(true, 70, t('export.creatingSheets'));
+
+      // Sheet 3: By Shift
+      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
+      for (let shift = 1; shift <= 3; shift++) {
+        const shiftSheet = workbook.addWorksheet(`${t('export.shift')} ${shift} - ${shiftNames[shift - 1]}`);
+        shiftSheet.columns = [
+          { header: t('export.employee'), key: 'employee', width: 25 },
+          { header: t('export.customer'), key: 'customer', width: 25 },
+          { header: t('export.type'), key: 'type', width: 20 },
+          { header: t('export.scope'), key: 'scope', width: 20 }
+        ];
+
+        const shiftHeaderRow = shiftSheet.getRow(1);
+        shiftHeaderRow.font = { bold: true, color: { argb: headerText } };
+        shiftHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tealBg } };
+
+        const shiftData = data.byShift.get(shift) || [];
+        shiftData.forEach((item, idx) => {
+          shiftSheet.addRow({
+            employee: item.employee,
+            customer: item.customer,
+            type: item.type,
+            scope: item.scope
+          });
+          if (idx % 2 === 1) {
+            shiftSheet.getRow(idx + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
+          }
+        });
+      }
+
+      this.showExportProgress(true, 90, t('export.savingFile'));
+
+      // Generate and download
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `grafik_${data.weekKey}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      this.showExportProgress(false, 100);
+      this.showToast(t('export.excelExported'), 'success');
+
+    } catch (error) {
+      console.error('Schedule Excel export error:', error);
+      this.showExportProgress(false, 0);
+      this.showToast(i18n.t('export.exportError'), 'error');
     }
   }
 
@@ -6905,6 +9066,25 @@ class KappaApp {
     this.renderScheduleContent();
   }
   
+  // Check if employee has absence in a given week
+  private getEmployeeAbsenceInWeek(employeeId: string, year: number, week: number): any | null {
+    // Get the dates for the week
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const weekStart = new Date(jan4);
+    weekStart.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 4); // Mon-Fri
+    
+    // Check if any absence overlaps with this week
+    return this.absences.find(a => {
+      if (a.employeeId !== employeeId) return false;
+      const absStart = new Date(a.startDate);
+      const absEnd = new Date(a.endDate);
+      return absStart <= weekEnd && absEnd >= weekStart;
+    }) || null;
+  }
+
   private renderScheduleEmployeePanel(): void {
     const assignedList = document.getElementById('assignedList');
     const unassignedList = document.getElementById('unassignedList');
@@ -6915,9 +9095,22 @@ class KappaApp {
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const assignedEmployeeIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
     
-    // Podziel pracowników
-    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
-    const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
+    // Check employees with absences from absence module
+    const employeesWithAbsences = new Map<string, any>();
+    this.state.employees.forEach(e => {
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      if (absence) {
+        employeesWithAbsences.set(e.id, absence);
+      }
+    });
+    
+    // Podziel pracowników - uwzględnij nieobecności z modułu urlopów
+    const availableEmployees = this.state.employees.filter(e => 
+      (!e.status || e.status === 'available') && !employeesWithAbsences.has(e.id)
+    );
+    const absentEmployees = this.state.employees.filter(e => 
+      e.status === 'vacation' || e.status === 'sick' || employeesWithAbsences.has(e.id)
+    );
     const assignedAvailable = availableEmployees.filter(e => assignedEmployeeIds.has(e.id));
     const unassignedAvailable = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id));
     
@@ -6969,16 +9162,34 @@ class KappaApp {
         absentList.innerHTML = '<p class="sched-panel-empty">—</p>';
       } else {
         absentList.innerHTML = absentEmployees.map(emp => {
-          const isVacation = emp.status === 'vacation';
-          const icon = isVacation 
-            ? '<svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M21 15l-3-3m0 0l-3 3m3-3v9"/></svg>'
-            : '<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" width="18" height="18"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
-          const label = isVacation ? 'Urlop' : 'L4';
+          // Check if absence is from new module
+          const absenceFromModule = employeesWithAbsences.get(emp.id);
+          const absenceType = absenceFromModule ? this.absenceTypes.find(t => t.id === absenceFromModule.absenceTypeId) : null;
+          
+          const isVacation = emp.status === 'vacation' || absenceType?.id?.includes('vacation');
+          const isSick = emp.status === 'sick' || absenceType?.id === 'sick';
+          
+          let icon: string;
+          let label: string;
+          let badgeClass: string;
+          
+          if (absenceType) {
+            icon = `<span style="font-size: 1.1rem;">${absenceType.icon}</span>`;
+            label = absenceType.name.length > 15 ? absenceType.name.substring(0, 12) + '...' : absenceType.name;
+            badgeClass = isVacation ? 'vacation' : isSick ? 'sick' : 'vacation';
+          } else {
+            icon = isVacation 
+              ? '<svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M21 15l-3-3m0 0l-3 3m3-3v9"/></svg>'
+              : '<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" width="18" height="18"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
+            label = isVacation ? 'Urlop' : 'L4';
+            badgeClass = emp.status || 'vacation';
+          }
+          
           return `
-            <div class="sched-absent-card" data-employee-id="${emp.id}" data-status="${emp.status}">
+            <div class="sched-absent-card" data-employee-id="${emp.id}" data-status="${emp.status || 'absent'}" ${absenceFromModule ? `data-absence-id="${absenceFromModule.id}"` : ''}>
               <span class="sched-absent-icon">${icon}</span>
               <span class="sched-absent-name">${emp.firstName} ${emp.lastName}</span>
-              <span class="sched-absent-badge ${emp.status}">${label}</span>
+              <span class="sched-absent-badge ${badgeClass}">${label}</span>
               <button class="sched-absent-return" data-emp-id="${emp.id}" title="Przywróć">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
               </button>
@@ -7169,7 +9380,751 @@ class KappaApp {
     // Quick add
     document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
     
+    // Render stats and history panels
+    this.renderScheduleStatsPanel();
+    this.renderScheduleHistoryPanel();
+    
     (window as any).kappaApp = this;
+  }
+  
+  // Render stats panel in sidebar
+  private renderScheduleStatsPanel(): void {
+    const panel = document.getElementById('scheduleStatsPanel');
+    if (!panel) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const allAssignments = this.state.scheduleAssignments;
+    
+    // ===== PODSTAWOWE STATYSTYKI =====
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
+    const assignedEmployeeIds = new Set(weekAssignments.map(a => a.employeeId));
+    const unassignedCount = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id)).length;
+    
+    // ===== ANALIZA OBCIĄŻENIA PRACOWNIKÓW =====
+    const employeeWorkload = new Map<string, number>();
+    weekAssignments.forEach(a => {
+      employeeWorkload.set(a.employeeId, (employeeWorkload.get(a.employeeId) || 0) + 1);
+    });
+    
+    const workloads = Array.from(employeeWorkload.values());
+    const maxWorkload = Math.max(...workloads, 0);
+    const minWorkload = Math.min(...workloads.filter(w => w > 0), maxWorkload);
+    const avgWorkload = workloads.length > 0 ? workloads.reduce((a, b) => a + b, 0) / workloads.length : 0;
+    
+    // Znajdź pracowników z nierównomiernym obciążeniem
+    const overloadedEmployees: Array<{emp: Employee; count: number}> = [];
+    const underloadedEmployees: Array<{emp: Employee; count: number}> = [];
+    
+    employeeWorkload.forEach((count, empId) => {
+      const emp = this.state.employees.find(e => e.id === empId);
+      if (emp) {
+        if (count >= avgWorkload * 1.5 && count > 3) {
+          overloadedEmployees.push({ emp, count });
+        }
+      }
+    });
+    
+    // Pracownicy dostępni ale bez przypisań lub z małą liczbą
+    availableEmployees.forEach(emp => {
+      const count = employeeWorkload.get(emp.id) || 0;
+      if (count < avgWorkload * 0.5 && maxWorkload > 2) {
+        underloadedEmployees.push({ emp, count });
+      }
+    });
+    
+    // ===== ANALIZA POKRYCIA PROJEKTÓW =====
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (p.hidden) return false;
+      const weekData = p.weeks?.[weekKey];
+      return weekData && weekData.soll > 0;
+    });
+    
+    const projectGroups = new Map<string, { items: Project[]; customer: string; type: string }>();
+    projectsWithSoll.forEach(p => {
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      if (!projectGroups.has(groupKey)) {
+        const customer = this.state.customers.find(c => c.id === p.customer_id);
+        const type = this.state.types.find(t => t.id === p.type_id);
+        projectGroups.set(groupKey, { 
+          items: [], 
+          customer: customer?.name || '?',
+          type: type?.name || '?'
+        });
+      }
+      projectGroups.get(groupKey)!.items.push(p);
+    });
+    
+    let fullyCovered = 0;
+    let partiallyCovered = 0;
+    let notCovered = 0;
+    const uncoveredProjects: Array<{groupKey: string; customer: string; type: string}> = [];
+    
+    projectGroups.forEach((group, groupKey) => {
+      const groupAssignments = weekAssignments.filter((a: ScheduleAssignment) =>
+        a.projectId === groupKey || group.items.some(item => item.id === a.projectId)
+      );
+      
+      if (groupAssignments.length === 0) {
+        notCovered++;
+        uncoveredProjects.push({ groupKey, customer: group.customer, type: group.type });
+      } else {
+        // Sprawdź pełne pokrycie:
+        // 1. Ktoś jest przypisany do całego projektu (scope='project'), LUB
+        // 2. Wszystkie unikalne testy w projekcie mają przypisania
+        const hasProjectScope = groupAssignments.some((a: ScheduleAssignment) => a.scope === 'project');
+        
+        if (hasProjectScope) {
+          fullyCovered++;
+        } else {
+          // Zbierz unikalne testy wymagane w tym tygodniu
+          const requiredTests = new Set<string>();
+          group.items.forEach(p => {
+            const weekData = p.weeks?.[weekKey];
+            if (weekData && weekData.soll > 0) {
+              // Dodaj test_id projektu do wymaganych
+              if (p.test_id) requiredTests.add(p.test_id);
+            }
+          });
+          
+          // Zbierz testy które mają przypisania
+          const coveredTests = new Set<string>();
+          groupAssignments.forEach((a: ScheduleAssignment) => {
+            if (a.testId) {
+              coveredTests.add(a.testId);
+            } else if (a.scope === 'project') {
+              // Jeśli ktoś ma scope='project', pokrywa wszystkie testy
+              requiredTests.forEach(t => coveredTests.add(t));
+            }
+          });
+          
+          // Sprawdź czy wszystkie wymagane testy są pokryte
+          const allTestsCovered = requiredTests.size > 0 && 
+            [...requiredTests].every(testId => coveredTests.has(testId));
+          
+          if (allTestsCovered || requiredTests.size === 0) {
+            fullyCovered++;
+          } else if (coveredTests.size > 0) {
+            partiallyCovered++;
+          } else {
+            partiallyCovered++;
+          }
+        }
+      }
+    });
+    
+    const coveragePercent = projectGroups.size > 0 
+      ? Math.round((fullyCovered / projectGroups.size) * 100) 
+      : 100;
+    
+    // ===== ANALIZA ROTACJI - ZBYT DŁUGO NA PROJEKCIE =====
+    const consecutiveWeeksOnProject = new Map<string, Map<string, number>>(); // empId -> projectKey -> weeks
+    
+    // Sprawdź ostatnie 4 tygodnie
+    for (let i = 0; i < 4; i++) {
+      let checkWeek = this.scheduleCurrentWeek - i;
+      let checkYear = this.scheduleCurrentYear;
+      if (checkWeek < 1) {
+        checkWeek += 52;
+        checkYear--;
+      }
+      const checkKey = `${checkYear}-KW${checkWeek.toString().padStart(2, '0')}`;
+      
+      const weekAssigns = allAssignments.filter((a: ScheduleAssignment) => a.week === checkKey);
+      weekAssigns.forEach(a => {
+        const projectKey = a.projectId;
+        if (!consecutiveWeeksOnProject.has(a.employeeId)) {
+          consecutiveWeeksOnProject.set(a.employeeId, new Map());
+        }
+        const empProjects = consecutiveWeeksOnProject.get(a.employeeId)!;
+        empProjects.set(projectKey, (empProjects.get(projectKey) || 0) + 1);
+      });
+    }
+    
+    const longTermAssignments: Array<{emp: Employee; project: string; weeks: number}> = [];
+    consecutiveWeeksOnProject.forEach((projects, empId) => {
+      const emp = this.state.employees.find(e => e.id === empId);
+      if (!emp) return;
+      
+      projects.forEach((weeks, projectKey) => {
+        if (weeks >= 3) {
+          // Znajdź nazwę projektu
+          const parts = projectKey.split('-');
+          const customer = this.state.customers.find(c => c.id === parts[0]);
+          const type = this.state.types.find(t => t.id === parts[1]);
+          const projectName = customer && type ? `${customer.name} ${type.name}` : projectKey;
+          longTermAssignments.push({ emp, project: projectName, weeks });
+        }
+      });
+    });
+    
+    // ===== ANALIZA DOŚWIADCZENIA =====
+    const projectExperience = new Map<string, Map<string, number>>(); // projectKey -> empId -> count
+    
+    allAssignments.forEach((a: ScheduleAssignment) => {
+      const projectKey = a.projectId;
+      if (!projectExperience.has(projectKey)) {
+        projectExperience.set(projectKey, new Map());
+      }
+      const empExp = projectExperience.get(projectKey)!;
+      empExp.set(a.employeeId, (empExp.get(a.employeeId) || 0) + 1);
+    });
+    
+    const experienceImbalance: Array<{project: string; experienced: {emp: Employee; count: number}; inexperienced: {emp: Employee; count: number}}> = [];
+    
+    projectExperience.forEach((empCounts, projectKey) => {
+      const counts = Array.from(empCounts.entries())
+        .map(([empId, count]) => ({ emp: this.state.employees.find(e => e.id === empId), count }))
+        .filter(x => x.emp && (!x.emp.status || x.emp.status === 'available')) as Array<{emp: Employee; count: number}>;
+      
+      if (counts.length < 2) return;
+      
+      counts.sort((a, b) => b.count - a.count);
+      const max = counts[0];
+      const min = counts[counts.length - 1];
+      
+      if (max.count >= 10 && min.count <= 3 && max.count > min.count * 3) {
+        const parts = projectKey.split('-');
+        const customer = this.state.customers.find(c => c.id === parts[0]);
+        const type = this.state.types.find(t => t.id === parts[1]);
+        const projectName = customer && type ? `${customer.name} ${type.name}` : projectKey;
+        experienceImbalance.push({ project: projectName, experienced: max, inexperienced: min });
+      }
+    });
+    
+    // ===== KONFLIKTY - pracownik na 2 projektach w tej samej zmianie =====
+    const shiftConflicts: Array<{emp: Employee; shift: number; projects: string[]}> = [];
+    const empShiftProjects = new Map<string, Map<number, string[]>>(); // empId -> shift -> projects[]
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (!empShiftProjects.has(a.employeeId)) {
+        empShiftProjects.set(a.employeeId, new Map());
+      }
+      const shifts = empShiftProjects.get(a.employeeId)!;
+      if (!shifts.has(a.shift)) {
+        shifts.set(a.shift, []);
+      }
+      
+      const parts = a.projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const type = this.state.types.find(t => t.id === parts[1]);
+      const projectName = customer && type ? `${customer.name} ${type.name}` : a.projectId;
+      shifts.get(a.shift)!.push(projectName);
+    });
+    
+    empShiftProjects.forEach((shifts, empId) => {
+      const emp = this.state.employees.find(e => e.id === empId);
+      if (!emp) return;
+      
+      shifts.forEach((projects, shift) => {
+        if (projects.length > 1) {
+          shiftConflicts.push({ emp, shift, projects });
+        }
+      });
+    });
+    
+    // ===== KONFLIKT - pracownik na urlopie ale przypisany =====
+    const absentButAssigned: Array<{emp: Employee; status: string}> = [];
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (emp && (emp.status === 'vacation' || emp.status === 'sick')) {
+        if (!absentButAssigned.find(x => x.emp.id === emp.id)) {
+          absentButAssigned.push({ emp, status: emp.status === 'vacation' ? 'urlop' : 'L4' });
+        }
+      }
+    });
+    
+    // ===== SUGESTIE OPTYMALNEGO PRZYPISANIA =====
+    const optimalSuggestions: Array<{project: string; suggestedEmp: Employee; reason: string}> = [];
+    
+    uncoveredProjects.slice(0, 3).forEach(({ groupKey, customer, type }) => {
+      // Znajdź pracownika z najmniejszym obciążeniem który ma doświadczenie
+      const projectExp = projectExperience.get(groupKey);
+      
+      let bestCandidate: Employee | null = null;
+      let bestScore = -1;
+      
+      availableEmployees.forEach((emp: Employee) => {
+        if (assignedEmployeeIds.has(emp.id) && (employeeWorkload.get(emp.id) || 0) > avgWorkload) return;
+        
+        const experience = projectExp?.get(emp.id) || 0;
+        const workload = employeeWorkload.get(emp.id) || 0;
+        const score = experience * 2 - workload; // Preferuj doświadczenie, ale balansuj obciążenie
+        
+        const currentBestWorkload = bestCandidate ? (employeeWorkload.get(bestCandidate.id) || 0) : Infinity;
+        if (score > bestScore || (score === bestScore && workload < currentBestWorkload)) {
+          bestScore = score;
+          bestCandidate = emp;
+        }
+      });
+      
+      if (bestCandidate) {
+        const candidate = bestCandidate as Employee;
+        const exp = projectExp?.get(candidate.id) || 0;
+        const reason = exp > 0 
+          ? `był już ${exp} razy na tym projekcie i ma mało zadań`
+          : `ma najmniej zadań w tym tygodniu`;
+        optimalSuggestions.push({ 
+          project: `${customer} ${type}`, 
+          suggestedEmp: candidate, 
+          reason 
+        });
+      }
+    });
+    
+    // ===== BALANS ZMIAN =====
+    const shiftCounts = new Map<number, number>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      shiftCounts.set(a.shift, (shiftCounts.get(a.shift) || 0) + 1);
+    });
+    
+    const shifts = [1, 2, 3].filter(s => this.state.settings.shiftSystem >= s);
+    const shiftImbalance: {from: number; to: number; diff: number} | null = (() => {
+      let maxShift = 1, minShift = 1, maxCount = 0, minCount = Infinity;
+      shifts.forEach(s => {
+        const count = shiftCounts.get(s) || 0;
+        if (count > maxCount) { maxCount = count; maxShift = s; }
+        if (count < minCount) { minCount = count; minShift = s; }
+      });
+      if (maxCount > minCount * 2 && maxCount - minCount >= 3) {
+        return { from: maxShift, to: minShift, diff: maxCount - minCount };
+      }
+      return null;
+    })();
+    
+    // ===== GENERUJ HTML =====
+    const suggestions: string[] = [];
+    const alerts: string[] = [];
+    
+    // Alerty krytyczne
+    absentButAssigned.forEach(({ emp, status }) => {
+      alerts.push(`<div class="sched-alert danger"><span class="alert-icon">⚠️</span><span class="alert-text"><strong>${emp.firstName} ${emp.lastName}</strong> jest na ${status}, ale ma przypisania!</span></div>`);
+    });
+    
+    shiftConflicts.forEach(({ emp, shift, projects }) => {
+      alerts.push(`<div class="sched-alert warning"><span class="alert-icon">⚡</span><span class="alert-text"><strong>${emp.firstName} ${emp.lastName}</strong> ma ${projects.length} projekty na zmianie ${shift} naraz!</span></div>`);
+    });
+    
+    // Sugestie
+    if (longTermAssignments.length > 0) {
+      longTermAssignments.slice(0, 3).forEach(({ emp, project, weeks }) => {
+        suggestions.push(`<div class="sched-suggestion rotate"><span class="sugg-icon">🔄</span><span class="sugg-text"><strong>${emp.firstName}</strong> pracuje na <em>${project}</em> już ${weeks} tygodnie z rzędu - może czas na zmianę?</span></div>`);
+      });
+    }
+    
+    if (experienceImbalance.length > 0) {
+      experienceImbalance.slice(0, 2).forEach(({ project, experienced, inexperienced }) => {
+        suggestions.push(`<div class="sched-suggestion balance"><span class="sugg-icon">📊</span><span class="sugg-text"><em>${project}</em>: <strong>${experienced.emp.firstName}</strong> był ${experienced.count} razy, <strong>${inexperienced.emp.firstName}</strong> tylko ${inexperienced.count} - daj szansę mniej doświadczonemu</span></div>`);
+      });
+    }
+    
+    if (overloadedEmployees.length > 0 && underloadedEmployees.length > 0) {
+      const over = overloadedEmployees[0];
+      const under = underloadedEmployees[0];
+      suggestions.push(`<div class="sched-suggestion workload"><span class="sugg-icon">⚖️</span><span class="sugg-text"><strong>${over.emp.firstName}</strong> ma ${over.count} zadań, <strong>${under.emp.firstName}</strong> tylko ${under.count} - przenieś jedno zadanie</span></div>`);
+    }
+    
+    if (shiftImbalance) {
+      suggestions.push(`<div class="sched-suggestion shift"><span class="sugg-icon">🔀</span><span class="sugg-text">Zmiana ${shiftImbalance.from} ma ${shiftImbalance.diff} osób więcej niż zmiana ${shiftImbalance.to} - przenieś kogoś</span></div>`);
+    }
+    
+    optimalSuggestions.slice(0, 2).forEach(({ project, suggestedEmp, reason }) => {
+      suggestions.push(`<div class="sched-suggestion optimal"><span class="sugg-icon">💡</span><span class="sugg-text">Przypisz <strong>${suggestedEmp.firstName}</strong> do <em>${project}</em> - ${reason}</span></div>`);
+    });
+    
+    panel.innerHTML = `
+      <div class="sched-stats-grid">
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${assignedEmployeeIds.size}</span>
+          <span class="sched-stat-label">Przypisanych</span>
+        </div>
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${unassignedCount}</span>
+          <span class="sched-stat-label">Wolnych</span>
+        </div>
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${absentEmployees.length}</span>
+          <span class="sched-stat-label">Nieobecnych</span>
+        </div>
+        <div class="sched-stat-item">
+          <span class="sched-stat-value">${coveragePercent}%</span>
+          <span class="sched-stat-label">Pokrycie</span>
+        </div>
+      </div>
+      
+      <div class="sched-stats-coverage">
+        <div class="sched-coverage-bar">
+          <div class="sched-coverage-fill" style="width: ${coveragePercent}%"></div>
+        </div>
+        <div class="sched-coverage-legend">
+          <span class="sched-coverage-item full"><span class="dot"></span>${fullyCovered} pełne</span>
+          <span class="sched-coverage-item partial"><span class="dot"></span>${partiallyCovered} częściowe</span>
+          <span class="sched-coverage-item empty"><span class="dot"></span>${notCovered} brak</span>
+        </div>
+      </div>
+      
+      ${alerts.length > 0 ? `
+        <div class="sched-alerts-section">
+          <h5>⚠️ Alerty</h5>
+          ${alerts.join('')}
+        </div>
+      ` : ''}
+      
+      ${suggestions.length > 0 ? `
+        <div class="sched-suggestions-section">
+          <h5>💡 Sugestie</h5>
+          ${suggestions.join('')}
+        </div>
+      ` : '<div class="sched-no-suggestions">✅ Brak sugestii - grafik wygląda dobrze!</div>'}
+    `;
+  }
+  
+  // Render history panel in sidebar
+  private renderScheduleHistoryPanel(): void {
+    const panel = document.getElementById('scheduleHistoryPanel');
+    if (!panel) return;
+    
+    // Pobierz logi z bazy danych zamiast localStorage
+    const recentLogs = this.logs
+      .filter(log => log.entityType === 'Assignment' || log.entityType === 'Employee' || log.entityType === 'ScheduleEntry')
+      .slice(0, 5);
+    
+    if (recentLogs.length === 0) {
+      panel.innerHTML = '<p class="sched-panel-empty">Brak ostatnich zmian</p>';
+      return;
+    }
+    
+    panel.innerHTML = `
+      <div class="sched-history-mini-list">
+        ${recentLogs.map(log => {
+          const isAdded = log.action === 'created';
+          const isRemoved = log.action === 'deleted';
+          const iconClass = isAdded ? 'added' : isRemoved ? 'removed' : 'modified';
+          const iconSvg = isAdded 
+            ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+            : isRemoved
+            ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
+            : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+          
+          const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
+            day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
+          });
+          
+          return `
+            <div class="sched-history-mini-item">
+              <div class="sched-history-mini-icon ${iconClass}">${iconSvg}</div>
+              <div class="sched-history-mini-content">
+                <span class="sched-history-mini-text">${log.entityName}${log.details ? ` - ${log.details}` : ''}</span>
+                <span class="sched-history-mini-time">${time}</span>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+  
+  // Show stats modal
+  private showStatsModal(): void {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const allAssignments = this.state.scheduleAssignments;
+    
+    // === STATYSTYKI PRACOWNIKÓW ===
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const employeeStats = availableEmployees
+      .map(emp => {
+        const empAssignments = weekAssignments.filter(a => a.employeeId === emp.id);
+        const shifts = empAssignments.map(a => a.shift);
+        const projects = [...new Set(empAssignments.map(a => {
+          const parts = a.projectId.split('-');
+          const customer = this.state.customers.find(c => c.id === parts[0]);
+          return customer?.name || '?';
+        }))];
+        return {
+          id: emp.id,
+          name: `${emp.firstName} ${emp.lastName}`,
+          firstName: emp.firstName,
+          tasks: empAssignments.length,
+          shifts: [...new Set(shifts)],
+          projects
+        };
+      })
+      .sort((a, b) => b.tasks - a.tasks);
+    
+    const maxTasks = Math.max(...employeeStats.map(e => e.tasks), 1);
+    const avgTasks = employeeStats.length > 0 ? employeeStats.reduce((sum, e) => sum + e.tasks, 0) / employeeStats.length : 0;
+    
+    // === STATYSTYKI ZMIAN ===
+    const shiftStats = [1, 2, 3].map(shift => {
+      const count = weekAssignments.filter(a => a.shift === shift).length;
+      const employees = [...new Set(weekAssignments.filter(a => a.shift === shift).map(a => a.employeeId))].length;
+      return { shift, count, employees };
+    }).filter((_, i) => i < this.scheduleShiftSystem);
+    
+    const totalShiftAssignments = shiftStats.reduce((sum, s) => sum + s.count, 0);
+    
+    // === STATYSTYKI PROJEKTÓW ===
+    const projectStats = new Map<string, {name: string; assignments: number; employees: Set<string>; shifts: Set<number>}>();
+    weekAssignments.forEach(a => {
+      const parts = a.projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const type = this.state.types.find(t => t.id === parts[1]);
+      const name = customer && type ? `${customer.name} ${type.name}` : a.projectId;
+      
+      if (!projectStats.has(a.projectId)) {
+        projectStats.set(a.projectId, { name, assignments: 0, employees: new Set(), shifts: new Set() });
+      }
+      const stat = projectStats.get(a.projectId)!;
+      stat.assignments++;
+      stat.employees.add(a.employeeId);
+      stat.shifts.add(a.shift);
+    });
+    
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (p.hidden) return false;
+      const weekData = p.weeks?.[weekKey];
+      return weekData && weekData.soll > 0;
+    });
+    
+    const projectGroupsSet = new Set<string>();
+    projectsWithSoll.forEach(p => projectGroupsSet.add(`${p.customer_id}-${p.type_id}`));
+    const totalProjects = projectGroupsSet.size;
+    const coveredProjects = projectStats.size;
+    const coveragePercent = totalProjects > 0 ? Math.round((coveredProjects / totalProjects) * 100) : 100;
+    
+    // === HISTORIA TYGODNIOWA ===
+    const weeklyHistory: Array<{week: string; assignments: number; employees: number}> = [];
+    for (let i = 5; i >= 0; i--) {
+      let checkWeek = this.scheduleCurrentWeek - i;
+      let checkYear = this.scheduleCurrentYear;
+      if (checkWeek < 1) { checkWeek += 52; checkYear--; }
+      const checkKey = `${checkYear}-KW${checkWeek.toString().padStart(2, '0')}`;
+      const weekAssigns = allAssignments.filter((a: ScheduleAssignment) => a.week === checkKey);
+      weeklyHistory.push({
+        week: `KW${checkWeek}`,
+        assignments: weekAssigns.length,
+        employees: new Set(weekAssigns.map(a => a.employeeId)).size
+      });
+    }
+    const maxHistoryAssignments = Math.max(...weeklyHistory.map(w => w.assignments), 1);
+    
+    // === TOP PRACOWNICY W MIESIĄCU ===
+    const monthlyStats = new Map<string, number>();
+    for (let i = 0; i < 4; i++) {
+      let checkWeek = this.scheduleCurrentWeek - i;
+      let checkYear = this.scheduleCurrentYear;
+      if (checkWeek < 1) { checkWeek += 52; checkYear--; }
+      const checkKey = `${checkYear}-KW${checkWeek.toString().padStart(2, '0')}`;
+      allAssignments.filter((a: ScheduleAssignment) => a.week === checkKey).forEach(a => {
+        monthlyStats.set(a.employeeId, (monthlyStats.get(a.employeeId) || 0) + 1);
+      });
+    }
+    const topMonthlyWorkers = [...monthlyStats.entries()]
+      .map(([empId, count]) => {
+        const emp = this.state.employees.find(e => e.id === empId);
+        return { name: emp ? `${emp.firstName} ${emp.lastName}` : '?', count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+    
+    // === DOŚWIADCZENIE PRACOWNIKÓW NA PROJEKTACH ===
+    const employeeProjectExperience = new Map<string, Map<string, number>>(); // empId -> projectName -> count
+    allAssignments.forEach((a: ScheduleAssignment) => {
+      const parts = a.projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const projectName = customer?.name || '?';
+      
+      if (!employeeProjectExperience.has(a.employeeId)) {
+        employeeProjectExperience.set(a.employeeId, new Map());
+      }
+      const empProjects = employeeProjectExperience.get(a.employeeId)!;
+      empProjects.set(projectName, (empProjects.get(projectName) || 0) + 1);
+    });
+    
+    // Przygotuj dane do wykresu - top 8 pracowników z największym doświadczeniem
+    const experienceData = availableEmployees
+      .map(emp => {
+        const projects = employeeProjectExperience.get(emp.id) || new Map();
+        const totalExp = [...projects.values()].reduce((sum, c) => sum + c, 0);
+        const projectList = [...projects.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 4)
+          .map(([name, count]) => ({ name, count }));
+        return {
+          name: `${emp.firstName} ${emp.lastName}`,
+          firstName: emp.firstName,
+          totalExp,
+          projects: projectList
+        };
+      })
+      .filter(e => e.totalExp > 0)
+      .sort((a, b) => b.totalExp - a.totalExp)
+      .slice(0, 8);
+    
+    const maxExp = Math.max(...experienceData.map(e => e.totalExp), 1);
+    
+    // Zbierz unikalne projekty dla legendy
+    const allProjectNames = new Set<string>();
+    experienceData.forEach(e => e.projects.forEach(p => allProjectNames.add(p.name)));
+    const projectColors = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#84cc16'];
+    const projectColorMap = new Map<string, string>();
+    [...allProjectNames].slice(0, 8).forEach((name, i) => projectColorMap.set(name, projectColors[i % projectColors.length]));
+    
+    // === GENERUJ HTML ===
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal stats-modal-wide">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📊 Szczegółowe statystyki - KW${this.scheduleCurrentWeek.toString().padStart(2, '0')} ${this.scheduleCurrentYear}</h2>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="employee-modal-body stats-modal-body">
+          
+          <!-- SEKCJA 1: Podsumowanie -->
+          <div class="stats-section stats-summary">
+            <div class="stats-summary-card">
+              <div class="stats-card-value">${weekAssignments.length}</div>
+              <div class="stats-card-label">Przypisań</div>
+            </div>
+            <div class="stats-summary-card">
+              <div class="stats-card-value">${new Set(weekAssignments.map(a => a.employeeId)).size}</div>
+              <div class="stats-card-label">Pracowników</div>
+            </div>
+            <div class="stats-summary-card">
+              <div class="stats-card-value">${coveredProjects}/${totalProjects}</div>
+              <div class="stats-card-label">Projektów</div>
+            </div>
+            <div class="stats-summary-card ${coveragePercent === 100 ? 'success' : coveragePercent >= 80 ? 'warning' : 'danger'}">
+              <div class="stats-card-value">${coveragePercent}%</div>
+              <div class="stats-card-label">Pokrycie</div>
+            </div>
+          </div>
+          
+          <!-- SEKCJA 2: Wykres zmian -->
+          <div class="stats-section">
+            <h4>📈 Rozkład na zmiany</h4>
+            <div class="stats-shift-chart">
+              ${shiftStats.map(s => `
+                <div class="stats-shift-bar">
+                  <div class="stats-bar-label">Zmiana ${s.shift}</div>
+                  <div class="stats-bar-track">
+                    <div class="stats-bar-fill shift-${s.shift}" style="width: ${totalShiftAssignments > 0 ? (s.count / totalShiftAssignments * 100) : 0}%"></div>
+                  </div>
+                  <div class="stats-bar-value">${s.count} <small>(${s.employees} os.)</small></div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 3: Wykres obciążenia pracowników -->
+          <div class="stats-section">
+            <h4>👥 Obciążenie pracowników</h4>
+            <div class="stats-employee-chart">
+              ${employeeStats.slice(0, 10).map(e => `
+                <div class="stats-emp-bar ${e.tasks === 0 ? 'zero' : e.tasks > avgTasks * 1.5 ? 'high' : e.tasks < avgTasks * 0.5 ? 'low' : ''}">
+                  <div class="stats-emp-name">${e.firstName}</div>
+                  <div class="stats-emp-track">
+                    <div class="stats-emp-fill" style="width: ${(e.tasks / maxTasks * 100)}%"></div>
+                  </div>
+                  <div class="stats-emp-value">${e.tasks}</div>
+                </div>
+              `).join('')}
+              ${employeeStats.length > 10 ? `<div class="stats-more-hint">...i ${employeeStats.length - 10} więcej</div>` : ''}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 4: Trend tygodniowy -->
+          <div class="stats-section">
+            <h4>📅 Trend ostatnich 6 tygodni</h4>
+            <div class="stats-trend-chart">
+              ${weeklyHistory.map((w, i) => `
+                <div class="stats-trend-bar ${i === weeklyHistory.length - 1 ? 'current' : ''}">
+                  <div class="stats-trend-fill" style="height: ${(w.assignments / maxHistoryAssignments * 100)}%">
+                    <span class="stats-trend-value">${w.assignments}</span>
+                  </div>
+                  <div class="stats-trend-label">${w.week}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 5: Top pracownicy miesiąca -->
+          <div class="stats-section">
+            <h4>🏆 Top pracownicy (ostatnie 4 tyg.)</h4>
+            <div class="stats-top-list">
+              ${topMonthlyWorkers.map((w, i) => `
+                <div class="stats-top-item">
+                  <span class="stats-top-rank">${i + 1}.</span>
+                  <span class="stats-top-name">${w.name}</span>
+                  <span class="stats-top-count">${w.count} przypisań</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 6: Doświadczenie pracowników na projektach -->
+          <div class="stats-section stats-experience-section">
+            <h4>🎯 Doświadczenie na projektach (wszystkie tygodnie)</h4>
+            <div class="stats-experience-legend">
+              ${[...projectColorMap.entries()].map(([name, color]) => `
+                <span class="stats-legend-item"><span class="stats-legend-dot" style="background: ${color}"></span>${name}</span>
+              `).join('')}
+            </div>
+            <div class="stats-experience-chart">
+              ${experienceData.map(e => `
+                <div class="stats-exp-row">
+                  <div class="stats-exp-name">${e.firstName}</div>
+                  <div class="stats-exp-bar-container">
+                    <div class="stats-exp-bar">
+                      ${e.projects.map(p => `
+                        <div class="stats-exp-segment" style="width: ${(p.count / maxExp * 100)}%; background: ${projectColorMap.get(p.name) || '#888'}" title="${p.name}: ${p.count} razy"></div>
+                      `).join('')}
+                    </div>
+                  </div>
+                  <div class="stats-exp-total">${e.totalExp}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+          <!-- SEKCJA 7: Tabela szczegółowa -->
+          <div class="stats-section">
+            <h4>📋 Szczegóły pracowników</h4>
+            <div class="stats-detail-table">
+              <div class="stats-table-header">
+                <span>Pracownik</span>
+                <span>Przypisania</span>
+                <span>Zmiany</span>
+                <span>Projekty</span>
+              </div>
+              ${employeeStats.map(e => `
+                <div class="stats-table-row ${e.tasks === 0 ? 'inactive' : ''}">
+                  <span class="stats-table-name">${e.name}</span>
+                  <span class="stats-table-tasks">${e.tasks}</span>
+                  <span class="stats-table-shifts">${e.shifts.length > 0 ? e.shifts.map(s => `Z${s}`).join(', ') : '-'}</span>
+                  <span class="stats-table-projects">${e.projects.length > 0 ? e.projects.slice(0, 2).join(', ') + (e.projects.length > 2 ? '...' : '') : '-'}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+          
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
   }
   
   // Podświetlanie przypisań pracownika w tabeli
@@ -7222,389 +10177,6 @@ class KappaApp {
     }
     
     this.renderScheduleEmployeePanel();
-  }
-  
-  // ==================== Schedule Statistics ====================
-  private renderScheduleStats(): void {
-    const container = document.getElementById('scheduleStatsPanel');
-    if (!container) return;
-    
-    const stats: Array<{ type: 'warning' | 'info' | 'success'; icon: string; text: string }> = [];
-    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
-    const currentYear = this.scheduleCurrentYear;
-    
-    // Analiza pracowników
-    this.state.employees.forEach(emp => {
-      if (emp.status && emp.status !== 'available') return;
-      
-      // Sprawdź ile tygodni z rzędu pracownik ma ten sam projekt
-      let consecutiveWeeks = 0;
-      let lastProjectId: string | null = null;
-      
-      for (let w = this.scheduleCurrentWeek; w >= Math.max(1, this.scheduleCurrentWeek - 12); w--) {
-        const wk = `${currentYear}-KW${w.toString().padStart(2, '0')}`;
-        const assignments = this.state.scheduleAssignments.filter(
-          (a: ScheduleAssignment) => a.employeeId === emp.id && a.week === wk
-        );
-        
-        if (assignments.length === 0) break;
-        
-        const projectIds = [...new Set(assignments.map((a: ScheduleAssignment) => a.projectId))];
-        const mainProject = projectIds[0];
-        
-        if (lastProjectId === null) {
-          lastProjectId = mainProject;
-          consecutiveWeeks = 1;
-        } else if (mainProject === lastProjectId) {
-          consecutiveWeeks++;
-        } else {
-          break;
-        }
-      }
-      
-      if (consecutiveWeeks >= 3 && lastProjectId) {
-        const project = this.state.projects.find(p => p.id === lastProjectId || `${p.customer_id}-${p.type_id}` === lastProjectId);
-        const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-        stats.push({
-          type: 'warning',
-          icon: '🔄',
-          text: `<strong>${emp.firstName}</strong> pracuje przy <strong>${customer?.name || '?'}</strong> od ${consecutiveWeeks} tygodni - rozważ rotację`
-        });
-      }
-      
-      // Statystyki roczne - ile razy dany projekt/test
-      const yearAssignments = this.state.scheduleAssignments.filter(
-        (a: ScheduleAssignment) => a.employeeId === emp.id && a.week.startsWith(`${currentYear}-`)
-      );
-      
-      const projectCounts = new Map<string, number>();
-      yearAssignments.forEach((a: ScheduleAssignment) => {
-        const count = projectCounts.get(a.projectId) || 0;
-        projectCounts.set(a.projectId, count + 1);
-      });
-      
-      // Znajdź projekt z największą liczbą przypisań
-      let maxProject = '';
-      let maxCount = 0;
-      projectCounts.forEach((count, projectId) => {
-        if (count > maxCount) {
-          maxCount = count;
-          maxProject = projectId;
-        }
-      });
-      
-      if (maxCount >= 10) {
-        const project = this.state.projects.find(p => p.id === maxProject || `${p.customer_id}-${p.type_id}` === maxProject);
-        const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-        stats.push({
-          type: 'info',
-          icon: '📊',
-          text: `<strong>${emp.firstName}</strong> był przypisany do <strong>${customer?.name || '?'}</strong> już ${maxCount}× w tym roku`
-        });
-      }
-    });
-    
-    // Porównanie z innymi pracownikami - kto ma mniej doświadczenia z danym projektem
-    const currentWeekAssignments = this.state.scheduleAssignments.filter(
-      (a: ScheduleAssignment) => a.week === weekKey
-    );
-    
-    const projectsThisWeek = [...new Set(currentWeekAssignments.map((a: ScheduleAssignment) => a.projectId))];
-    
-    projectsThisWeek.forEach(projectId => {
-      const assignedEmps = currentWeekAssignments
-        .filter((a: ScheduleAssignment) => a.projectId === projectId)
-        .map((a: ScheduleAssignment) => a.employeeId);
-      
-      // Dla każdego przypisanego sprawdź ilu ma doświadczenia
-      const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
-      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-      
-      const allYearAssignments = this.state.scheduleAssignments.filter(
-        (a: ScheduleAssignment) => a.projectId === projectId && a.week.startsWith(`${currentYear}-`)
-      );
-      
-      const empExperience = new Map<string, number>();
-      allYearAssignments.forEach((a: ScheduleAssignment) => {
-        const count = empExperience.get(a.employeeId) || 0;
-        empExperience.set(a.employeeId, count + 1);
-      });
-      
-      // Znajdź kto ma najmniej doświadczenia
-      this.state.employees
-        .filter(e => !e.status || e.status === 'available')
-        .forEach(emp => {
-          const myExp = empExperience.get(emp.id) || 0;
-          const assignedExp = assignedEmps.map(id => empExperience.get(id) || 0);
-          const maxAssignedExp = Math.max(...assignedExp, 0);
-          
-          if (myExp === 0 && maxAssignedExp >= 5 && !assignedEmps.includes(emp.id)) {
-            // Ten pracownik nigdy nie robił tego projektu
-            stats.push({
-              type: 'info',
-              icon: '💡',
-              text: `<strong>${emp.firstName}</strong> jeszcze nigdy nie pracował przy <strong>${customer?.name || '?'}</strong> - świetna okazja do szkolenia`
-            });
-          }
-        });
-    });
-    
-    // Limit do 5 najbardziej istotnych
-    const displayStats = stats.slice(0, 5);
-    
-    if (displayStats.length === 0) {
-      container.innerHTML = '<div class="sched-stats-empty">Brak sugestii w tym tygodniu ✓</div>';
-    } else {
-      container.innerHTML = displayStats.map(stat => `
-        <div class="sched-stat-item ${stat.type}">
-          <span class="sched-stat-icon">${stat.icon}</span>
-          <span class="sched-stat-text">${stat.text}</span>
-        </div>
-      `).join('');
-    }
-    
-    // Event listener dla przycisku rozwijania
-    document.getElementById('openStatsModal')?.addEventListener('click', () => {
-      this.showScheduleStatsModal(stats);
-    });
-  }
-  
-  private showScheduleStatsModal(stats: Array<{ type: string; icon: string; text: string }>): void {
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
-    
-    modalTitle.innerHTML = '📊 Statystyki i Sugestie';
-    modalBody.innerHTML = `
-      <div class="stats-modal-content" style="max-height: 400px; overflow-y: auto;">
-        ${stats.length === 0 ? '<p style="text-align: center; color: var(--color-text-muted);">Brak sugestii</p>' : stats.map(stat => `
-          <div style="display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 8px; border-left: 3px solid ${stat.type === 'warning' ? '#f59e0b' : stat.type === 'info' ? '#3b82f6' : '#10b981'};">
-            <span style="font-size: 18px;">${stat.icon}</span>
-            <span style="flex: 1; font-size: 0.875rem; line-height: 1.5;">${stat.text}</span>
-          </div>
-        `).join('')}
-      </div>
-    `;
-    
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
-    cancelBtn.style.display = 'none';
-    confirmBtn.textContent = 'Zamknij';
-    confirmBtn.onclick = () => this.hideModal();
-    
-    modal.classList.add('active');
-  }
-  
-  // ==================== Schedule Change History ====================
-  private logScheduleChange(
-    actionType: 'add' | 'remove' | 'move' | 'status_change' | 'added' | 'removed' | 'modified',
-    employeeName: string,
-    customerName: string,
-    typeName: string,
-    shift?: number,
-    details?: string
-  ): void {
-    // Normalizuj typ akcji
-    let normalizedAction: 'add' | 'remove' | 'move' | 'status_change';
-    switch (actionType) {
-      case 'added': normalizedAction = 'add'; break;
-      case 'removed': normalizedAction = 'remove'; break;
-      case 'modified': normalizedAction = 'move'; break;
-      default: normalizedAction = actionType;
-    }
-    
-    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
-    
-    const log: ScheduleChangeLog = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      timestamp: Date.now(),
-      userName: this.state.settings.userName || 'System',
-      actionType: normalizedAction,
-      employeeName: employeeName,
-      projectName: `${customerName} - ${typeName}`,
-      customerName: customerName,
-      typeName: typeName,
-      week: weekKey,
-      shift: shift,
-      details: details
-    };
-    
-    this.scheduleChangeLogs.unshift(log);
-    
-    // Zachowaj tylko ostatnie 100 wpisów
-    if (this.scheduleChangeLogs.length > 100) {
-      this.scheduleChangeLogs = this.scheduleChangeLogs.slice(0, 100);
-    }
-    
-    // Zapisz do localStorage
-    localStorage.setItem('scheduleChangeLogs', JSON.stringify(this.scheduleChangeLogs));
-    
-    // Odśwież widok historii
-    this.renderScheduleHistory();
-  }
-  
-  private loadScheduleChangeLogs(): void {
-    try {
-      const saved = localStorage.getItem('scheduleChangeLogs');
-      if (saved) {
-        this.scheduleChangeLogs = JSON.parse(saved);
-      }
-    } catch (e) {
-      console.warn('Failed to load schedule change logs:', e);
-      this.scheduleChangeLogs = [];
-    }
-  }
-  
-  private renderScheduleHistory(): void {
-    const container = document.getElementById('scheduleHistoryPanel');
-    if (!container) return;
-    
-    // Załaduj logi jeśli jeszcze nie załadowane
-    if (this.scheduleChangeLogs.length === 0) {
-      this.loadScheduleChangeLogs();
-    }
-    
-    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
-    
-    // Filtruj logi dla bieżącego tygodnia lub ostatnich 24h
-    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    const allRelevantLogs = this.scheduleChangeLogs.filter(log => 
-      log.week === weekKey || log.timestamp > oneDayAgo
-    );
-    const relevantLogs = allRelevantLogs.slice(0, 10);
-    const hasMore = allRelevantLogs.length > 10;
-    
-    if (relevantLogs.length === 0) {
-      container.innerHTML = '<div class="sched-history-empty">Brak zmian w tym tygodniu</div>';
-    } else {
-      container.innerHTML = relevantLogs.map(log => {
-        const time = new Date(log.timestamp);
-        const timeStr = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
-        const dateStr = `${time.getDate().toString().padStart(2, '0')}.${(time.getMonth() + 1).toString().padStart(2, '0')}`;
-        
-        let actionClass = '';
-        let actionIcon = '';
-        switch (log.actionType) {
-          case 'add':
-            actionClass = 'add';
-            actionIcon = '+';
-            break;
-          case 'remove':
-            actionClass = 'remove';
-            actionIcon = '−';
-            break;
-          case 'move':
-            actionClass = 'move';
-            actionIcon = '↔';
-            break;
-          case 'status_change':
-            actionClass = 'move';
-            actionIcon = '⟳';
-            break;
-        }
-        
-        // Buduj czytelną informację o projekcie
-        const customerName = log.customerName || '';
-        const typeName = log.typeName || '';
-        const projectDisplay = customerName && typeName ? `${customerName} · ${typeName}` : (log.projectName || '');
-        const shiftDisplay = log.shift ? `Z${log.shift}` : '';
-        
-        return `
-          <div class="sched-history-item ${actionClass}">
-            <span class="sched-history-badge ${actionClass}">${actionIcon}</span>
-            <div class="sched-history-body">
-              <div class="sched-history-main">
-                <span class="sched-history-emp">${log.employeeName}</span>
-                ${projectDisplay ? `<span class="sched-history-arrow">→</span><span class="sched-history-proj">${projectDisplay}</span>` : ''}
-                ${shiftDisplay ? `<span class="sched-history-shift">${shiftDisplay}</span>` : ''}
-              </div>
-              <div class="sched-history-meta">
-                <span>${dateStr} ${timeStr}</span>
-                ${log.details && !log.details.includes('przeniesiono do innego') ? `<span>· ${log.details}</span>` : ''}
-              </div>
-            </div>
-          </div>
-        `;
-      }).join('');
-      
-      if (hasMore) {
-        container.innerHTML += `
-          <div class="sched-history-more" id="showMoreHistory">
-            Pokaż więcej (+${allRelevantLogs.length - 10})
-          </div>
-        `;
-      }
-    }
-    
-    // Event listener dla przycisku rozwijania
-    document.getElementById('openHistoryModal')?.addEventListener('click', () => {
-      this.showScheduleHistoryModal();
-    });
-    
-    // Event listener dla "pokaż więcej"
-    document.getElementById('showMoreHistory')?.addEventListener('click', () => {
-      this.showScheduleHistoryModal();
-    });
-  }
-  
-  private showScheduleHistoryModal(): void {
-    const allLogs = this.scheduleChangeLogs.slice(0, 50);
-    
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
-    
-    modalTitle.innerHTML = '📋 Historia zmian grafiku';
-    modalBody.innerHTML = `
-      <div class="history-modal-content" style="max-height: 400px; overflow-y: auto;">
-        ${allLogs.length === 0 ? '<p style="text-align: center; color: var(--color-text-muted);">Brak historii zmian</p>' : allLogs.map(log => {
-          const time = new Date(log.timestamp);
-          const dateTimeStr = `${time.getDate().toString().padStart(2, '0')}.${(time.getMonth() + 1).toString().padStart(2, '0')}.${time.getFullYear()} ${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}`;
-          
-          let actionLabel = '';
-          let actionColor = '';
-          switch (log.actionType) {
-            case 'add': actionLabel = '➕ Dodano'; actionColor = '#10b981'; break;
-            case 'remove': actionLabel = '➖ Usunięto'; actionColor = '#ef4444'; break;
-            case 'move': actionLabel = '↔️ Przeniesiono'; actionColor = '#3b82f6'; break;
-            case 'status_change': actionLabel = '🔄 Zmiana statusu'; actionColor = '#f59e0b'; break;
-          }
-          
-          // Buduj czytelną informację o projekcie
-          const customerName = log.customerName || '';
-          const typeName = log.typeName || '';
-          const projectDisplay = customerName && typeName ? `${customerName} (${typeName})` : log.projectName;
-          
-          return `
-            <div style="padding: 12px; border-bottom: 1px solid var(--color-border); background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 8px;">
-              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <strong style="color: ${actionColor};">${actionLabel}</strong>
-                <small style="color: var(--color-text-muted);">${dateTimeStr}</small>
-              </div>
-              <div style="margin-bottom: 4px;">
-                <span style="color: var(--color-primary); font-weight: 600;">${log.employeeName}</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                <span style="font-size: 0.85rem;">→</span>
-                <span style="font-weight: 500; color: var(--color-text);">${projectDisplay}</span>
-                ${log.shift ? `<span style="background: var(--color-info-bg); color: var(--color-info); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">Zmiana ${log.shift}</span>` : ''}
-                <span style="color: var(--color-text-muted); font-size: 0.75rem;">${log.week}</span>
-              </div>
-              ${log.details ? `<div style="margin-top: 6px; font-size: 0.8rem; color: var(--color-text-secondary); padding-left: 16px; border-left: 2px solid var(--color-border);">${log.details}</div>` : ''}
-              ${log.userName ? `<div style="margin-top: 4px; font-size: 0.7rem; color: var(--color-text-muted);">przez ${log.userName}</div>` : ''}
-            </div>
-          `;
-        }).join('')}
-      </div>
-    `;
-    
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
-    cancelBtn.style.display = 'none';
-    confirmBtn.textContent = 'Zamknij';
-    confirmBtn.onclick = () => this.hideModal();
-    
-    modal.classList.add('active');
   }
   
   // Popup z detalami przypisań pracownika
@@ -7949,7 +10521,14 @@ class KappaApp {
         task.shifts.push(a.shift);
       }
       if (a.note && a.note.trim()) {
-        task.notes.push(`Z${a.shift}: ${a.note}`);
+        // Parsuj notatkę - usuń odpowiedzi (REPLIES)
+        let noteText = a.note;
+        if (noteText.includes('---REPLIES---')) {
+          noteText = noteText.split('---REPLIES---')[0].trim();
+        }
+        if (noteText) {
+          task.notes.push(`Z${a.shift}: ${noteText}`);
+        }
       }
     });
     
@@ -8240,7 +10819,7 @@ class KappaApp {
       }
     }
     
-    this.logScheduleChange('added', `${copied} przypisań`, 'Kopiowanie', sourceWeekKey, undefined, `skopiowano z ${sourceWeekKey}`);
+    this.logScheduleChange('added', `${copied} przypisań`, `skopiowano z ${sourceWeekKey}`);
     this.showToast(`Skopiowano ${copied} przypisań z ${sourceWeekKey}`, 'success');
     this.renderScheduleContent();
     this.renderScheduleEmployeePanel();
@@ -8248,15 +10827,14 @@ class KappaApp {
   }
 
   // ==================== SZABLONY GRAFIKÓW ====================
-  private showTemplatesModal(): void {
+  private async showTemplatesModal(): Promise<void> {
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
     
-    // Pobierz zapisane szablony
-    const templatesJson = localStorage.getItem('kappa_schedule_templates') || '[]';
+    // Pobierz zapisane szablony z bazy danych
     let templates: Array<{id: string; name: string; assignments: ScheduleAssignment[]; createdAt: number}> = [];
-    try { templates = JSON.parse(templatesJson); } catch { templates = []; }
+    try { templates = await db.getTemplates(); } catch { templates = []; }
     
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
@@ -8314,7 +10892,7 @@ class KappaApp {
     confirmBtn.style.display = 'none';
     
     // Save template
-    modalBody.querySelector('#saveTemplateBtn')?.addEventListener('click', () => {
+    modalBody.querySelector('#saveTemplateBtn')?.addEventListener('click', async () => {
       const name = (document.getElementById('templateName') as HTMLInputElement).value.trim();
       if (!name) { this.showToast('Podaj nazwę szablonu', 'warning'); return; }
       
@@ -8322,9 +10900,8 @@ class KappaApp {
         .filter((a: ScheduleAssignment) => a.week === weekKey)
         .map((a: ScheduleAssignment) => ({ ...a, week: 'TEMPLATE' }));
       
-      const template = { id: crypto.randomUUID(), name, assignments, createdAt: Date.now() };
-      templates.push(template);
-      localStorage.setItem('kappa_schedule_templates', JSON.stringify(templates));
+      const template = { id: crypto.randomUUID(), name, data: assignments, createdAt: Date.now() };
+      await db.addTemplate(template);
       
       this.showToast(`Szablon "${name}" zapisany`, 'success');
       this.hideModal();
@@ -8359,14 +10936,12 @@ class KappaApp {
     
     // Delete template
     modalBody.querySelectorAll('.template-delete').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const id = (btn as HTMLElement).dataset.id;
-        const idx = templates.findIndex(t => t.id === id);
-        if (idx !== -1) {
-          const name = templates[idx].name;
-          templates.splice(idx, 1);
-          localStorage.setItem('kappa_schedule_templates', JSON.stringify(templates));
-          this.showToast(`Szablon "${name}" usunięty`, 'success');
+        const template = templates.find(t => t.id === id);
+        if (template) {
+          await db.deleteTemplate(id!);
+          this.showToast(`Szablon "${template.name}" usunięty`, 'success');
           this.showTemplatesModal(); // Refresh
         }
       });
@@ -8376,15 +10951,14 @@ class KappaApp {
   }
 
   // ==================== POWIADOMIENIA ====================
-  private showNotificationsModal(): void {
+  private async showNotificationsModal(): Promise<void> {
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
     
-    // Pobierz ustawienia powiadomień
-    const settingsJson = localStorage.getItem('kappa_notification_settings') || '{}';
+    // Pobierz ustawienia powiadomień z bazy danych
     let settings: {email?: string; enabled?: boolean; onAssign?: boolean; onUnassign?: boolean; dailyDigest?: boolean} = {};
-    try { settings = JSON.parse(settingsJson); } catch { settings = {}; }
+    try { settings = await db.getPreference('kappa_notification_settings') || {}; } catch { settings = {}; }
     
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
@@ -8452,7 +11026,7 @@ class KappaApp {
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     confirmBtn.style.display = '';
     confirmBtn.textContent = 'Zapisz ustawienia';
-    confirmBtn.onclick = () => {
+    confirmBtn.onclick = async () => {
       const newSettings = {
         email: (document.getElementById('notifyEmail') as HTMLInputElement).value,
         enabled: (document.getElementById('notifyEnabled') as HTMLInputElement).checked,
@@ -8460,7 +11034,7 @@ class KappaApp {
         onUnassign: (document.getElementById('notifyOnUnassign') as HTMLInputElement).checked,
         dailyDigest: (document.getElementById('notifyDailyDigest') as HTMLInputElement).checked
       };
-      localStorage.setItem('kappa_notification_settings', JSON.stringify(newSettings));
+      await db.setPreference('kappa_notification_settings', newSettings);
       this.showToast('Ustawienia powiadomień zapisane', 'success');
       this.hideModal();
     };
@@ -8476,7 +11050,7 @@ class KappaApp {
   }
 
   // ==================== WYSYŁANIE GRAFIKU MAILEM ====================
-  private showSendEmailModal(): void {
+  private async showSendEmailModal(): Promise<void> {
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -8484,93 +11058,205 @@ class KappaApp {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     
-    // Pobierz zapisane adresy email
-    const savedEmails = localStorage.getItem('kappa_email_addresses') || '';
+    // Pobierz zapisane adresy email z bazy danych
+    const savedEmails = await db.getPreference('kappa_email_addresses') || '';
+    
+    // Pobierz pracowników z przypisaniami w tym tygodniu
+    const employeesWithAssignments = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (emp) {
+        if (!employeesWithAssignments.has(emp.id)) {
+          employeesWithAssignments.set(emp.id, { emp, assignments: [] });
+        }
+        employeesWithAssignments.get(emp.id)!.assignments.push(a);
+      }
+    });
+    
+    // Managerowie
+    const managers = this.state.employees.filter(e => e.role === 'manager' && e.email);
     
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
       </svg>
-      Wyślij grafik mailem
+      Centrum komunikacji - ${weekKey}
     `;
     
-    // Grupuj przypisania wg pracownika
-    const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      if (emp) {
-        if (!byEmployee.has(emp.id)) {
-          byEmployee.set(emp.id, { emp, assignments: [] });
-        }
-        byEmployee.get(emp.id)!.assignments.push(a);
-      }
-    });
-    
     modalBody.innerHTML = `
-      <div class="send-email-modal">
-        <div class="info-box info-box-primary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-          </svg>
-          <span>Wyślij grafik przez Outlook. Możesz wysłać ogólny grafik lub indywidualne maile dla pracowników.</span>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Adresy email (rozdziel przecinkami lub enterem):</label>
-          <textarea id="emailAddresses" class="form-control" rows="2" placeholder="jan.kowalski@firma.pl, anna.nowak@firma.pl">${savedEmails}</textarea>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Typ wiadomości:</label>
-          <div class="email-type-options">
-            <label class="radio-option">
-              <input type="radio" name="emailType" value="general" checked>
-              <span>📋 Ogólny grafik (dla wszystkich)</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" name="emailType" value="individual">
-              <span>👤 Indywidualne maile (każdy pracownik dostaje swój)</span>
-            </label>
-          </div>
-        </div>
-        
-        <div class="email-preview-section">
-          <h4>📧 Podgląd wiadomości</h4>
-          <div class="email-preview" id="emailPreviewContent">
-            ${this.generateScheduleEmailHtml(weekKey, 'general')}
-          </div>
-        </div>
-        
-        <div class="form-actions" style="margin-top: 16px; display: flex; gap: 12px;">
-          <button class="btn btn-primary" id="sendGeneralEmail">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-            Otwórz w Outlook
-          </button>
-          <button class="btn btn-secondary" id="sendIndividualEmails" style="display: none;">
+      <div class="send-email-modal send-email-modal-expanded">
+        <!-- Zakładki -->
+        <div class="email-tabs">
+          <button class="email-tab active" data-tab="general">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Wyślij do wszystkich pracowników
+            Grafik ogólny
           </button>
+          <button class="email-tab" data-tab="individual">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Indywidualne
+          </button>
+          <button class="email-tab" data-tab="manager">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+            Raport manager
+          </button>
+        </div>
+        
+        <!-- Panel: Grafik ogólny -->
+        <div class="email-panel active" id="panel-general">
+          <div class="info-box info-box-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>Wyślij pełny grafik tygodniowy do wybranych odbiorców przez Outlook.</span>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Adresy email odbiorców:</label>
+            <textarea id="emailAddresses" class="form-control" rows="2" placeholder="email1@firma.pl, email2@firma.pl">${savedEmails}</textarea>
+          </div>
+          
+          <div class="email-preview-section">
+            <div class="email-preview-header">
+              <h4>📧 Podgląd wiadomości</h4>
+              <button class="btn btn-small btn-outline" id="btnDownloadPDF">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Pobierz PDF
+              </button>
+            </div>
+            <div class="email-preview" id="emailPreviewGeneral">
+              ${this.generateScheduleEmailHtml(weekKey, 'general')}
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button class="btn btn-primary" id="sendGeneralEmail">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              Otwórz w Outlook
+            </button>
+          </div>
+        </div>
+        
+        <!-- Panel: Indywidualne -->
+        <div class="email-panel" id="panel-individual">
+          <div class="info-box info-box-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>Każdy pracownik otrzyma spersonalizowany email ze swoim grafikiem i informacją o urlopie.</span>
+          </div>
+          
+          <div class="employee-email-list">
+            <div class="employee-list-header">
+              <span>Pracownicy z przypisaniami (${employeesWithAssignments.size})</span>
+              <label class="checkbox-inline">
+                <input type="checkbox" id="selectAllEmployees" checked> Zaznacz wszystkich
+              </label>
+            </div>
+            
+            <div class="employee-check-list" id="employeeCheckList">
+              ${Array.from(employeesWithAssignments.values()).map(({ emp, assignments }) => `
+                <label class="employee-check-item ${emp.email ? '' : 'no-email'}">
+                  <input type="checkbox" name="empCheck" value="${emp.id}" ${emp.email ? 'checked' : 'disabled'}>
+                  <span class="emp-color" style="background: ${emp.color}"></span>
+                  <span class="emp-name">${emp.firstName} ${emp.lastName}</span>
+                  <span class="emp-email">${emp.email || '⚠️ brak email'}</span>
+                  <span class="emp-badge">${assignments.length} przyp.</span>
+                  <button class="btn-icon btn-preview" data-emp="${emp.id}" title="Podgląd">👁️</button>
+                  <button class="btn-icon btn-ics" data-emp="${emp.id}" title="Pobierz ICS">📅</button>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+          
+          <div class="email-preview-section">
+            <h4>📧 Podgląd przykładowej wiadomości</h4>
+            <div class="email-preview" id="emailPreviewIndividual">
+              ${employeesWithAssignments.size > 0 ? 
+                this.generateIndividualEmailHtml(
+                  Array.from(employeesWithAssignments.keys())[0], 
+                  weekKey
+                ) : '<p style="text-align:center;color:#94a3b8;">Brak pracowników z przypisaniami</p>'}
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button class="btn btn-primary" id="sendIndividualEmails">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              Wyślij do zaznaczonych
+            </button>
+            <button class="btn btn-secondary" id="downloadAllICS">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Pobierz wszystkie ICS
+            </button>
+          </div>
+        </div>
+        
+        <!-- Panel: Raport manager -->
+        <div class="email-panel" id="panel-manager">
+          <div class="info-box info-box-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>Raport z analizą pokrycia zmian, obciążenia i nieobecności dla kadry zarządzającej.</span>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Wyślij do managerów:</label>
+            <div class="manager-list">
+              ${managers.length > 0 ? managers.map(m => `
+                <label class="checkbox-inline">
+                  <input type="checkbox" name="managerCheck" value="${m.id}" checked>
+                  ${m.firstName} ${m.lastName} (${m.email})
+                </label>
+              `).join('') : `
+                <div class="warning-box">
+                  ⚠️ Brak pracowników z rolą "Manager" lub bez przypisanego emaila.
+                  <a href="#" id="addManagerLink">Dodaj managera</a>
+                </div>
+              `}
+            </div>
+          </div>
+          
+          <div class="email-preview-section">
+            <h4>📊 Podgląd raportu</h4>
+            <div class="email-preview" id="emailPreviewManager">
+              ${this.generateManagerReportHtml(weekKey)}
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button class="btn btn-primary" id="sendManagerReport">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              Wyślij raport
+            </button>
+          </div>
         </div>
       </div>
     `;
     
-    // Obsługa zmiany typu
-    modalBody.querySelectorAll('input[name="emailType"]').forEach(radio => {
-      radio.addEventListener('change', (e) => {
-        const type = (e.target as HTMLInputElement).value as 'general' | 'individual';
-        document.getElementById('emailPreviewContent')!.innerHTML = this.generateScheduleEmailHtml(weekKey, type);
-        document.getElementById('sendGeneralEmail')!.style.display = type === 'general' ? '' : 'none';
-        document.getElementById('sendIndividualEmails')!.style.display = type === 'individual' ? '' : 'none';
+    // Obsługa zakładek
+    modalBody.querySelectorAll('.email-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        modalBody.querySelectorAll('.email-tab').forEach(t => t.classList.remove('active'));
+        modalBody.querySelectorAll('.email-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        const panelId = `panel-${(tab as HTMLElement).dataset.tab}`;
+        document.getElementById(panelId)?.classList.add('active');
       });
     });
     
     // Zapisz adresy email
-    document.getElementById('emailAddresses')?.addEventListener('blur', (e) => {
-      localStorage.setItem('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
+    document.getElementById('emailAddresses')?.addEventListener('blur', async (e) => {
+      await db.setPreference('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
+    });
+    
+    // Pobierz PDF
+    document.getElementById('btnDownloadPDF')?.addEventListener('click', () => {
+      this.generateSchedulePDF(weekKey);
     });
     
     // Wysyłanie ogólnego emaila
-    document.getElementById('sendGeneralEmail')?.addEventListener('click', () => {
+    document.getElementById('sendGeneralEmail')?.addEventListener('click', async () => {
       const emails = (document.getElementById('emailAddresses') as HTMLTextAreaElement).value
         .split(/[,\n]/)
         .map(e => e.trim())
@@ -8581,29 +11267,109 @@ class KappaApp {
         return;
       }
       
-      localStorage.setItem('kappa_email_addresses', emails.join(', '));
+      await db.setPreference('kappa_email_addresses', emails.join(', '));
       this.openOutlookEmail(emails.join('; '), `Grafik ${weekKey}`, this.generateScheduleEmailBody(weekKey, 'general'));
       this.hideModal();
     });
     
+    // Zaznacz wszystkich pracowników
+    document.getElementById('selectAllEmployees')?.addEventListener('change', (e) => {
+      const checked = (e.target as HTMLInputElement).checked;
+      document.querySelectorAll('input[name="empCheck"]:not(:disabled)').forEach(cb => {
+        (cb as HTMLInputElement).checked = checked;
+      });
+    });
+    
+    // Podgląd indywidualny
+    document.querySelectorAll('.btn-preview').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const empId = (btn as HTMLElement).dataset.emp!;
+        document.getElementById('emailPreviewIndividual')!.innerHTML = this.generateIndividualEmailHtml(empId, weekKey);
+      });
+    });
+    
+    // Pobierz ICS dla pracownika
+    document.querySelectorAll('.btn-ics').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const empId = (btn as HTMLElement).dataset.emp!;
+        this.downloadICS(empId, weekKey);
+      });
+    });
+    
+    // Pobierz wszystkie ICS
+    document.getElementById('downloadAllICS')?.addEventListener('click', () => {
+      const checked = document.querySelectorAll('input[name="empCheck"]:checked');
+      if (checked.length === 0) {
+        this.showToast('Zaznacz przynajmniej jednego pracownika', 'warning');
+        return;
+      }
+      checked.forEach(cb => {
+        const empId = (cb as HTMLInputElement).value;
+        this.downloadICS(empId, weekKey);
+      });
+    });
+    
     // Wysyłanie indywidualnych maili
     document.getElementById('sendIndividualEmails')?.addEventListener('click', () => {
+      const checked = document.querySelectorAll('input[name="empCheck"]:checked');
+      if (checked.length === 0) {
+        this.showToast('Zaznacz przynajmniej jednego pracownika', 'warning');
+        return;
+      }
+      
       let count = 0;
-      byEmployee.forEach(({ emp }) => {
-        const email = this.getEmployeeEmail(emp);
-        if (email) {
-          this.openOutlookEmail(email, `Twój grafik na ${weekKey} - ${emp.firstName} ${emp.lastName}`, 
-            this.generateEmployeeScheduleEmailBody(emp.id, weekKey));
+      checked.forEach(cb => {
+        const empId = (cb as HTMLInputElement).value;
+        const emp = this.state.employees.find(e => e.id === empId);
+        if (emp?.email) {
+          this.openOutlookEmail(
+            emp.email, 
+            `Twój grafik na ${weekKey} - ${emp.firstName} ${emp.lastName}`, 
+            this.generateEmployeeScheduleEmailBody(emp.id, weekKey)
+          );
           count++;
         }
       });
       
       if (count > 0) {
         this.showToast(`Otwarto ${count} okien Outlook`, 'success');
-      } else {
-        this.showToast('Brak pracowników z przypisanymi adresami email', 'warning');
+        this.hideModal();
       }
+    });
+    
+    // Wysyłanie raportu do managerów
+    document.getElementById('sendManagerReport')?.addEventListener('click', () => {
+      const checked = document.querySelectorAll('input[name="managerCheck"]:checked');
+      if (checked.length === 0) {
+        this.showToast('Zaznacz przynajmniej jednego managera', 'warning');
+        return;
+      }
+      
+      const emails: string[] = [];
+      checked.forEach(cb => {
+        const empId = (cb as HTMLInputElement).value;
+        const emp = this.state.employees.find(e => e.id === empId);
+        if (emp?.email) emails.push(emp.email);
+      });
+      
+      if (emails.length > 0) {
+        this.openOutlookEmail(
+          emails.join('; '), 
+          `Raport tygodniowy ${weekKey} - Kappa Plannung`, 
+          this.generateManagerReportBody(weekKey)
+        );
+        this.showToast('Otwarto Outlook z raportem', 'success');
+        this.hideModal();
+      }
+    });
+    
+    // Link do dodania managera
+    document.getElementById('addManagerLink')?.addEventListener('click', (e) => {
+      e.preventDefault();
       this.hideModal();
+      setTimeout(() => this.showAddEmployeeModal(), 300);
     });
     
     // Ukryj domyślny przycisk potwierdzenia
@@ -8611,6 +11377,51 @@ class KappaApp {
     confirmBtn.style.display = 'none';
     
     modal.classList.add('active');
+  }
+
+  private generateManagerReportBody(weekKey: string): string {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const activeEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    // Zlicz projekty z weeks jako obiekt
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (!p.weeks) return false;
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll && weekData.soll > 0;
+    });
+    const totalShifts = projectsWithSoll.length * 3;
+    const coveredShifts = new Set(weekAssignments.map(a => `${a.projectId}-${a.shift}`)).size;
+    const coveragePercent = totalShifts > 0 ? Math.round((coveredShifts / totalShifts) * 100) : 0;
+    
+    let body = `RAPORT TYGODNIOWY ${weekKey}\\n`;
+    body += `DRÄXLMAIER Kappa Plannung\\n`;
+    body += `================================\\n\\n`;
+    body += `📊 PODSUMOWANIE:\\n`;
+    body += `   Pokrycie zmian: ${coveragePercent}%\\n`;
+    body += `   Liczba przypisań: ${weekAssignments.length}\\n`;
+    body += `   Dostępnych pracowników: ${activeEmployees.length}\\n\\n`;
+    
+    const workloadMap = new Map<string, number>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      workloadMap.set(a.employeeId, (workloadMap.get(a.employeeId) || 0) + 1);
+    });
+    
+    if (workloadMap.size > 0) {
+      body += `👥 OBCIĄŻENIE PRACOWNIKÓW:\\n`;
+      Array.from(workloadMap.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .forEach(([empId, count]) => {
+          const emp = this.state.employees.find(e => e.id === empId);
+          if (emp) {
+            body += `   ${emp.firstName} ${emp.lastName}: ${count} przypisań\\n`;
+          }
+        });
+    }
+    
+    body += `\\nWygenerowano: ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')}`;
+    
+    return body;
   }
   
   private generateScheduleEmailHtml(weekKey: string, type: 'general' | 'individual'): string {
@@ -8764,15 +11575,387 @@ class KappaApp {
   }
   
   private getEmployeeEmail(emp: Employee): string | null {
-    // Sprawdź czy pracownik ma email (możesz dodać pole email do Employee)
-    // Na razie zwracamy null - trzeba będzie rozszerzyć model Employee
-    return (emp as any).email || null;
+    return emp.email || null;
   }
   
   private openOutlookEmail(to: string, subject: string, body: string): void {
-    // Użyj protokołu mailto: który otworzy domyślny klient pocztowy (Outlook)
     const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.replace(/\\n/g, '\n'))}`;
     window.open(mailtoUrl, '_blank');
+  }
+
+  // ==================== ROZBUDOWANY SYSTEM EMAILOWY ====================
+
+  private generateManagerReportHtml(weekKey: string): string {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const activeEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    // Statystyki pokrycia - sprawdź weeks jako obiekt
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (!p.weeks) return false;
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll && weekData.soll > 0;
+    });
+    const totalShifts = projectsWithSoll.length * 3;
+    const coveredShifts = new Set(weekAssignments.map(a => `${a.projectId}-${a.shift}`)).size;
+    const coveragePercent = totalShifts > 0 ? Math.round((coveredShifts / totalShifts) * 100) : 0;
+    
+    // Obciążenie pracowników
+    const workloadMap = new Map<string, number>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      workloadMap.set(a.employeeId, (workloadMap.get(a.employeeId) || 0) + 1);
+    });
+    
+    const avgWorkload = workloadMap.size > 0 ? 
+      Math.round(Array.from(workloadMap.values()).reduce((a, b) => a + b, 0) / workloadMap.size * 10) / 10 : 0;
+    
+    // Projekty z problemami (niskie pokrycie)
+    const projectIssues: { name: string; issue: string }[] = [];
+    this.state.projects.forEach(p => {
+      const weekData = p.weeks ? p.weeks[weekKey] : null;
+      if (weekData && weekData.soll && weekData.soll > 0) {
+        const assignments = weekAssignments.filter((a: ScheduleAssignment) => 
+          a.projectId === p.id || a.projectId === `${p.customer_id}-${p.type_id}`
+        );
+        if (assignments.length === 0) {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          projectIssues.push({ name: `${customer?.name} - ${p.type_id}`, issue: 'Brak przypisań!' });
+        }
+      }
+    });
+    
+    // Nieobecności
+    const weekStart = this.getWeekStartDate(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+    const absences = (this.state.absences || []).filter(a => {
+      const start = new Date(a.startDate);
+      const end = new Date(a.endDate);
+      return start <= new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000) && end >= weekStart;
+    });
+    
+    return `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 700px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #0097AC 100%); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
+          <h2 style="margin: 0; font-size: 24px;">📊 Raport tygodniowy ${weekKey}</h2>
+          <p style="margin: 8px 0 0; opacity: 0.9;">Podsumowanie dla kadry zarządzającej</p>
+        </div>
+        
+        <div style="padding: 24px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none;">
+          <!-- KPI Cards -->
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;">
+            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+              <div style="font-size: 32px; font-weight: bold; color: ${coveragePercent >= 80 ? '#10b981' : coveragePercent >= 50 ? '#f59e0b' : '#ef4444'};">${coveragePercent}%</div>
+              <div style="color: #64748b; font-size: 12px;">Pokrycie zmian</div>
+            </div>
+            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+              <div style="font-size: 32px; font-weight: bold; color: #0097AC;">${weekAssignments.length}</div>
+              <div style="color: #64748b; font-size: 12px;">Przypisań</div>
+            </div>
+            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+              <div style="font-size: 32px; font-weight: bold; color: #1e293b;">${avgWorkload}</div>
+              <div style="color: #64748b; font-size: 12px;">Śr. przypisań/os.</div>
+            </div>
+          </div>
+          
+          ${projectIssues.length > 0 ? `
+            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+              <h4 style="margin: 0 0 12px; color: #dc2626;">⚠️ Projekty wymagające uwagi</h4>
+              ${projectIssues.map(i => `<div style="color: #b91c1c; margin: 4px 0;">• ${i.name}: ${i.issue}</div>`).join('')}
+            </div>
+          ` : `
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+              <h4 style="margin: 0; color: #16a34a;">✅ Wszystkie projekty są obsadzone</h4>
+            </div>
+          `}
+          
+          ${absences.length > 0 ? `
+            <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+              <h4 style="margin: 0 0 12px; color: #1e293b;">🏖️ Nieobecności w tym tygodniu (${absences.length})</h4>
+              ${absences.slice(0, 5).map(a => {
+                const emp = this.state.employees.find(e => e.id === a.employeeId);
+                return `<div style="margin: 4px 0; color: #475569;">• ${emp?.firstName} ${emp?.lastName}: ${a.startDate} - ${a.endDate}</div>`;
+              }).join('')}
+              ${absences.length > 5 ? `<div style="color: #94a3b8; font-style: italic;">... i ${absences.length - 5} więcej</div>` : ''}
+            </div>
+          ` : ''}
+          
+          <div style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <h4 style="margin: 0 0 12px; color: #1e293b;">👥 Dostępność zespołu</h4>
+            <div style="display: flex; gap: 24px;">
+              <div><span style="color: #10b981; font-weight: bold;">${activeEmployees.length}</span> dostępnych</div>
+              <div><span style="color: #f59e0b; font-weight: bold;">${this.state.employees.filter(e => e.status === 'vacation').length}</span> na urlopie</div>
+              <div><span style="color: #ef4444; font-weight: bold;">${this.state.employees.filter(e => e.status === 'sick').length}</span> chorych</div>
+            </div>
+          </div>
+        </div>
+        
+        <div style="background: #1e293b; color: white; padding: 16px; border-radius: 0 0 12px 12px; text-align: center;">
+          <small>Wygenerowano: ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')}</small>
+        </div>
+      </div>
+    `;
+  }
+
+  private generateIndividualEmailHtml(employeeId: string, weekKey: string): string {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return '';
+    
+    const assignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
+    );
+    
+    const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
+    const shiftColors = ['#22c55e', '#3b82f6', '#8b5cf6'];
+    
+    // Oblicz pozostałe dni urlopowe
+    const vacationInfo = this.getEmployeeVacationInfo(employeeId);
+    
+    return `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #0097AC 0%, #00b4cc 100%); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
+          <h2 style="margin: 0;">👋 Cześć, ${emp.firstName}!</h2>
+          <p style="margin: 8px 0 0; opacity: 0.9;">Twój grafik na tydzień ${weekKey}</p>
+        </div>
+        
+        <div style="padding: 24px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none;">
+          ${assignments.length > 0 ? `
+            <div style="margin-bottom: 20px;">
+              ${assignments.map((a: ScheduleAssignment) => {
+                const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+                const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+                const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+                
+                return `
+                  <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid ${shiftColors[a.shift - 1]};">
+                    <div style="font-weight: bold; font-size: 16px; color: #1e293b; margin-bottom: 8px;">
+                      ${customer?.name || '?'} - ${ptype?.name || '?'}
+                    </div>
+                    <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                      <span style="background: ${shiftColors[a.shift - 1]}; color: white; padding: 4px 12px; border-radius: 16px; font-size: 13px;">
+                        ⏰ ${shiftNames[a.shift - 1]}
+                      </span>
+                      ${a.scope !== 'project' ? `
+                        <span style="background: #f1f5f9; color: #475569; padding: 4px 12px; border-radius: 16px; font-size: 13px;">
+                          📋 ${a.scope === 'audit' ? 'Audyt' : a.scope === 'adhesion' ? 'Przyczepność' : a.scope}
+                        </span>
+                      ` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `
+            <div style="background: #fef3c7; border-radius: 8px; padding: 16px; text-align: center;">
+              <p style="margin: 0; color: #92400e;">Nie masz przypisań w tym tygodniu.</p>
+            </div>
+          `}
+          
+          ${vacationInfo.limit > 0 ? `
+            <div style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-top: 16px;">
+              <h4 style="margin: 0 0 12px; color: #1e293b;">🏖️ Twój urlop</h4>
+              <div style="display: flex; align-items: center; gap: 16px;">
+                <div style="flex: 1; background: #e5e7eb; border-radius: 8px; height: 12px; overflow: hidden;">
+                  <div style="width: ${(vacationInfo.used / vacationInfo.limit) * 100}%; background: linear-gradient(90deg, #0097AC, #00b4cc); height: 100%;"></div>
+                </div>
+                <div style="white-space: nowrap;">
+                  <span style="color: #0097AC; font-weight: bold;">${vacationInfo.remaining}</span> / ${vacationInfo.limit} dni
+                </div>
+              </div>
+              <div style="margin-top: 8px; font-size: 13px; color: #64748b;">
+                Wykorzystano: ${vacationInfo.used} dni | Pozostało: ${vacationInfo.remaining} dni
+              </div>
+            </div>
+          ` : ''}
+        </div>
+        
+        <div style="background: #1e293b; color: white; padding: 16px; border-radius: 0 0 12px 12px; text-align: center;">
+          <p style="margin: 0 0 8px; font-size: 14px;">Powodzenia w pracy! 💪</p>
+          <small style="opacity: 0.7;">DRÄXLMAIER Kappa Plannung</small>
+        </div>
+      </div>
+    `;
+  }
+
+  private getEmployeeVacationInfo(employeeId: string): { limit: number; used: number; remaining: number } {
+    const year = this.scheduleCurrentYear;
+    
+    // Domyślny limit urlopowy (26 dni w Polsce)
+    const defaultLimit = 26;
+    
+    // Policz wykorzystane dni urlopowe z istniejących nieobecności
+    const absences = this.state.absences || [];
+    const vacations = absences.filter(a => 
+      a.employeeId === employeeId && 
+      new Date(a.startDate).getFullYear() === year
+    );
+    
+    let usedDays = 0;
+    vacations.forEach(v => {
+      usedDays += v.workDays || 1;
+    });
+    
+    return {
+      limit: defaultLimit,
+      used: usedDays,
+      remaining: Math.max(0, defaultLimit - usedDays)
+    };
+  }
+
+  private generateICSContent(employeeId: string, weekKey: string): string {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return '';
+    
+    const assignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
+    );
+    
+    const weekStart = this.getWeekStartDate(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+    
+    const shiftTimes = [
+      { start: '06:00', end: '14:00' },
+      { start: '14:00', end: '22:00' },
+      { start: '22:00', end: '06:00' }
+    ];
+    
+    let ics = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//DRÄXLMAIER Kappa Plannung//PL
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:Grafik ${weekKey} - ${emp.firstName} ${emp.lastName}
+`;
+
+    assignments.forEach((a: ScheduleAssignment, idx: number) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+      const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+      
+      const shiftTime = shiftTimes[a.shift - 1];
+      
+      // Dla każdego dnia tygodnia (pon-pt dla uproszczenia)
+      for (let day = 0; day < 5; day++) {
+        const eventDate = new Date(weekStart);
+        eventDate.setDate(eventDate.getDate() + day);
+        
+        const dateStr = eventDate.toISOString().split('T')[0].replace(/-/g, '');
+        const startTime = shiftTime.start.replace(':', '');
+        const endTime = shiftTime.end.replace(':', '');
+        
+        const eventEnd = a.shift === 3 ? 
+          new Date(eventDate.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '') :
+          dateStr;
+        
+        ics += `BEGIN:VEVENT
+UID:${a.id}-${day}-${Date.now()}@kappa
+DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z
+DTSTART;TZID=Europe/Warsaw:${dateStr}T${startTime}00
+DTEND;TZID=Europe/Warsaw:${eventEnd}T${endTime}00
+SUMMARY:${customer?.name || '?'} - ${ptype?.name || '?'}
+DESCRIPTION:Zmiana ${a.shift}${a.scope !== 'project' ? ` | Zakres: ${a.scope}` : ''}
+LOCATION:Produkcja
+STATUS:CONFIRMED
+END:VEVENT
+`;
+      }
+    });
+
+    ics += `END:VCALENDAR`;
+    return ics;
+  }
+
+  private downloadICS(employeeId: string, weekKey: string): void {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const icsContent = this.generateICSContent(employeeId, weekKey);
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `grafik-${weekKey}-${emp.firstName}-${emp.lastName}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    this.showToast(`Pobrano plik ICS dla ${emp.firstName} ${emp.lastName}`, 'success');
+  }
+
+  private async generateSchedulePDF(weekKey: string): Promise<void> {
+    const { jsPDF } = await import('jspdf');
+    const doc = new jsPDF('landscape', 'mm', 'a4');
+    
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    // Header
+    doc.setFillColor(0, 151, 172);
+    doc.rect(0, 0, 297, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.text(`Grafik tygodniowy ${weekKey}`, 15, 18);
+    doc.setFontSize(10);
+    doc.text(`DRÄXLMAIER Kappa Plannung | Wygenerowano: ${new Date().toLocaleDateString('pl-PL')}`, 15, 25);
+    
+    // Grupuj wg projektu
+    const byProject = new Map<string, { customer: string; type: string; shifts: Map<number, string[]> }>();
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (project && emp) {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const ptype = this.state.types.find(t => t.id === project.type_id);
+        const key = `${customer?.name || '?'} - ${ptype?.name || '?'}`;
+        
+        if (!byProject.has(key)) {
+          byProject.set(key, { customer: customer?.name || '?', type: ptype?.name || '?', shifts: new Map() });
+        }
+        const data = byProject.get(key)!;
+        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
+        data.shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
+      }
+    });
+    
+    const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
+    
+    let yPos = 40;
+    doc.setTextColor(0, 0, 0);
+    
+    byProject.forEach((data, name) => {
+      if (yPos > 180) {
+        doc.addPage();
+        yPos = 20;
+      }
+      
+      doc.setFillColor(240, 242, 245);
+      doc.rect(10, yPos, 277, 8, 'F');
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(name, 15, yPos + 6);
+      yPos += 12;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      
+      [1, 2, 3].forEach(shift => {
+        if (data.shifts.has(shift)) {
+          doc.setTextColor(100, 116, 139);
+          doc.text(shiftNames[shift - 1] + ':', 15, yPos);
+          doc.setTextColor(0, 0, 0);
+          doc.text(data.shifts.get(shift)!.join(', '), 70, yPos);
+          yPos += 6;
+        }
+      });
+      
+      yPos += 6;
+    });
+    
+    // Footer
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.text('© DRÄXLMAIER Kappa Plannung', 15, 200);
+    
+    doc.save(`grafik-${weekKey}.pdf`);
+    this.showToast('Pobrano PDF z grafikiem', 'success');
   }
 
   // ==================== WIDOK GANTT OBCIĄŻENIA ====================
@@ -9270,28 +12453,26 @@ class KappaApp {
     if (!assignment) return;
     
     const emp = this.state.employees.find(e => e.id === assignment.employeeId);
+    const empName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
     const oldShift = assignment.shift;
     const oldProjectId = assignment.projectId;
     
-    // Pobierz informacje o starym projekcie
-    const oldProject = this.state.projects.find(p => p.id === oldProjectId || `${p.customer_id}-${p.type_id}` === oldProjectId);
-    const oldCustomer = oldProject ? this.state.customers.find(c => c.id === oldProject.customer_id) : null;
-    const oldType = oldProject ? this.state.types.find(t => t.id === oldProject.type_id) : null;
+    // Pobierz nazwy projektów
+    const getProjectName = (projectId: string): string => {
+      const parts = projectId.split('-');
+      const customer = this.state.customers.find(c => c.id === parts[0]);
+      const type = this.state.types.find(t => t.id === parts[1]);
+      return customer && type ? `${customer.name} ${type.name}` : projectId;
+    };
+    
+    const oldProjectName = getProjectName(oldProjectId);
+    const newProjectName = newProjectId ? getProjectName(newProjectId) : oldProjectName;
     
     // Sprawdź czy coś się zmienia
     const shiftChanged = assignment.shift !== newShift;
     const projectChanged = newProjectId && assignment.projectId !== newProjectId;
     
     if (!shiftChanged && !projectChanged) return;
-    
-    // Pobierz informacje o nowym projekcie jeśli się zmienił
-    let newCustomer = oldCustomer;
-    let newType = oldType;
-    if (projectChanged && newProjectId) {
-      const newProject = this.state.projects.find(p => p.id === newProjectId || `${p.customer_id}-${p.type_id}` === newProjectId);
-      newCustomer = newProject ? this.state.customers.find(c => c.id === newProject.customer_id) : null;
-      newType = newProject ? this.state.types.find(t => t.id === newProject.type_id) : null;
-    }
     
     if (shiftChanged) {
       assignment.shift = newShift;
@@ -9303,15 +12484,21 @@ class KappaApp {
     assignment.updatedAt = Date.now();
     await db.put('scheduleAssignments', assignment);
     
-    // Log zmiany
+    // Log zmiany - do głównej historii i historii grafiku
     if (projectChanged && shiftChanged) {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, newCustomer?.name || '?', newType?.name || '?', newShift, `z ${oldCustomer?.name || '?'} Z${oldShift} → ${newCustomer?.name || '?'} Z${newShift}`);
-      this.showToast(`Przeniesiono do ${newCustomer?.name || 'innego projektu'} na zmianę ${newShift}`, 'success');
+      const details = `${oldProjectName} Z${oldShift} → ${newProjectName} Z${newShift}`;
+      await this.addLog('updated', 'Assignment', empName, details);
+      this.logScheduleChange('modified', empName, details);
+      this.showToast(`Przeniesiono na ${newProjectName}, zmiana ${newShift}`, 'success');
     } else if (projectChanged) {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, newCustomer?.name || '?', newType?.name || '?', newShift, `z ${oldCustomer?.name || '?'} → ${newCustomer?.name || '?'}`);
-      this.showToast(`Przeniesiono do ${newCustomer?.name || 'innego projektu'}`, 'success');
+      const details = `${oldProjectName} → ${newProjectName}`;
+      await this.addLog('updated', 'Assignment', empName, details);
+      this.logScheduleChange('modified', empName, details);
+      this.showToast(`Przeniesiono na ${newProjectName}`, 'success');
     } else {
-      this.logScheduleChange('modified', `${emp?.firstName} ${emp?.lastName}`, oldCustomer?.name || '?', oldType?.name || '?', newShift, `Z${oldShift} → Z${newShift}`);
+      const details = `${oldProjectName}: Z${oldShift} → Z${newShift}`;
+      await this.addLog('updated', 'Assignment', empName, details);
+      this.logScheduleChange('modified', empName, details);
       this.showToast(`Przeniesiono na zmianę ${newShift}`, 'success');
     }
     
@@ -9455,9 +12642,15 @@ class KappaApp {
         a.week === weekKey
       );
       
+      // Sprawdź czy projekt ma postój lub brak części w tym tygodniu
+      const hasStoppage = group.items.some(item => {
+        const weekData = item.weeks[weekKey];
+        return weekData?.stoppage || weekData?.productionLack;
+      });
+      
       // Wiersz projektu z nowymi klasami
       const projectRow = document.createElement('div');
-      projectRow.className = `sched-row shifts-${this.scheduleShiftSystem}`;
+      projectRow.className = `sched-row shifts-${this.scheduleShiftSystem} ${hasStoppage ? 'project-stoppage' : ''}`;
       projectRow.dataset.groupKey = groupKey;
       
       // Pobierz komentarz dla tego projektu i policz odpowiedzi
@@ -9731,19 +12924,37 @@ class KappaApp {
           e.preventDefault();
           shiftCell.classList.remove('drag-over');
           
+          // Zapisz pozycję drop dla pickera
+          const dropX = (e as DragEvent).clientX;
+          const dropY = (e as DragEvent).clientY;
+          
           // Sprawdź czy to przenoszenie istniejącego chipa (między zmianami lub projektami)
           const assignmentId = (e as DragEvent).dataTransfer?.getData('assignmentId');
           if (assignmentId) {
             const sourceProject = (e as DragEvent).dataTransfer?.getData('sourceProject');
-            // Przekaż nowy projekt jeśli różny od źródłowego
-            const newProjectId = sourceProject !== groupKey ? groupKey : undefined;
-            await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3, newProjectId);
+            const sourceShift = parseInt((e as DragEvent).dataTransfer?.getData('sourceShift') || '0');
+            
+            // Jeśli przenosimy na INNY projekt - pokaż picker scope
+            if (sourceProject !== groupKey) {
+              const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
+              if (assignment) {
+                // Usuń stare przypisanie i pokaż picker dla nowego
+                await this.removeAssignment(assignmentId);
+                this.showScopePickerAtPosition(groupKey, group.items, assignment.employeeId, weekKey, s as 1 | 2 | 3, dropX, dropY);
+              }
+              return;
+            }
+            
+            // Jeśli tylko zmiana zmiany (ten sam projekt) - przenieś bez zmiany scope
+            if (sourceShift !== s) {
+              await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3);
+            }
             return;
           }
           
           // Inaczej to przeciąganie nowego pracownika
           if (this.draggedEmployeeId) {
-            this.showScopePicker(groupKey, group.items, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3, shiftCell);
+            this.showScopePickerAtPosition(groupKey, group.items, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3, dropX, dropY);
           }
         });
         
@@ -9833,8 +13044,7 @@ class KappaApp {
     const emp = this.state.employees.find(e => e.id === employeeId);
     const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
     const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-    const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
-    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, customer?.name || '?', type?.name || '?', shift);
+    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${shift}`);
     
     this.renderScheduleProjectsPanel();
     this.renderScheduleAlerts();
@@ -9843,6 +13053,30 @@ class KappaApp {
     
     const scopeText = scope === 'project' ? i18n.t('schedule.wholeProject') : (testId ? 'test' : 'część');
     this.showToast(`${i18n.t('schedule.assignedTo')} ${shift} (${scopeText})`, 'success');
+  }
+  
+  private async logScheduleChange(action: 'added' | 'removed' | 'modified', employee: string, details: string): Promise<void> {
+    let history: Array<{action: string; type: string; details: string; timestamp: number}> = [];
+    try {
+      const historyData = await db.getPreference('kappa_schedule_history');
+      history = Array.isArray(historyData) ? historyData : [];
+    } catch (e) {
+      history = [];
+    }
+    
+    history.push({
+      action,
+      type: 'Assignment',
+      details: `${action === 'added' ? 'Przypisano' : action === 'removed' ? 'Usunięto' : 'Zmieniono'} <strong>${employee}</strong> → ${details}`,
+      timestamp: Date.now()
+    });
+    
+    // Zachowaj tylko ostatnie 100 wpisów
+    if (history.length > 100) {
+      history = history.slice(-100);
+    }
+    
+    await db.setPreference('kappa_schedule_history', history);
   }
 
   // Picker pracownika - krok 1
@@ -9922,6 +13156,133 @@ class KappaApp {
           picker.remove();
           this.showScopePicker(groupKey, groupItems, empId, week, shift, targetCell);
         }
+      });
+    });
+    
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!picker.contains(e.target as Node)) {
+          picker.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 10);
+  }
+  
+  // Picker zakresu przy pozycji drop
+  private showScopePickerAtPosition(
+    groupKey: string,
+    groupItems: Project[],
+    employeeId: string,
+    week: string,
+    shift: 1 | 2 | 3,
+    x: number,
+    y: number
+  ): void {
+    document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
+    document.querySelectorAll('.sched-picker').forEach(p => p.remove());
+    
+    const picker = document.createElement('div');
+    picker.className = 'sched-scope-picker';
+    
+    const employee = this.state.employees.find(e => e.id === employeeId);
+    
+    // Zbierz wszystkie unikalne testy i części
+    const uniqueTests = new Map<string, Test>();
+    const uniqueParts = new Map<string, Part>();
+    
+    groupItems.forEach(p => {
+      if (p.test_id) {
+        const test = this.state.tests.find(t => t.id === p.test_id);
+        if (test) uniqueTests.set(test.id, test);
+      }
+      if (p.part_id) {
+        const part = this.state.parts.find(pt => pt.id === p.part_id);
+        if (part) uniqueParts.set(part.id, part);
+      }
+    });
+    
+    const tests = Array.from(uniqueTests.values());
+    const parts = Array.from(uniqueParts.values());
+    
+    picker.innerHTML = `
+      <div class="sched-scope-header">
+        <span class="sched-scope-emp" style="--emp-color: ${employee?.color || '#888'}">${employee?.firstName || '?'}</span>
+        <span class="sched-scope-title">${i18n.t('schedule.selectScope')}</span>
+      </div>
+      <div class="sched-scope-options">
+        <button class="sched-scope-option primary" data-scope="project">
+          <span class="sched-scope-icon">📦</span>
+          <div class="sched-scope-text">
+            <span class="sched-scope-label">${i18n.t('schedule.wholeProject')}</span>
+            <span class="sched-scope-desc">${i18n.t('schedule.allTestsAndParts')}</span>
+          </div>
+        </button>
+        
+        ${tests.length > 0 ? `
+          <div class="sched-scope-divider">${i18n.t('messages.test')}</div>
+          ${tests.map(t => `
+            <button class="sched-scope-option" data-scope="specific" data-test="${t.id}">
+              <span class="sched-scope-icon">🧪</span>
+              <span class="sched-scope-label">${t.name}</span>
+            </button>
+          `).join('')}
+        ` : ''}
+        
+        ${parts.length > 1 ? `
+          <div class="sched-scope-divider">${i18n.t('messages.part')}</div>
+          ${parts.map(p => `
+            <button class="sched-scope-option" data-scope="specific" data-part="${p.id}">
+              <span class="sched-scope-icon">🔧</span>
+              <span class="sched-scope-label">${p.name}</span>
+            </button>
+          `).join('')}
+        ` : ''}
+      </div>
+    `;
+    
+    // Pozycjonowanie przy miejscu drop
+    picker.style.position = 'fixed';
+    picker.style.zIndex = '1001';
+    
+    document.body.appendChild(picker);
+    
+    const pickerRect = picker.getBoundingClientRect();
+    const viewportHeight = window.innerHeight;
+    const viewportWidth = window.innerWidth;
+    
+    // Pozycjonuj przy miejscu drop z inteligentnym dostosowaniem
+    let topPosition = y + 10; // Trochę poniżej kursora
+    let leftPosition = x - 20; // Lekko w lewo od kursora
+    
+    // Sprawdź czy mieści się w pionie
+    if (topPosition + pickerRect.height > viewportHeight - 10) {
+      topPosition = y - pickerRect.height - 10; // Pokaż powyżej
+    }
+    if (topPosition < 10) {
+      topPosition = 10;
+    }
+    
+    // Sprawdź czy mieści się w poziomie
+    if (leftPosition + pickerRect.width > viewportWidth - 10) {
+      leftPosition = viewportWidth - pickerRect.width - 10;
+    }
+    if (leftPosition < 10) {
+      leftPosition = 10;
+    }
+    
+    picker.style.top = `${topPosition}px`;
+    picker.style.left = `${leftPosition}px`;
+    
+    // Event listeners
+    picker.querySelectorAll('.sched-scope-option').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const scope = (btn as HTMLElement).dataset.scope as AssignmentScope;
+        const testId = (btn as HTMLElement).dataset.test;
+        const partId = (btn as HTMLElement).dataset.part;
+        
+        await this.addScopedAssignment(groupKey, employeeId, week, shift, scope, testId, partId);
+        picker.remove();
       });
     });
     
@@ -10891,14 +14252,19 @@ class KappaApp {
       const emp = this.state.employees.find(e => e.id === assignment.employeeId);
       const project = this.state.projects.find(p => p.id === assignment.projectId || `${p.customer_id}-${p.type_id}` === assignment.projectId);
       const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-      const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
       
       this.state.scheduleAssignments.splice(idx, 1);
       await db.delete('scheduleAssignments', assignmentId);
-      await this.addLog('deleted', 'Assignment', assignmentId);
+      
+      // Czytelny log zamiast ID
+      const empName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
+      const projectName = customer?.name || '?';
+      const scopeLabels: Record<string, string> = { project: 'Projekt', audit: 'Audyt', adhesion: 'Przyczepność', specific: 'Specyficzne' };
+      const scopeLabel = scopeLabels[assignment.scope] || assignment.scope;
+      await this.addLog('deleted', 'Assignment', `${empName} ← ${projectName}`, `Z${assignment.shift}, ${scopeLabel}`);
       
       // Loguj do historii
-      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, customer?.name || '?', type?.name || '?', assignment.shift);
+      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${assignment.shift}`);
       
       this.renderScheduleProjectsPanel();
       this.renderScheduleEmployeePanel();
@@ -11960,33 +15326,69 @@ class KappaApp {
     const selectedColor = employee?.color || EMPLOYEE_COLORS[this.state.employees.length % EMPLOYEE_COLORS.length];
     const currentStatus = employee?.status || 'available';
     const currentShift = employee?.suggestedShift || '';
+    const currentRole = employee?.role || 'worker';
     
     modalBody.innerHTML = `
-      <div class="form-group">
-        <label>${i18n.t('schedule.firstName')}:</label>
-        <input type="text" id="employeeFirstName" class="form-control" value="${employee?.firstName || ''}" placeholder="${i18n.t('schedule.firstName')}..." />
-      </div>
-      <div class="form-group">
-        <label>${i18n.t('schedule.lastName')}:</label>
-        <input type="text" id="employeeLastName" class="form-control" value="${employee?.lastName || ''}" placeholder="${i18n.t('schedule.lastName')}..." />
-      </div>
-      <div class="form-group">
-        <label>${i18n.t('schedule.employeeColor')}:</label>
-        <div class="employee-color-picker" id="employeeColorPicker">
-          ${EMPLOYEE_COLORS.map(color => `
-            <div class="employee-color-option ${color === selectedColor ? 'selected' : ''}" 
-                 data-color="${color}" 
-                 style="background: ${color}"></div>
-          `).join('')}
+      <div class="employee-form-grid">
+        <div class="form-section">
+          <h4 class="form-section-title">👤 Dane podstawowe</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>${i18n.t('schedule.firstName')}:</label>
+              <input type="text" id="employeeFirstName" class="form-control" value="${employee?.firstName || ''}" placeholder="${i18n.t('schedule.firstName')}..." />
+            </div>
+            <div class="form-group">
+              <label>${i18n.t('schedule.lastName')}:</label>
+              <input type="text" id="employeeLastName" class="form-control" value="${employee?.lastName || ''}" placeholder="${i18n.t('schedule.lastName')}..." />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>📧 Email:</label>
+            <input type="email" id="employeeEmail" class="form-control" value="${employee?.email || ''}" placeholder="imie.nazwisko@firma.pl" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>📱 Telefon:</label>
+              <input type="tel" id="employeePhone" class="form-control" value="${employee?.phone || ''}" placeholder="+48 123 456 789" />
+            </div>
+            <div class="form-group">
+              <label>🏢 Dział:</label>
+              <input type="text" id="employeeDepartment" class="form-control" value="${employee?.department || ''}" placeholder="np. Produkcja, Jakość..." />
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label>${i18n.t('schedule.status')}:</label>
-        <select id="employeeStatus" class="form-control">
-          <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
-          <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
-          <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
-        </select>
+        
+        <div class="form-section">
+          <h4 class="form-section-title">⚙️ Ustawienia</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>👔 Rola:</label>
+              <select id="employeeRole" class="form-control">
+                <option value="worker" ${currentRole === 'worker' ? 'selected' : ''}>👷 Pracownik</option>
+                <option value="leader" ${currentRole === 'leader' ? 'selected' : ''}>👨‍💼 Lider zespołu</option>
+                <option value="manager" ${currentRole === 'manager' ? 'selected' : ''}>👔 Kierownik</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>${i18n.t('schedule.status')}:</label>
+              <select id="employeeStatus" class="form-control">
+                <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
+                <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
+                <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>${i18n.t('schedule.employeeColor')}:</label>
+            <div class="employee-color-picker" id="employeeColorPicker">
+              ${EMPLOYEE_COLORS.map(color => `
+                <div class="employee-color-option ${color === selectedColor ? 'selected' : ''}" 
+                     data-color="${color}" 
+                     style="background: ${color}"></div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
       </div>
     `;
     
@@ -12003,6 +15405,10 @@ class KappaApp {
     confirmBtn.onclick = async () => {
       const firstName = (document.getElementById('employeeFirstName') as HTMLInputElement).value.trim();
       const lastName = (document.getElementById('employeeLastName') as HTMLInputElement).value.trim();
+      const email = (document.getElementById('employeeEmail') as HTMLInputElement).value.trim();
+      const phone = (document.getElementById('employeePhone') as HTMLInputElement).value.trim();
+      const department = (document.getElementById('employeeDepartment') as HTMLInputElement).value.trim();
+      const role = (document.getElementById('employeeRole') as HTMLSelectElement).value as 'worker' | 'leader' | 'manager';
       const colorEl = document.querySelector('.employee-color-option.selected') as HTMLElement;
       const color = colorEl?.dataset.color || EMPLOYEE_COLORS[0];
       const status = (document.getElementById('employeeStatus') as HTMLSelectElement).value as EmployeeStatus;
@@ -12021,6 +15427,10 @@ class KappaApp {
         employee.color = color;
         employee.status = status;
         employee.suggestedShift = suggestedShift;
+        employee.email = email || undefined;
+        employee.phone = phone || undefined;
+        employee.department = department || undefined;
+        employee.role = role;
         await db.put('employees', employee);
         await this.addLog('updated', 'Employee', `${firstName} ${lastName}`);
       } else {
@@ -12031,6 +15441,10 @@ class KappaApp {
           color,
           status,
           suggestedShift,
+          email: email || undefined,
+          phone: phone || undefined,
+          department: department || undefined,
+          role,
           createdAt: Date.now(),
         };
         this.state.employees.push(newEmployee);
@@ -12115,31 +15529,31 @@ class KappaApp {
         const rate = data.soll > 0 ? Math.round((data.ist / data.soll) * 100) : 0;
         const color = rate >= 90 ? '#10B981' : rate >= 70 ? '#3B82F6' : rate >= 50 ? '#F59E0B' : '#EF4444';
         html += `
-          <div style="background: var(--color-bg-secondary); border-radius: 12px; padding: 16px; border: 1px solid var(--color-border);">
-            <div style="display: flex; justify-content: space-between; margin-bottom: 12px;">
-              <strong>${name}</strong>
-              <span style="font-size: 0.75rem; padding: 2px 8px; background: var(--color-primary-subtle); border-radius: 12px;">${data.count} projects</span>
+          <div style="background: var(--color-bg-secondary); border-radius: 8px; padding: 10px; border: 1px solid var(--color-border);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <strong style="font-size: 0.8rem;">${name}</strong>
+              <span style="font-size: 0.65rem; padding: 2px 6px; background: var(--color-primary-subtle); border-radius: 10px;">${data.count} proj</span>
             </div>
-            <div style="display: flex; gap: 12px; margin-bottom: 12px;">
-              <div style="flex: 1; text-align: center; padding: 8px; background: var(--color-bg-primary); border-radius: 8px;">
-                <div style="font-size: 1.25rem; font-weight: 700;">${data.ist}</div>
-                <div style="font-size: 0.7rem; color: var(--color-text-muted);">IST</div>
+            <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+              <div style="flex: 1; text-align: center; padding: 6px; background: var(--color-bg-primary); border-radius: 6px;">
+                <div style="font-size: 1rem; font-weight: 700;">${data.ist}</div>
+                <div style="font-size: 0.6rem; color: var(--color-text-muted);">IST</div>
               </div>
-              <div style="flex: 1; text-align: center; padding: 8px; background: var(--color-bg-primary); border-radius: 8px;">
-                <div style="font-size: 1.25rem; font-weight: 700;">${data.soll}</div>
-                <div style="font-size: 0.7rem; color: var(--color-text-muted);">SOLL</div>
+              <div style="flex: 1; text-align: center; padding: 6px; background: var(--color-bg-primary); border-radius: 6px;">
+                <div style="font-size: 1rem; font-weight: 700;">${data.soll}</div>
+                <div style="font-size: 0.6rem; color: var(--color-text-muted);">SOLL</div>
               </div>
-              <div style="flex: 1; text-align: center; padding: 8px; background: var(--color-bg-primary); border-radius: 8px;">
-                <div style="font-size: 1.25rem; font-weight: 700;">${rate}%</div>
-                <div style="font-size: 0.7rem; color: var(--color-text-muted);">Rate</div>
+              <div style="flex: 1; text-align: center; padding: 6px; background: ${color}15; border-radius: 6px;">
+                <div style="font-size: 1rem; font-weight: 700; color: ${color};">${rate}%</div>
+                <div style="font-size: 0.6rem; color: var(--color-text-muted);">Rate</div>
               </div>
             </div>
-            <div style="height: 8px; background: var(--color-border); border-radius: 4px; overflow: hidden;">
-              <div style="height: 100%; width: ${Math.min(rate, 100)}%; background: ${color}; border-radius: 4px;"></div>
+            <div style="height: 4px; background: var(--color-border); border-radius: 2px; overflow: hidden;">
+              <div style="height: 100%; width: ${Math.min(rate, 100)}%; background: ${color}; border-radius: 2px;"></div>
             </div>
           </div>`;
       });
-      customerGrid.innerHTML = html || '<p style="padding: 20px; color: var(--color-text-muted);">No customer data</p>';
+      customerGrid.innerHTML = html || '<p style="padding: 12px; color: var(--color-text-muted);">No customer data</p>';
     }
 
     // Test Performance
@@ -12169,17 +15583,17 @@ class KappaApp {
         const rate = d.soll > 0 ? Math.round((d.ist / d.soll) * 100) : 0;
         const width = (d.ist / maxVal) * 100;
         html += `
-          <div style="display: grid; grid-template-columns: 120px 1fr auto; align-items: center; gap: 16px; margin-bottom: 12px;">
-            <div style="font-weight: 500;">${d.name}</div>
-            <div style="height: 24px; background: var(--color-bg-secondary); border-radius: 12px; overflow: hidden;">
-              <div style="height: 100%; width: ${width}%; background: ${d.color}; border-radius: 12px; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; min-width: 40px;">
-                <span style="font-size: 0.7rem; font-weight: 600; color: white;">${rate}%</span>
+          <div style="display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 10px; margin-bottom: 6px;">
+            <div style="font-weight: 500; font-size: 0.75rem;">${d.name}</div>
+            <div style="height: 18px; background: var(--color-bg-secondary); border-radius: 9px; overflow: hidden;">
+              <div style="height: 100%; width: ${width}%; background: ${d.color}; border-radius: 9px; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; min-width: 32px;">
+                <span style="font-size: 0.6rem; font-weight: 600; color: white;">${rate}%</span>
               </div>
             </div>
-            <div style="font-weight: 600; min-width: 80px; text-align: right;">${d.ist} / ${d.soll}</div>
+            <div style="font-weight: 600; font-size: 0.7rem; min-width: 60px; text-align: right;">${d.ist}/${d.soll}</div>
           </div>`;
       });
-      testBars.innerHTML = html || '<p style="padding: 20px; color: var(--color-text-muted);">No test data</p>';
+      testBars.innerHTML = html || '<p style="padding: 12px; color: var(--color-text-muted);">No test data</p>';
     }
 
     // Top & Bottom Performers
@@ -12202,13 +15616,13 @@ class KappaApp {
       }).filter(r => r.soll > 0).sort((a, b) => b.rate - a.rate);
 
       const renderList = (items: typeof rates, isTop: boolean) => items.map((p, i) => `
-        <div style="display: flex; align-items: center; gap: 12px; padding: 12px; background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 8px; border-left: 3px solid ${isTop ? '#10B981' : '#EF4444'};">
-          <div style="width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.75rem; font-weight: 700; background: ${isTop ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'}; color: ${isTop ? '#10B981' : '#EF4444'};">${i + 1}</div>
+        <div style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--color-bg-secondary); border-radius: 6px; margin-bottom: 4px; border-left: 2px solid ${isTop ? '#10B981' : '#EF4444'};">
+          <div style="width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.65rem; font-weight: 700; background: ${isTop ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)'}; color: ${isTop ? '#10B981' : '#EF4444'};">${i + 1}</div>
           <div style="flex: 1; min-width: 0;">
-            <div style="font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.name}</div>
-            <div style="font-size: 0.75rem; color: var(--color-text-muted);">${p.ist}/${p.soll}</div>
+            <div style="font-weight: 500; font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.name}</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted);">${p.ist}/${p.soll}</div>
           </div>
-          <div style="font-weight: 700; color: ${isTop ? '#10B981' : '#EF4444'};">${p.rate}%</div>
+          <div style="font-weight: 700; font-size: 0.8rem; color: ${isTop ? '#10B981' : '#EF4444'};">${p.rate}%</div>
         </div>`).join('');
 
       topEl.innerHTML = renderList(rates.slice(0, 5), true) || '<p style="color: var(--color-text-muted);">No data</p>';
@@ -12232,27 +15646,27 @@ class KappaApp {
       });
       const total = stoppage + prodLack + normal;
       stoppageEl.innerHTML = `
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; padding: 20px;">
-          <div style="text-align: center; padding: 16px; background: var(--color-bg-secondary); border-radius: 12px;">
-            <div style="width: 40px; height: 40px; margin: 0 auto 8px; border-radius: 50%; background: rgba(239,68,68,0.1); display: flex; align-items: center; justify-content: center;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px;">
+          <div style="text-align: center; padding: 10px; background: var(--color-bg-secondary); border-radius: 8px;">
+            <div style="width: 28px; height: 28px; margin: 0 auto 6px; border-radius: 50%; background: rgba(239,68,68,0.1); display: flex; align-items: center; justify-content: center;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#EF4444" stroke-width="2" width="14" height="14"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>
             </div>
-            <div style="font-size: 2rem; font-weight: 700;">${stoppage}</div>
-            <div style="font-size: 0.75rem; color: var(--color-text-muted);">STOPPAGE (${total > 0 ? Math.round((stoppage/total)*100) : 0}%)</div>
+            <div style="font-size: 1.5rem; font-weight: 700;">${stoppage}</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted);">STOPPAGE (${total > 0 ? Math.round((stoppage/total)*100) : 0}%)</div>
           </div>
-          <div style="text-align: center; padding: 16px; background: var(--color-bg-secondary); border-radius: 12px;">
-            <div style="width: 40px; height: 40px; margin: 0 auto 8px; border-radius: 50%; background: rgba(245,158,11,0.1); display: flex; align-items: center; justify-content: center;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <div style="text-align: center; padding: 10px; background: var(--color-bg-secondary); border-radius: 8px;">
+            <div style="width: 28px; height: 28px; margin: 0 auto 6px; border-radius: 50%; background: rgba(245,158,11,0.1); display: flex; align-items: center; justify-content: center;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" width="14" height="14"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             </div>
-            <div style="font-size: 2rem; font-weight: 700;">${prodLack}</div>
-            <div style="font-size: 0.75rem; color: var(--color-text-muted);">PROD. LACK (${total > 0 ? Math.round((prodLack/total)*100) : 0}%)</div>
+            <div style="font-size: 1.5rem; font-weight: 700;">${prodLack}</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted);">PROD. LACK (${total > 0 ? Math.round((prodLack/total)*100) : 0}%)</div>
           </div>
-          <div style="text-align: center; padding: 16px; background: var(--color-bg-secondary); border-radius: 12px;">
-            <div style="width: 40px; height: 40px; margin: 0 auto 8px; border-radius: 50%; background: rgba(16,185,129,0.1); display: flex; align-items: center; justify-content: center;">
-              <svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2" width="20" height="20"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          <div style="text-align: center; padding: 10px; background: var(--color-bg-secondary); border-radius: 8px;">
+            <div style="width: 28px; height: 28px; margin: 0 auto 6px; border-radius: 50%; background: rgba(16,185,129,0.1); display: flex; align-items: center; justify-content: center;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2" width="14" height="14"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
             </div>
-            <div style="font-size: 2rem; font-weight: 700;">${normal}</div>
-            <div style="font-size: 0.75rem; color: var(--color-text-muted);">NORMAL</div>
+            <div style="font-size: 1.5rem; font-weight: 700;">${normal}</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted);">NORMAL</div>
           </div>
         </div>`;
     }
@@ -12279,16 +15693,16 @@ class KappaApp {
       };
 
       const data = getData();
-      let html = `<table style="width: 100%; border-collapse: collapse;"><thead><tr style="background: var(--color-bg-secondary);">
-        <th style="padding: 12px; text-align: left;">Quarter</th><th style="padding: 12px;">IST</th><th style="padding: 12px;">SOLL</th><th style="padding: 12px;">Rate</th></tr></thead><tbody>`;
+      let html = `<table style="width: 100%; border-collapse: collapse; font-size: 0.75rem;"><thead><tr style="background: var(--color-bg-secondary);">
+        <th style="padding: 8px; text-align: left;">Q</th><th style="padding: 8px;">IST</th><th style="padding: 8px;">SOLL</th><th style="padding: 8px;">Rate</th></tr></thead><tbody>`;
       
       (['Q1', 'Q2', 'Q3', 'Q4'] as const).forEach(q => {
         const rate = data.soll[q] > 0 ? Math.round((data.ist[q] / data.soll[q]) * 100) : 0;
         const color = rate >= 90 ? '#10B981' : rate >= 70 ? '#3B82F6' : rate >= 50 ? '#F59E0B' : '#EF4444';
-        html += `<tr style="border-bottom: 1px solid var(--color-border);"><td style="padding: 12px; font-weight: 500;">${q}</td><td style="padding: 12px; text-align: center;">${data.ist[q]}</td><td style="padding: 12px; text-align: center;">${data.soll[q]}</td><td style="padding: 12px; text-align: center; color: ${color}; font-weight: 600;">${rate}%</td></tr>`;
+        html += `<tr style="border-bottom: 1px solid var(--color-border);"><td style="padding: 8px; font-weight: 500;">${q}</td><td style="padding: 8px; text-align: center;">${data.ist[q]}</td><td style="padding: 8px; text-align: center;">${data.soll[q]}</td><td style="padding: 8px; text-align: center; color: ${color}; font-weight: 600;">${rate}%</td></tr>`;
       });
       html += '</tbody></table>';
-      yoyContainer.innerHTML = `<div style="padding: 16px;">${html}</div>`;
+      yoyContainer.innerHTML = `<div style="padding: 10px;">${html}</div>`;
     }
 
     // Monthly Summary
@@ -12318,11 +15732,11 @@ class KappaApp {
         const rateColor = rate >= 90 ? '#10B981' : rate >= 70 ? '#3B82F6' : rate >= 50 ? '#F59E0B' : '#EF4444';
         const isCurrent = idx === currentMonth && year === new Date().getFullYear();
         html += `
-          <div style="background: var(--color-bg-secondary); border-radius: 12px; padding: 16px; text-align: center; border: 1px solid ${isCurrent ? 'var(--color-primary)' : 'var(--color-border)'};">
-            <div style="font-size: 0.75rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; margin-bottom: 8px;">${name}</div>
-            <div style="font-size: 1.5rem; font-weight: 700;">${ist}</div>
-            <div style="font-size: 0.75rem; color: var(--color-text-muted);">/ ${soll} SOLL</div>
-            ${soll > 0 ? `<div style="margin-top: 8px; font-size: 0.875rem; font-weight: 600; padding: 4px 8px; border-radius: 12px; display: inline-block; background: ${rateColor}20; color: ${rateColor};">${rate}%</div>` : ''}
+          <div style="background: var(--color-bg-secondary); border-radius: 8px; padding: 10px; text-align: center; border: 1px solid ${isCurrent ? 'var(--color-primary)' : 'var(--color-border)'};">
+            <div style="font-size: 0.65rem; font-weight: 600; color: var(--color-text-muted); text-transform: uppercase; margin-bottom: 4px;">${name}</div>
+            <div style="font-size: 1.1rem; font-weight: 700;">${ist}</div>
+            <div style="font-size: 0.6rem; color: var(--color-text-muted);">/${soll}</div>
+            ${soll > 0 ? `<div style="margin-top: 4px; font-size: 0.7rem; font-weight: 600; padding: 2px 6px; border-radius: 8px; display: inline-block; background: ${rateColor}20; color: ${rateColor};">${rate}%</div>` : ''}
           </div>`;
       });
       monthlyGrid.innerHTML = html;
@@ -12558,6 +15972,1695 @@ class KappaApp {
         },
       },
     });
+  }
+
+  // ==================== ABSENCE MODULE ====================
+  
+  private async renderAbsencesView(): Promise<void> {
+    // Load data
+    await this.loadAbsenceData();
+    
+    // Setup event listeners
+    this.setupAbsenceEventListeners();
+    
+    // Update year label
+    const yearLabel = document.getElementById('absenceYearLabel');
+    if (yearLabel) yearLabel.textContent = this.absenceYear.toString();
+    
+    // Render filters
+    this.renderAbsenceFilters();
+    
+    // Render stats
+    this.renderAbsenceYearStats();
+    
+    // Render upcoming
+    this.renderAbsenceUpcoming();
+    
+    // Render employee sidebar
+    this.renderAbsenceEmployeesSidebar();
+    
+    // Render main content based on view mode
+    this.renderAbsenceContent();
+  }
+  
+  private async loadAbsenceData(): Promise<void> {
+    try {
+      // Synchronizuj pracowników z IndexedDB do backendu
+      await this.syncEmployeesToBackend();
+      
+      this.absenceTypes = await api.getAbsenceTypes();
+      this.absences = await api.getAbsences({ year: this.absenceYear });
+      this.absenceLimits = await api.getAbsenceLimits({ year: this.absenceYear });
+      this.holidays = await api.getHolidays(this.absenceYear);
+    } catch (e) {
+      console.error('Failed to load absence data:', e);
+      this.absenceTypes = [];
+      this.absences = [];
+      this.absenceLimits = [];
+      this.holidays = [];
+    }
+  }
+  
+  private async syncEmployeesToBackend(): Promise<void> {
+    try {
+      // Pobierz pracowników z lokalnej bazy (IndexedDB)
+      const localEmployees = this.state.employees;
+      console.log('Syncing employees to backend, count:', localEmployees.length);
+      if (localEmployees.length === 0) {
+        console.log('No local employees to sync');
+        return;
+      }
+      
+      // Wyślij każdego pracownika do backendu (upsert)
+      for (const emp of localEmployees) {
+        console.log('Syncing employee:', emp.id, emp.firstName, emp.lastName);
+        await api.addEmployee(emp);
+      }
+      console.log('Employees synced successfully');
+    } catch (e) {
+      console.error('Failed to sync employees to backend:', e);
+    }
+  }
+  
+  private setupAbsenceEventListeners(): void {
+    // Prevent multiple initializations
+    if (this.absenceEventsInitialized) {
+      console.log('Absence event listeners already initialized');
+      return;
+    }
+    this.absenceEventsInitialized = true;
+    console.log('Setting up absence event listeners...');
+    
+    const addBtn = document.getElementById('addAbsenceBtn');
+    const settingsBtn = document.getElementById('absenceSettingsBtn');
+    console.log('addAbsenceBtn found:', !!addBtn);
+    console.log('absenceSettingsBtn found:', !!settingsBtn);
+    
+    // Year navigation
+    document.getElementById('absencePrevYear')?.addEventListener('click', () => {
+      this.absenceYear--;
+      this.absenceCalendarMonth = 0;
+      this.renderAbsencesView();
+    });
+    
+    document.getElementById('absenceNextYear')?.addEventListener('click', () => {
+      this.absenceYear++;
+      this.absenceCalendarMonth = 0;
+      this.renderAbsencesView();
+    });
+    
+    // View toggle
+    document.querySelectorAll('.absence-view-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const view = (btn as HTMLElement).dataset.view as any;
+        this.absenceViewMode = view;
+        document.querySelectorAll('.absence-view-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.renderAbsenceContent();
+      });
+    });
+    
+    // Filters
+    document.getElementById('absenceFilterEmployee')?.addEventListener('change', (e) => {
+      this.absenceFilterEmployee = (e.target as HTMLSelectElement).value;
+      this.renderAbsenceContent();
+    });
+    
+    document.getElementById('absenceFilterType')?.addEventListener('change', (e) => {
+      this.absenceFilterType = (e.target as HTMLSelectElement).value;
+      this.renderAbsenceContent();
+    });
+    
+    document.getElementById('absenceFilterMonth')?.addEventListener('change', (e) => {
+      this.absenceFilterMonth = (e.target as HTMLSelectElement).value;
+      if (this.absenceFilterMonth) {
+        this.absenceCalendarMonth = parseInt(this.absenceFilterMonth) - 1;
+      }
+      this.renderAbsenceContent();
+    });
+    
+    // Add absence button
+    document.getElementById('addAbsenceBtn')?.addEventListener('click', () => {
+      console.log('Add absence button clicked!');
+      this.showAddAbsenceWizard();
+    });
+    
+    // Settings button
+    document.getElementById('absenceSettingsBtn')?.addEventListener('click', () => {
+      console.log('Settings button clicked!');
+      this.showAbsenceSettingsModal();
+    });
+    
+    // Export button
+    document.getElementById('absenceExportBtn')?.addEventListener('click', () => {
+      this.exportAbsences();
+    });
+    
+    // Toggle absence employees sidebar - otwieranie
+    document.getElementById('absenceEmployeesToggle')?.addEventListener('click', () => {
+      const sidebar = document.getElementById('absenceEmployeesSidebar');
+      const layout = sidebar?.closest('.absence-layout');
+      if (sidebar && layout) {
+        sidebar.classList.add('open');
+        layout.classList.add('sidebar-open');
+        localStorage.setItem('absenceEmployeesSidebarOpen', '1');
+      }
+    });
+    
+    // Close absence employees sidebar - zamykanie
+    document.getElementById('absenceEmployeesClose')?.addEventListener('click', () => {
+      const sidebar = document.getElementById('absenceEmployeesSidebar');
+      const layout = sidebar?.closest('.absence-layout');
+      if (sidebar && layout) {
+        sidebar.classList.remove('open');
+        layout.classList.remove('sidebar-open');
+        localStorage.setItem('absenceEmployeesSidebarOpen', '0');
+      }
+    });
+    
+    // Przywróć stan sidebara z localStorage (domyślnie otwarty)
+    const absenceSidebarOpen = localStorage.getItem('absenceEmployeesSidebarOpen') !== '0';
+    const absenceSidebar = document.getElementById('absenceEmployeesSidebar');
+    const absenceLayout = absenceSidebar?.closest('.absence-layout');
+    if (absenceSidebar && absenceLayout) {
+      if (absenceSidebarOpen) {
+        absenceSidebar.classList.add('open');
+        absenceLayout.classList.add('sidebar-open');
+      } else {
+        absenceSidebar.classList.remove('open');
+        absenceLayout.classList.remove('sidebar-open');
+      }
+    }
+  }
+
+  private renderAbsenceFilters(): void {
+    // Employee filter
+    const empFilter = document.getElementById('absenceFilterEmployee') as HTMLSelectElement;
+    if (empFilter) {
+      empFilter.innerHTML = '<option value="">Wszyscy</option>' +
+        this.state.employees
+          .filter(e => !e.status || e.status === 'available')
+          .sort((a, b) => a.firstName.localeCompare(b.firstName))
+          .map(e => `<option value="${e.id}" ${e.id === this.absenceFilterEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`)
+          .join('');
+    }
+    
+    // Type filter
+    const typeFilter = document.getElementById('absenceFilterType') as HTMLSelectElement;
+    if (typeFilter) {
+      typeFilter.innerHTML = '<option value="">Wszystkie</option>' +
+        this.absenceTypes
+          .map(t => `<option value="${t.id}" ${t.id === this.absenceFilterType ? 'selected' : ''}>${t.icon} ${t.name}</option>`)
+          .join('');
+    }
+  }
+  
+  private renderAbsenceYearStats(): void {
+    const container = document.getElementById('absenceYearStats');
+    if (!container) return;
+    
+    // Calculate stats
+    const totalAbsences = this.absences.length;
+    const totalDays = this.absences.reduce((sum, a) => sum + (a.workDays || 0), 0);
+    const pendingCount = this.absences.filter(a => a.status === 'pending').length;
+    const employeesOnLeave = new Set(this.absences.map(a => a.employeeId)).size;
+    
+    container.innerHTML = `
+      <div class="absence-year-stats-grid">
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${totalAbsences}</div>
+          <div class="absence-stat-label">Nieobecności</div>
+        </div>
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${totalDays}</div>
+          <div class="absence-stat-label">Dni łącznie</div>
+        </div>
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${pendingCount}</div>
+          <div class="absence-stat-label">Oczekujących</div>
+        </div>
+        <div class="absence-stat-card">
+          <div class="absence-stat-value">${employeesOnLeave}</div>
+          <div class="absence-stat-label">Pracowników</div>
+        </div>
+      </div>
+    `;
+  }
+  
+  private renderAbsenceUpcoming(): void {
+    const container = document.getElementById('absenceUpcoming');
+    if (!container) return;
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const upcoming = this.absences
+      .filter(a => new Date(a.startDate) >= today)
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      .slice(0, 5);
+    
+    if (upcoming.length === 0) {
+      container.innerHTML = '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">Brak nadchodzących nieobecności</p>';
+      return;
+    }
+    
+    container.innerHTML = upcoming.map(a => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      const startDate = new Date(a.startDate).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
+      
+      return `
+        <div class="absence-upcoming-item">
+          <span class="absence-upcoming-icon">${type?.icon || '📅'}</span>
+          <div class="absence-upcoming-info">
+            <div class="absence-upcoming-name">${emp?.firstName || ''} ${emp?.lastName || ''}</div>
+            <div class="absence-upcoming-date">${startDate} - ${a.workDays} dni</div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  private renderAbsenceEmployeesSidebar(): void {
+    const container = document.getElementById('absenceEmployeesList');
+    if (!container) return;
+    
+    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    container.innerHTML = availableEmployees.map(emp => {
+      // Get limits for this employee
+      const empLimits = this.absenceLimits.filter(l => l.employeeId === emp.id);
+      const vacationLimit = empLimits.find(l => l.absenceTypeId === 'vacation');
+      const vacationUsed = vacationLimit?.usedDays || 0;
+      const vacationTotal = vacationLimit?.totalDays || 26;
+      const vacationPercent = vacationTotal > 0 ? (vacationUsed / vacationTotal) * 100 : 0;
+      
+      const hoLimit = empLimits.find(l => l.absenceTypeId === 'home-office');
+      const hoUsed = hoLimit?.usedDays || 0;
+      const hoTotal = hoLimit?.totalDays || 12;
+      const hoPercent = hoTotal > 0 ? (hoUsed / hoTotal) * 100 : 0;
+      
+      return `
+        <div class="absence-employee-card" data-employee-id="${emp.id}">
+          <div class="absence-employee-card-header">
+            <div class="absence-employee-avatar" style="background: ${emp.color}">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </div>
+            <div class="absence-employee-info">
+              <h4>${emp.firstName} ${emp.lastName}</h4>
+              <span>${vacationUsed}/${vacationTotal} dni urlopu</span>
+            </div>
+          </div>
+          <div class="absence-employee-stats">
+            <div class="absence-employee-stat">
+              <span class="absence-employee-stat-icon">🏖️</span>
+              <div class="absence-employee-stat-bar">
+                <div class="absence-employee-stat-fill" style="width: ${Math.min(vacationPercent, 100)}%; background: ${vacationPercent > 80 ? '#ef4444' : '#10b981'}"></div>
+              </div>
+              <span class="absence-employee-stat-text">${vacationUsed}/${vacationTotal}</span>
+            </div>
+            <div class="absence-employee-stat">
+              <span class="absence-employee-stat-icon">🏠</span>
+              <div class="absence-employee-stat-bar">
+                <div class="absence-employee-stat-fill" style="width: ${Math.min(hoPercent, 100)}%; background: ${hoPercent > 80 ? '#ef4444' : '#a855f7'}"></div>
+              </div>
+              <span class="absence-employee-stat-text">${hoUsed}/${hoTotal}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    // Add click handlers
+    container.querySelectorAll('.absence-employee-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const empId = (card as HTMLElement).dataset.employeeId;
+        if (empId) this.showEmployeeAbsenceModal(empId);
+      });
+    });
+  }
+  
+  private renderAbsenceContent(): void {
+    switch (this.absenceViewMode) {
+      case 'calendar':
+        this.renderAbsenceCalendar();
+        break;
+      case 'list':
+        this.renderAbsenceList();
+        break;
+      case 'heatmap':
+        this.renderAbsenceHeatmap();
+        break;
+      case 'employees':
+        this.renderAbsenceEmployeesGrid();
+        break;
+    }
+  }
+  
+  private renderAbsenceCalendar(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    const months = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 
+                    'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
+    const weekdays = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nie'];
+    
+    const year = this.absenceYear;
+    const month = this.absenceCalendarMonth;
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startPadding = (firstDay.getDay() + 6) % 7;
+    
+    // Get filtered absences
+    let filteredAbsences = this.absences;
+    if (this.absenceFilterEmployee) {
+      filteredAbsences = filteredAbsences.filter(a => a.employeeId === this.absenceFilterEmployee);
+    }
+    if (this.absenceFilterType) {
+      filteredAbsences = filteredAbsences.filter(a => a.absenceTypeId === this.absenceFilterType);
+    }
+    
+    // Build calendar grid
+    let daysHtml = weekdays.map(d => `<div class="absence-calendar-weekday">${d}</div>`).join('');
+    
+    // Padding days from previous month
+    const prevMonth = new Date(year, month, 0);
+    for (let i = startPadding - 1; i >= 0; i--) {
+      const day = prevMonth.getDate() - i;
+      daysHtml += `<div class="absence-calendar-day other-month"><div class="absence-calendar-day-number">${day}</div></div>`;
+    }
+    
+    // Current month days
+    const today = new Date();
+    for (let d = 1; d <= lastDay.getDate(); d++) {
+      const date = new Date(year, month, d);
+      const dateStr = date.toISOString().split('T')[0];
+      const isToday = date.toDateString() === today.toDateString();
+      const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      const holiday = this.holidays.find(h => h.date === dateStr);
+      
+      // Get absences for this day
+      const dayAbsences = filteredAbsences.filter(a => {
+        const start = new Date(a.startDate);
+        const end = new Date(a.endDate);
+        return date >= start && date <= end;
+      });
+      
+      let classes = 'absence-calendar-day';
+      if (isToday) classes += ' today';
+      if (isWeekend) classes += ' weekend';
+      if (holiday) classes += ' holiday';
+      
+      const eventsHtml = dayAbsences.slice(0, 3).map(a => {
+        const emp = this.state.employees.find(e => e.id === a.employeeId);
+        const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+        return `
+          <div class="absence-calendar-event" style="background: ${type?.color || '#64748b'}" title="${emp?.firstName} ${emp?.lastName} - ${type?.name}">
+            ${type?.icon || ''} ${emp?.firstName || ''}
+          </div>
+        `;
+      }).join('');
+      
+      const moreCount = dayAbsences.length - 3;
+      const moreHtml = moreCount > 0 ? `<div class="absence-calendar-event-more">+${moreCount} więcej</div>` : '';
+      
+      daysHtml += `
+        <div class="${classes}" data-date="${dateStr}">
+          <div class="absence-calendar-day-number">${isToday ? `<span>${d}</span>` : d}</div>
+          ${holiday ? `<div class="absence-calendar-event" style="background: #f59e0b; font-size: 0.65rem;">🎉 ${holiday.name.substring(0, 12)}</div>` : ''}
+          <div class="absence-calendar-day-events">
+            ${eventsHtml}
+            ${moreHtml}
+          </div>
+        </div>
+      `;
+    }
+    
+    // Padding days for next month
+    const totalCells = startPadding + lastDay.getDate();
+    const remainingCells = (7 - (totalCells % 7)) % 7;
+    for (let i = 1; i <= remainingCells; i++) {
+      daysHtml += `<div class="absence-calendar-day other-month"><div class="absence-calendar-day-number">${i}</div></div>`;
+    }
+    
+    container.innerHTML = `
+      <div class="absence-calendar">
+        <div class="absence-calendar-header">
+          <div class="absence-calendar-nav">
+            <button class="absence-calendar-nav-btn" id="absenceCalendarPrev">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <span class="absence-calendar-month">${months[month]} ${year}</span>
+            <button class="absence-calendar-nav-btn" id="absenceCalendarNext">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+          </div>
+          <button class="absence-calendar-today-btn" id="absenceCalendarToday">Dzisiaj</button>
+        </div>
+        <div class="absence-calendar-grid">
+          ${daysHtml}
+        </div>
+      </div>
+    `;
+    
+    // Add navigation handlers
+    document.getElementById('absenceCalendarPrev')?.addEventListener('click', () => {
+      this.absenceCalendarMonth--;
+      if (this.absenceCalendarMonth < 0) {
+        this.absenceCalendarMonth = 11;
+        this.absenceYear--;
+        document.getElementById('absenceYearLabel')!.textContent = this.absenceYear.toString();
+      }
+      this.renderAbsenceCalendar();
+    });
+    
+    document.getElementById('absenceCalendarNext')?.addEventListener('click', () => {
+      this.absenceCalendarMonth++;
+      if (this.absenceCalendarMonth > 11) {
+        this.absenceCalendarMonth = 0;
+        this.absenceYear++;
+        document.getElementById('absenceYearLabel')!.textContent = this.absenceYear.toString();
+      }
+      this.renderAbsenceCalendar();
+    });
+    
+    document.getElementById('absenceCalendarToday')?.addEventListener('click', () => {
+      const now = new Date();
+      this.absenceYear = now.getFullYear();
+      this.absenceCalendarMonth = now.getMonth();
+      document.getElementById('absenceYearLabel')!.textContent = this.absenceYear.toString();
+      this.renderAbsenceCalendar();
+    });
+    
+    // Add click handlers for days
+    container.querySelectorAll('.absence-calendar-day:not(.other-month)').forEach(day => {
+      day.addEventListener('click', () => {
+        const dateStr = (day as HTMLElement).dataset.date;
+        if (dateStr) this.showAddAbsenceWizard(dateStr);
+      });
+    });
+  }
+  
+  private renderAbsenceList(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    // Filter absences
+    let filtered = this.absences;
+    if (this.absenceFilterEmployee) {
+      filtered = filtered.filter(a => a.employeeId === this.absenceFilterEmployee);
+    }
+    if (this.absenceFilterType) {
+      filtered = filtered.filter(a => a.absenceTypeId === this.absenceFilterType);
+    }
+    if (this.absenceFilterMonth) {
+      const month = parseInt(this.absenceFilterMonth);
+      filtered = filtered.filter(a => {
+        const start = new Date(a.startDate);
+        const end = new Date(a.endDate);
+        return start.getMonth() + 1 === month || end.getMonth() + 1 === month;
+      });
+    }
+    
+    // Sort by date descending
+    filtered = filtered.sort((a, b) => new Date(b.startDate).getTime() - new Date(a.startDate).getTime());
+    
+    if (filtered.length === 0) {
+      container.innerHTML = `
+        <div class="absence-empty">
+          <div class="absence-empty-icon">📅</div>
+          <h3>Brak nieobecności</h3>
+          <p>Nie znaleziono nieobecności spełniających kryteria.</p>
+          <button class="absence-action-btn primary" onclick="document.getElementById('addAbsenceBtn').click()">
+            Dodaj pierwszą nieobecność
+          </button>
+        </div>
+      `;
+      return;
+    }
+    
+    const itemsHtml = filtered.map(a => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      const startDate = new Date(a.startDate).toLocaleDateString('pl-PL');
+      const endDate = new Date(a.endDate).toLocaleDateString('pl-PL');
+      
+      return `
+        <div class="absence-list-item" data-absence-id="${a.id}">
+          <div class="absence-list-employee">
+            <div class="absence-list-avatar" style="background: ${emp?.color || '#64748b'}">
+              ${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}
+            </div>
+            <span class="absence-list-name">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
+          </div>
+          <div class="absence-list-type">
+            <span class="absence-list-type-icon">${type?.icon || '📅'}</span>
+            <span class="absence-list-type-name">${type?.name || 'Nieobecność'}</span>
+          </div>
+          <div class="absence-list-dates">${startDate} - ${endDate}</div>
+          <div class="absence-list-days">${a.workDays} dni</div>
+          <div class="absence-list-status ${a.status}">${a.status === 'approved' ? 'Zatwierdzona' : a.status === 'pending' ? 'Oczekuje' : 'Odrzucona'}</div>
+          <div class="absence-list-actions">
+            <button class="absence-list-action-btn edit-absence" title="Edytuj">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+              </svg>
+            </button>
+            <button class="absence-list-action-btn delete delete-absence" title="Usuń">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    container.innerHTML = `
+      <div class="absence-list">
+        <div class="absence-list-header">
+          <span>Pracownik</span>
+          <span>Typ</span>
+          <span>Daty</span>
+          <span>Dni</span>
+          <span>Status</span>
+          <span>Akcje</span>
+        </div>
+        ${itemsHtml}
+      </div>
+    `;
+    
+    // Add action handlers
+    container.querySelectorAll('.delete-absence').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = (btn as HTMLElement).closest('.absence-list-item') as HTMLElement | null;
+        const id = item?.dataset?.absenceId;
+        if (id && confirm('Czy na pewno chcesz usunąć tę nieobecność?')) {
+          await api.deleteAbsence(id);
+          await this.loadAbsenceData();
+          this.renderAbsenceContent();
+          this.renderAbsenceYearStats();
+          this.renderAbsenceUpcoming();
+          this.renderAbsenceEmployeesSidebar();
+        }
+      });
+    });
+    
+    container.querySelectorAll('.edit-absence').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const item = (btn as HTMLElement).closest('.absence-list-item') as HTMLElement | null;
+        const id = item?.dataset?.absenceId;
+        if (id) this.showEditAbsenceModal(id);
+      });
+    });
+  }
+  
+  private renderAbsenceHeatmap(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    const months = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
+    const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    // Header with months
+    let headerHtml = '<div class="absence-heatmap-employee"></div>';
+    headerHtml += months.map(m => `<div class="absence-heatmap-month">${m}</div>`).join('');
+    
+    // Rows for each employee
+    const rowsHtml = employees.map(emp => {
+      let row = `
+        <div class="absence-heatmap-employee">
+          <span style="width: 24px; height: 24px; border-radius: 50%; background: ${emp.color}; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 0.65rem; margin-right: 6px;">
+            ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+          </span>
+          ${emp.firstName} ${emp.lastName.charAt(0)}.
+        </div>
+      `;
+      
+      for (let m = 0; m < 12; m++) {
+        // Count absence days in this month
+        const monthStart = new Date(this.absenceYear, m, 1);
+        const monthEnd = new Date(this.absenceYear, m + 1, 0);
+        
+        let daysInMonth = 0;
+        this.absences
+          .filter(a => a.employeeId === emp.id)
+          .forEach(a => {
+            const start = new Date(a.startDate);
+            const end = new Date(a.endDate);
+            
+            // Calculate overlap with this month
+            const overlapStart = start > monthStart ? start : monthStart;
+            const overlapEnd = end < monthEnd ? end : monthEnd;
+            
+            if (overlapStart <= overlapEnd) {
+              // Count only working days
+              let days = 0;
+              const current = new Date(overlapStart);
+              while (current <= overlapEnd) {
+                if (current.getDay() !== 0 && current.getDay() !== 6) {
+                  days++;
+                }
+                current.setDate(current.getDate() + 1);
+              }
+              daysInMonth += days;
+            }
+          });
+        
+        const level = daysInMonth === 0 ? 0 : daysInMonth <= 2 ? 1 : daysInMonth <= 5 ? 2 : daysInMonth <= 10 ? 3 : daysInMonth <= 15 ? 4 : 5;
+        
+        row += `<div class="absence-heatmap-cell level-${level}" title="${emp.firstName}: ${daysInMonth} dni w ${months[m]}">${daysInMonth || ''}</div>`;
+      }
+      
+      return row;
+    }).join('');
+    
+    container.innerHTML = `
+      <div class="absence-heatmap">
+        <div class="absence-heatmap-header">
+          <h3>Mapa nieobecności ${this.absenceYear}</h3>
+          <p>Liczba dni nieobecności każdego pracownika w danym miesiącu</p>
+        </div>
+        <div class="absence-heatmap-grid">
+          ${headerHtml}
+          ${rowsHtml}
+        </div>
+        <div class="absence-heatmap-legend">
+          <span>Mniej</span>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-0"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-1"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-2"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-3"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-4"></div></div>
+          <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-5"></div></div>
+          <span>Więcej</span>
+        </div>
+      </div>
+    `;
+  }
+  
+  private renderAbsenceEmployeesGrid(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+    
+    const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    const cardsHtml = employees.map(emp => {
+      const empLimits = this.absenceLimits.filter(l => l.employeeId === emp.id);
+      
+      const limitsHtml = this.absenceTypes.slice(0, 5).map(type => {
+        const limit = empLimits.find(l => l.absenceTypeId === type.id);
+        const used = limit?.usedDays || 0;
+        const total = limit?.totalDays || type.defaultDays || 0;
+        const percent = total > 0 ? (used / total) * 100 : 0;
+        
+        if (total === 0) return '';
+        
+        return `
+          <div class="absence-employee-limit-row">
+            <span class="absence-employee-limit-icon">${type.icon}</span>
+            <div class="absence-employee-limit-info">
+              <div class="absence-employee-limit-name">${type.name}</div>
+              <div class="absence-employee-limit-bar">
+                <div class="absence-employee-limit-fill" style="width: ${Math.min(percent, 100)}%; background: ${type.color}"></div>
+              </div>
+            </div>
+            <span class="absence-employee-limit-text">${used}/${total} dni</span>
+          </div>
+        `;
+      }).filter(Boolean).join('');
+      
+      const totalUsed = empLimits.reduce((sum, l) => sum + (l.usedDays || 0), 0);
+      
+      return `
+        <div class="absence-employee-full-card" data-employee-id="${emp.id}">
+          <div class="absence-employee-full-header">
+            <div class="absence-employee-full-avatar" style="background: ${emp.color}">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </div>
+            <div class="absence-employee-full-info">
+              <h4>${emp.firstName} ${emp.lastName}</h4>
+              <span>${this.absenceYear}</span>
+            </div>
+          </div>
+          <div class="absence-employee-full-body">
+            ${limitsHtml || '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">Brak ustawionych limitów</p>'}
+          </div>
+          <div class="absence-employee-full-footer">
+            <span class="absence-employee-full-total">Razem: <strong>${totalUsed} dni</strong></span>
+            <button class="absence-employee-edit-btn">Edytuj limity</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    
+    container.innerHTML = `
+      <div class="absence-employees-grid">
+        ${cardsHtml}
+      </div>
+    `;
+    
+    // Add click handlers
+    container.querySelectorAll('.absence-employee-edit-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        console.log('Edit limits button clicked');
+        const card = (btn as HTMLElement).closest('.absence-employee-full-card') as HTMLElement | null;
+        const empId = card?.dataset?.employeeId;
+        console.log('Employee ID:', empId);
+        if (empId) this.showEmployeeLimitsModal(empId);
+      });
+    });
+    
+    container.querySelectorAll('.absence-employee-full-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const empId = (card as HTMLElement).dataset.employeeId;
+        if (empId) this.showEmployeeAbsenceModal(empId);
+      });
+    });
+  }
+  
+  // ========== ABSENCE MODALS ==========
+  
+  private async showAddAbsenceWizard(preselectedDate?: string): Promise<void> {
+    // Load data first if not loaded
+    if (this.absenceTypes.length === 0) {
+      try {
+        this.absenceTypes = await api.getAbsenceTypes();
+      } catch (e) {
+        console.error('Failed to load absence types:', e);
+        this.absenceTypes = [];
+      }
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 550px;">
+        <div class="absence-modal-header">
+          <h2>➕ Dodaj nieobecność</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-wizard-steps">
+          <div class="absence-wizard-step active" data-step="1">
+            <span class="absence-wizard-step-number">1</span>
+            <span class="absence-wizard-step-label">Pracownik</span>
+          </div>
+          <div class="absence-wizard-step-connector"></div>
+          <div class="absence-wizard-step" data-step="2">
+            <span class="absence-wizard-step-number">2</span>
+            <span class="absence-wizard-step-label">Szczegóły</span>
+          </div>
+          <div class="absence-wizard-step-connector"></div>
+          <div class="absence-wizard-step" data-step="3">
+            <span class="absence-wizard-step-number">3</span>
+            <span class="absence-wizard-step-label">Podsumowanie</span>
+          </div>
+        </div>
+        <div class="absence-modal-body" id="absenceWizardContent">
+          <!-- Step 1: Select Employee -->
+          <div class="absence-form-group">
+            <label class="absence-form-label">Wybierz pracownika</label>
+            <select class="absence-form-select" id="wizardEmployee">
+              <option value="">-- Wybierz --</option>
+              ${employees.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="wizardCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="wizardNext" disabled>Dalej</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    let currentStep = 1;
+    let selectedEmployee = '';
+    let selectedType = '';
+    let startDate = preselectedDate || '';
+    let endDate = preselectedDate || '';
+    let note = '';
+    
+    // Get button references
+    const nextBtn = overlay.querySelector('#wizardNext') as HTMLButtonElement;
+    const cancelBtn = overlay.querySelector('#wizardCancel') as HTMLButtonElement;
+    
+    // Setup initial step 1 listener
+    const employeeSelect = overlay.querySelector('#wizardEmployee') as HTMLSelectElement;
+    if (employeeSelect) {
+      employeeSelect.addEventListener('change', (e) => {
+        selectedEmployee = (e.target as HTMLSelectElement).value;
+        if (nextBtn) nextBtn.disabled = !selectedEmployee;
+      });
+    }
+    
+    const updateStep = (step: number) => {
+      currentStep = step;
+      
+      // Update step indicators
+      overlay.querySelectorAll('.absence-wizard-step').forEach((s, i) => {
+        s.classList.remove('active', 'completed');
+        if (i + 1 < step) s.classList.add('completed');
+        if (i + 1 === step) s.classList.add('active');
+      });
+      
+      const content = overlay.querySelector('#absenceWizardContent') as HTMLElement;
+      
+      if (step === 1) {
+        content!.innerHTML = `
+          <div class="absence-form-group">
+            <label class="absence-form-label">Wybierz pracownika</label>
+            <select class="absence-form-select" id="wizardEmployee">
+              <option value="">-- Wybierz --</option>
+              ${employees.map(e => `<option value="${e.id}" ${e.id === selectedEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`).join('')}
+            </select>
+          </div>
+        `;
+        nextBtn.textContent = 'Dalej';
+        nextBtn.disabled = !selectedEmployee;
+        
+        overlay.querySelector('#wizardEmployee')?.addEventListener('change', (e) => {
+          selectedEmployee = (e.target as HTMLSelectElement).value;
+          nextBtn.disabled = !selectedEmployee;
+        });
+        
+      } else if (step === 2) {
+        content!.innerHTML = `
+          <div class="absence-form-group">
+            <label class="absence-form-label">Typ nieobecności</label>
+            <select class="absence-form-select" id="wizardType">
+              <option value="">-- Wybierz --</option>
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === selectedType ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data od</label>
+              <input type="date" class="absence-form-input" id="wizardStartDate" value="${startDate}">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data do</label>
+              <input type="date" class="absence-form-input" id="wizardEndDate" value="${endDate}">
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Notatka (opcjonalnie)</label>
+            <textarea class="absence-form-textarea" id="wizardNote" rows="2" placeholder="Dodatkowe informacje...">${note}</textarea>
+          </div>
+        `;
+        nextBtn.textContent = 'Dalej';
+        
+        const checkValid = () => {
+          selectedType = (overlay.querySelector('#wizardType') as HTMLSelectElement)?.value || '';
+          startDate = (overlay.querySelector('#wizardStartDate') as HTMLInputElement)?.value || '';
+          endDate = (overlay.querySelector('#wizardEndDate') as HTMLInputElement)?.value || '';
+          note = (overlay.querySelector('#wizardNote') as HTMLTextAreaElement)?.value || '';
+          nextBtn.disabled = !selectedType || !startDate || !endDate;
+        };
+        
+        checkValid();
+        overlay.querySelector('#wizardType')?.addEventListener('change', checkValid);
+        overlay.querySelector('#wizardStartDate')?.addEventListener('change', checkValid);
+        overlay.querySelector('#wizardEndDate')?.addEventListener('change', checkValid);
+        
+      } else if (step === 3) {
+        const emp = employees.find(e => e.id === selectedEmployee);
+        const type = this.absenceTypes.find(t => t.id === selectedType);
+        
+        // Calculate work days
+        const workDays = this.calculateWorkDays(startDate, endDate);
+        
+        content!.innerHTML = `
+          <div style="text-align: center; padding: 20px;">
+            <div style="font-size: 3rem; margin-bottom: 16px;">${type?.icon || '📅'}</div>
+            <h3 style="margin: 0 0 8px 0;">${emp?.firstName} ${emp?.lastName}</h3>
+            <p style="color: var(--color-text-secondary); margin: 0 0 20px 0;">${type?.name}</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: left; background: var(--color-bg-secondary); padding: 16px; border-radius: 8px;">
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Od</div>
+                <div style="font-weight: 500;">${new Date(startDate).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: 'long' })}</div>
+              </div>
+              <div>
+                <div style="font-size: 0.75rem; color: var(--color-text-muted);">Do</div>
+                <div style="font-weight: 500;">${new Date(endDate).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: 'long' })}</div>
+              </div>
+            </div>
+            <div style="margin-top: 16px; padding: 12px; background: ${type?.color}20; border-radius: 8px; border-left: 4px solid ${type?.color};">
+              <span style="font-size: 1.5rem; font-weight: 700; color: ${type?.color};">${workDays}</span>
+              <span style="color: var(--color-text-secondary);"> dni roboczych</span>
+            </div>
+            ${note ? `<p style="margin-top: 16px; font-style: italic; color: var(--color-text-secondary);">"${note}"</p>` : ''}
+          </div>
+        `;
+        nextBtn.textContent = 'Zapisz';
+        nextBtn.disabled = false;
+      }
+    };
+    
+    // Next/Save button
+    nextBtn?.addEventListener('click', async () => {
+      if (currentStep < 3) {
+        updateStep(currentStep + 1);
+      } else {
+        // Save absence
+        const workDays = this.calculateWorkDays(startDate, endDate);
+        await api.addAbsence({
+          id: `abs-${Date.now()}`,
+          employeeId: selectedEmployee,
+          absenceTypeId: selectedType,
+          startDate,
+          endDate,
+          workDays,
+          status: 'approved',
+          note
+        });
+        
+        overlay.remove();
+        await this.loadAbsenceData();
+        this.renderAbsenceContent();
+        this.renderAbsenceYearStats();
+        this.renderAbsenceUpcoming();
+        this.renderAbsenceEmployeesSidebar();
+      }
+    });
+    
+    // Cancel button - go back or close
+    cancelBtn?.addEventListener('click', () => {
+      if (currentStep > 1) {
+        updateStep(currentStep - 1);
+      } else {
+        overlay.remove();
+      }
+    });
+    
+    // Close button
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private calculateWorkDays(startDate: string, endDate: string): number {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    let days = 0;
+    const current = new Date(start);
+    
+    while (current <= end) {
+      const dayOfWeek = current.getDay();
+      const dateStr = current.toISOString().split('T')[0];
+      const isHoliday = this.holidays.some(h => h.date === dateStr);
+      
+      if (dayOfWeek !== 0 && dayOfWeek !== 6 && !isHoliday) {
+        days++;
+      }
+      current.setDate(current.getDate() + 1);
+    }
+    
+    return days;
+  }
+  
+  private async showAbsenceSettingsModal(): Promise<void> {
+    // Load data first if not loaded
+    if (this.absenceTypes.length === 0) {
+      try {
+        this.absenceTypes = await api.getAbsenceTypes();
+      } catch (e) {
+        console.error('Failed to load absence types:', e);
+        this.absenceTypes = [];
+      }
+    }
+    if (this.holidays.length === 0) {
+      try {
+        this.holidays = await api.getHolidays(this.absenceYear);
+      } catch (e) {
+        console.error('Failed to load holidays:', e);
+        this.holidays = [];
+      }
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    const typesHtml = this.absenceTypes.map(type => `
+      <div class="absence-type-row" data-type-id="${type.id}">
+        <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
+          ${type.icon}
+        </div>
+        <input type="text" class="absence-type-name-input" value="${type.name}" data-field="name">
+        <input type="number" class="absence-type-days-input" value="${type.defaultDays}" data-field="defaultDays" min="0" placeholder="Dni">
+        <input type="color" value="${type.color}" data-field="color" style="width: 40px; height: 32px; border: none; cursor: pointer;">
+        <div class="absence-type-toggle">
+          <input type="checkbox" ${type.isActive ? 'checked' : ''} data-field="isActive">
+        </div>
+      </div>
+    `).join('');
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 700px;">
+        <div class="absence-modal-header">
+          <h2>⚙️ Ustawienia urlopów</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <div class="absence-settings-section">
+            <h3>Typy nieobecności</h3>
+            <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
+              Skonfiguruj typy nieobecności, ich domyślne limity i kolory.
+            </p>
+            <div style="display: grid; grid-template-columns: 40px 1fr 80px 50px 50px; gap: 12px; padding: 8px 10px; background: var(--color-bg-tertiary); border-radius: 6px; font-size: 0.7rem; color: var(--color-text-secondary); text-transform: uppercase; margin-bottom: 8px;">
+              <span>Ikona</span>
+              <span>Nazwa</span>
+              <span>Domyślne dni</span>
+              <span>Kolor</span>
+              <span>Aktywny</span>
+            </div>
+            ${typesHtml || '<p style="color: var(--color-text-muted);">Brak typów nieobecności</p>'}
+          </div>
+          
+          <div class="absence-settings-section" style="margin-top: 24px;">
+            <h3>Święta ${this.absenceYear}</h3>
+            <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
+              Dni wolne od pracy nie są wliczane do urlopów. ${this.holidays.length} dni ustawionych.
+            </p>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              ${this.holidays.slice(0, 8).map(h => `
+                <span style="padding: 4px 10px; background: var(--color-warning-bg); color: var(--color-warning); border-radius: 4px; font-size: 0.75rem;">
+                  🎉 ${new Date(h.date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} - ${h.name}
+                </span>
+              `).join('')}
+              ${this.holidays.length > 8 ? `<span style="padding: 4px 10px; color: var(--color-text-muted); font-size: 0.75rem;">+${this.holidays.length - 8} więcej</span>` : ''}
+            </div>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="settingsCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="settingsSave">Zapisz zmiany</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Save handler
+    overlay.querySelector('#settingsSave')?.addEventListener('click', async () => {
+      const rows = overlay.querySelectorAll('.absence-type-row');
+      
+      for (const row of rows) {
+        const typeId = (row as HTMLElement).dataset.typeId;
+        const name = (row.querySelector('[data-field="name"]') as HTMLInputElement).value;
+        const defaultDays = parseInt((row.querySelector('[data-field="defaultDays"]') as HTMLInputElement).value) || 0;
+        const color = (row.querySelector('[data-field="color"]') as HTMLInputElement).value;
+        const isActive = (row.querySelector('[data-field="isActive"]') as HTMLInputElement).checked;
+        
+        const type = this.absenceTypes.find(t => t.id === typeId);
+        if (type) {
+          await api.updateAbsenceType(typeId!, {
+            ...type,
+            name,
+            defaultDays,
+            color,
+            isActive
+          });
+        }
+      }
+      
+      overlay.remove();
+      await this.loadAbsenceData();
+      this.renderAbsenceFilters();
+    });
+    
+    // Cancel/close handlers
+    overlay.querySelector('#settingsCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private async showEmployeeLimitsModal(employeeId: string): Promise<void> {
+    console.log('showEmployeeLimitsModal called for:', employeeId);
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) {
+      console.log('Employee not found!');
+      return;
+    }
+    
+    // Always try to load data for this modal
+    try {
+      console.log('Loading absence types...');
+      this.absenceTypes = await api.getAbsenceTypes();
+      console.log('Loaded absence types:', this.absenceTypes.length);
+    } catch (e) {
+      console.error('Failed to load absence types:', e);
+      if (this.absenceTypes.length === 0) {
+        alert('Nie można załadować typów nieobecności. Sprawdź połączenie z serwerem.');
+        return;
+      }
+    }
+    
+    try {
+      console.log('Loading absence limits...');
+      this.absenceLimits = await api.getAbsenceLimits({ year: this.absenceYear });
+      console.log('Loaded absence limits:', this.absenceLimits.length);
+    } catch (e) {
+      console.error('Failed to load absence limits:', e);
+    }
+    
+    const empLimits = this.absenceLimits.filter(l => l.employeeId === employeeId);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    const limitsHtml = this.absenceTypes.map(type => {
+      const limit = empLimits.find(l => l.absenceTypeId === type.id);
+      const totalDays = limit?.totalDays ?? type.defaultDays;
+      const usedDays = limit?.usedDays || 0;
+      
+      return `
+        <div class="absence-type-row" data-type-id="${type.id}">
+          <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
+            ${type.icon}
+          </div>
+          <span style="flex: 1; font-size: 0.85rem;">${type.name}</span>
+          <input type="number" class="absence-type-days-input" value="${totalDays}" data-field="totalDays" min="0" style="width: 70px;">
+          <span style="font-size: 0.8rem; color: var(--color-text-secondary); min-width: 70px; text-align: right;">
+            Użyte: ${usedDays}
+          </span>
+        </div>
+      `;
+    }).join('');
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 550px;">
+        <div class="absence-modal-header">
+          <h2>
+            <span style="width: 32px; height: 32px; border-radius: 50%; background: ${emp.color}; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 0.8rem; margin-right: 8px;">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </span>
+            Limity urlopowe - ${emp.firstName} ${emp.lastName}
+          </h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <p style="font-size: 0.85rem; color: var(--color-text-secondary); margin-bottom: 16px;">
+            Ustaw indywidualne limity nieobecności dla roku <strong>${this.absenceYear}</strong>
+          </p>
+          ${limitsHtml}
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="limitsCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="limitsSave">Zapisz limity</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Save handler
+    overlay.querySelector('#limitsSave')?.addEventListener('click', async () => {
+      const limits: any[] = [];
+      const rows = overlay.querySelectorAll('.absence-type-row');
+      
+      rows.forEach(row => {
+        const typeId = (row as HTMLElement).dataset.typeId;
+        const totalDays = parseInt((row.querySelector('[data-field="totalDays"]') as HTMLInputElement).value) || 0;
+        limits.push({ absenceTypeId: typeId, totalDays });
+      });
+      
+      await api.setAbsenceLimitsBulk(employeeId, this.absenceYear, limits);
+      
+      overlay.remove();
+      await this.loadAbsenceData();
+      this.renderAbsenceEmployeesSidebar();
+      if (this.absenceViewMode === 'employees') {
+        this.renderAbsenceEmployeesGrid();
+      }
+    });
+    
+    // Cancel/close handlers
+    overlay.querySelector('#limitsCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private async showEmployeeAbsenceModal(employeeId: string): Promise<void> {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const empAbsences = this.absences.filter(a => a.employeeId === employeeId);
+    const empLimits = this.absenceLimits.filter(l => l.employeeId === employeeId);
+    
+    // Fetch employee details and qualifications
+    let empDetails: any = null;
+    let empQualifications: any[] = [];
+    try {
+      empDetails = await api.getEmployeeDetails(employeeId);
+      empQualifications = await api.getQualifications(employeeId);
+    } catch (e) {
+      console.log('No employee details found');
+    }
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    // Contact info section
+    const contactHtml = `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">📧</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Email</div>
+            <div style="font-size: 0.8rem;">${empDetails?.email || '-'}</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">📱</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Telefon</div>
+            <div style="font-size: 0.8rem;">${empDetails?.phone || '-'}</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">📍</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Stanowisko</div>
+            <div style="font-size: 0.8rem;">${empDetails?.position || '-'}</div>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 1rem;">🏢</span>
+          <div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Dział</div>
+            <div style="font-size: 0.8rem;">${empDetails?.department || '-'}</div>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Qualifications section
+    const qualificationsHtml = empQualifications.length > 0 ? `
+      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;">
+        ${empQualifications.map(q => `
+          <span style="padding: 4px 10px; background: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'}20; 
+                       color: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'}; 
+                       border-radius: 12px; font-size: 0.7rem; font-weight: 500;">
+            ${q.level === 'expert' ? '⭐' : q.level === 'advanced' ? '✓' : '○'} ${q.skillName}
+          </span>
+        `).join('')}
+      </div>
+    ` : '';
+    
+    // Limits summary
+    const limitsHtml = this.absenceTypes.slice(0, 5).map(type => {
+      const limit = empLimits.find(l => l.absenceTypeId === type.id);
+      const total = limit?.totalDays || type.defaultDays || 0;
+      const used = limit?.usedDays || 0;
+      const remaining = total - used;
+      const percent = total > 0 ? (used / total) * 100 : 0;
+      
+      if (total === 0) return '';
+      
+      return `
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <span style="font-size: 1rem;">${type.icon}</span>
+          <div style="flex: 1;">
+            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
+              <span>${type.name}</span>
+              <span style="color: ${remaining <= 0 ? 'var(--color-danger)' : 'var(--color-text-secondary)'};">${remaining} pozostało</span>
+            </div>
+            <div style="height: 4px; background: var(--color-bg-tertiary); border-radius: 2px;">
+              <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${type.color}; border-radius: 2px;"></div>
+            </div>
+          </div>
+          <span style="font-size: 0.75rem; color: var(--color-text-muted); min-width: 45px; text-align: right;">${used}/${total}</span>
+        </div>
+      `;
+    }).filter(Boolean).join('');
+    
+    // Absences list
+    const absencesHtml = empAbsences.length > 0 ? empAbsences.slice(0, 10).map(a => {
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      return `
+        <div style="display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--color-border-light);">
+          <span style="font-size: 1.1rem;">${type?.icon || '📅'}</span>
+          <div style="flex: 1;">
+            <div style="font-size: 0.8rem; font-weight: 500;">${type?.name || 'Nieobecność'}</div>
+            <div style="font-size: 0.7rem; color: var(--color-text-muted);">
+              ${new Date(a.startDate).toLocaleDateString('pl-PL')} - ${new Date(a.endDate).toLocaleDateString('pl-PL')}
+            </div>
+          </div>
+          <span style="font-size: 0.8rem; font-weight: 600;">${a.workDays} dni</span>
+        </div>
+      `;
+    }).join('') : '<p style="text-align: center; color: var(--color-text-muted); padding: 20px;">Brak nieobecności w tym roku</p>';
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 550px;">
+        <div class="absence-modal-header">
+          <h2>
+            <span style="width: 42px; height: 42px; border-radius: 50%; background: ${emp.color}; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 0.9rem; margin-right: 12px;">
+              ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+            </span>
+            <div>
+              <div>${emp.firstName} ${emp.lastName}</div>
+              <div style="font-size: 0.75rem; font-weight: 400; color: var(--color-text-secondary);">${empDetails?.position || 'Pracownik'}</div>
+            </div>
+          </h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          ${contactHtml}
+          ${empQualifications.length > 0 ? `<h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 8px 0;">🎓 Kwalifikacje</h4>` + qualificationsHtml : ''}
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 12px 0;">📊 Limity ${this.absenceYear}</h4>
+          ${limitsHtml || '<p style="color: var(--color-text-muted); font-size: 0.8rem;">Brak ustawionych limitów</p>'}
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">📅 Historia nieobecności</h4>
+          ${absencesHtml}
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="empEditDetails">✏️ Edytuj profil</button>
+          <button class="absence-modal-btn secondary" id="empEditLimits">Edytuj limity</button>
+          <button class="absence-modal-btn primary" id="empAddAbsence">Dodaj nieobecność</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Handlers
+    document.getElementById('empEditDetails')?.addEventListener('click', () => {
+      overlay.remove();
+      this.showEditEmployeeDetailsModal(employeeId, empDetails);
+    });
+    
+    document.getElementById('empEditLimits')?.addEventListener('click', () => {
+      overlay.remove();
+      this.showEmployeeLimitsModal(employeeId);
+    });
+    
+    document.getElementById('empAddAbsence')?.addEventListener('click', () => {
+      overlay.remove();
+      this.showAddAbsenceWizard();
+      setTimeout(() => {
+        const select = document.getElementById('wizardEmployee') as HTMLSelectElement;
+        if (select) {
+          select.value = employeeId;
+          select.dispatchEvent(new Event('change'));
+        }
+      }, 100);
+    });
+    
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private showEditEmployeeDetailsModal(employeeId: string, currentDetails: any): void {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 500px;">
+        <div class="absence-modal-header">
+          <h2>✏️ Edytuj profil pracownika</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">📧 Email</label>
+              <input type="email" class="absence-form-input" id="editEmpEmail" value="${currentDetails?.email || ''}" placeholder="jan.kowalski@firma.pl">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">📱 Telefon</label>
+              <input type="tel" class="absence-form-input" id="editEmpPhone" value="${currentDetails?.phone || ''}" placeholder="+48 123 456 789">
+            </div>
+          </div>
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">📍 Stanowisko</label>
+              <input type="text" class="absence-form-input" id="editEmpPosition" value="${currentDetails?.position || ''}" placeholder="np. Specjalista ds. testów">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">🏢 Dział</label>
+              <input type="text" class="absence-form-input" id="editEmpDepartment" value="${currentDetails?.department || ''}" placeholder="np. Kontrola jakości">
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">📝 Notatki</label>
+            <textarea class="absence-form-textarea" id="editEmpNotes" rows="3" placeholder="Dodatkowe informacje o pracowniku...">${currentDetails?.notes || ''}</textarea>
+          </div>
+          
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">🎓 Kwalifikacje</h4>
+          <div id="qualificationsList" style="margin-bottom: 12px;"></div>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" class="absence-form-input" id="newQualName" placeholder="Nazwa kwalifikacji" style="flex: 1;">
+            <select class="absence-form-select" id="newQualLevel" style="width: 120px;">
+              <option value="basic">Podstawowy</option>
+              <option value="advanced">Zaawansowany</option>
+              <option value="expert">Ekspert</option>
+            </select>
+            <button class="absence-modal-btn primary" id="addQualBtn" style="padding: 8px 12px;">+</button>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="editDetailsCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="editDetailsSave">Zapisz zmiany</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Qualifications management
+    let qualifications: Array<{skillName: string, level: string}> = [];
+    
+    const renderQualifications = () => {
+      const list = document.getElementById('qualificationsList')!;
+      list.innerHTML = qualifications.map((q, i) => `
+        <div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: var(--color-bg-secondary); border-radius: 6px; margin-bottom: 6px;">
+          <span style="color: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'};">
+            ${q.level === 'expert' ? '⭐' : q.level === 'advanced' ? '✓' : '○'}
+          </span>
+          <span style="flex: 1; font-size: 0.85rem;">${q.skillName}</span>
+          <span style="font-size: 0.7rem; color: var(--color-text-muted);">${q.level === 'expert' ? 'Ekspert' : q.level === 'advanced' ? 'Zaawansowany' : 'Podstawowy'}</span>
+          <button style="background: none; border: none; color: var(--color-danger); cursor: pointer; padding: 2px 6px;" onclick="this.parentElement.remove(); window._removeQual(${i});">✕</button>
+        </div>
+      `).join('') || '<p style="color: var(--color-text-muted); font-size: 0.8rem; text-align: center;">Brak dodanych kwalifikacji</p>';
+    };
+    
+    (window as any)._removeQual = (index: number) => {
+      qualifications.splice(index, 1);
+      renderQualifications();
+    };
+    
+    // Load existing qualifications
+    api.getQualifications(employeeId).then(quals => {
+      qualifications = quals.map((q: any) => ({ skillName: q.skillName, level: q.level }));
+      renderQualifications();
+    }).catch(() => renderQualifications());
+    
+    document.getElementById('addQualBtn')?.addEventListener('click', () => {
+      const name = (document.getElementById('newQualName') as HTMLInputElement).value.trim();
+      const level = (document.getElementById('newQualLevel') as HTMLSelectElement).value;
+      if (name) {
+        qualifications.push({ skillName: name, level });
+        renderQualifications();
+        (document.getElementById('newQualName') as HTMLInputElement).value = '';
+      }
+    });
+    
+    // Save handler
+    document.getElementById('editDetailsSave')?.addEventListener('click', async () => {
+      const details = {
+        email: (document.getElementById('editEmpEmail') as HTMLInputElement).value,
+        phone: (document.getElementById('editEmpPhone') as HTMLInputElement).value,
+        position: (document.getElementById('editEmpPosition') as HTMLInputElement).value,
+        department: (document.getElementById('editEmpDepartment') as HTMLInputElement).value,
+        notes: (document.getElementById('editEmpNotes') as HTMLTextAreaElement).value,
+      };
+      
+      await api.updateEmployeeDetails(employeeId, details);
+      
+      // Save qualifications
+      for (const q of qualifications) {
+        await api.setQualification({ employeeId, ...q });
+      }
+      
+      overlay.remove();
+      this.showEmployeeAbsenceModal(employeeId);
+    });
+    
+    document.getElementById('editDetailsCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private showEditAbsenceModal(absenceId: string): void {
+    const absence = this.absences.find(a => a.id === absenceId);
+    if (!absence) return;
+    
+    const emp = this.state.employees.find(e => e.id === absence.employeeId);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 450px;">
+        <div class="absence-modal-header">
+          <h2>✏️ Edytuj nieobecność</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <div class="absence-form-group">
+            <label class="absence-form-label">Pracownik</label>
+            <input type="text" class="absence-form-input" value="${emp?.firstName} ${emp?.lastName}" disabled>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Typ nieobecności</label>
+            <select class="absence-form-select" id="editType">
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === absence.absenceTypeId ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+            </select>
+          </div>
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data od</label>
+              <input type="date" class="absence-form-input" id="editStartDate" value="${absence.startDate}">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">Data do</label>
+              <input type="date" class="absence-form-input" id="editEndDate" value="${absence.endDate}">
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Status</label>
+            <select class="absence-form-select" id="editStatus">
+              <option value="approved" ${absence.status === 'approved' ? 'selected' : ''}>Zatwierdzona</option>
+              <option value="pending" ${absence.status === 'pending' ? 'selected' : ''}>Oczekuje</option>
+              <option value="rejected" ${absence.status === 'rejected' ? 'selected' : ''}>Odrzucona</option>
+            </select>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">Notatka</label>
+            <textarea class="absence-form-textarea" id="editNote" rows="2">${absence.note || ''}</textarea>
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn danger" id="editDelete">Usuń</button>
+          <button class="absence-modal-btn secondary" id="editCancel">Anuluj</button>
+          <button class="absence-modal-btn primary" id="editSave">Zapisz</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Save handler
+    document.getElementById('editSave')?.addEventListener('click', async () => {
+      const absenceTypeId = (document.getElementById('editType') as HTMLSelectElement).value;
+      const startDate = (document.getElementById('editStartDate') as HTMLInputElement).value;
+      const endDate = (document.getElementById('editEndDate') as HTMLInputElement).value;
+      const status = (document.getElementById('editStatus') as HTMLSelectElement).value;
+      const note = (document.getElementById('editNote') as HTMLTextAreaElement).value;
+      const workDays = this.calculateWorkDays(startDate, endDate);
+      
+      await api.updateAbsence(absenceId, {
+        employeeId: absence.employeeId,
+        absenceTypeId,
+        startDate,
+        endDate,
+        workDays,
+        status,
+        note
+      });
+      
+      overlay.remove();
+      await this.loadAbsenceData();
+      this.renderAbsenceContent();
+      this.renderAbsenceYearStats();
+      this.renderAbsenceUpcoming();
+      this.renderAbsenceEmployeesSidebar();
+    });
+    
+    // Delete handler
+    document.getElementById('editDelete')?.addEventListener('click', async () => {
+      if (confirm('Czy na pewno chcesz usunąć tę nieobecność?')) {
+        await api.deleteAbsence(absenceId);
+        overlay.remove();
+        await this.loadAbsenceData();
+        this.renderAbsenceContent();
+        this.renderAbsenceYearStats();
+        this.renderAbsenceUpcoming();
+        this.renderAbsenceEmployeesSidebar();
+      }
+    });
+    
+    // Cancel/close handlers
+    document.getElementById('editCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private exportAbsences(): void {
+    // Create CSV
+    let csv = 'Pracownik,Typ,Od,Do,Dni robocze,Status,Notatka\n';
+    
+    this.absences.forEach(a => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
+      csv += `"${emp?.firstName} ${emp?.lastName}","${type?.name}","${a.startDate}","${a.endDate}",${a.workDays},"${a.status}","${a.note || ''}"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nieobecnosci-${this.absenceYear}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 }
 

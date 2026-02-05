@@ -25,6 +25,8 @@ export interface Test {
 export interface WeekData {
   ist: number;
   soll: number;
+  stoppage?: boolean;
+  productionLack?: boolean;
 }
 
 export interface Project {

@@ -47,6 +47,8 @@ export interface Project {
 // ==================== Employee (Pracownik) ====================
 export type EmployeeStatus = 'available' | 'vacation' | 'sick';
 
+export type EmployeeRole = 'worker' | 'leader' | 'manager';
+
 export interface Employee {
   id: string;
   firstName: string;
@@ -55,6 +57,10 @@ export interface Employee {
   status?: EmployeeStatus;        // Domyślnie 'available'
   suggestedShift?: 1 | 2 | 3;     // Sugerowana zmiana
   note?: string;                  // Notatka o pracowniku
+  role?: EmployeeRole;            // Rola: pracownik, lider, kierownik
+  email?: string;                 // Adres email
+  phone?: string;                 // Numer telefonu
+  department?: string;            // Dział
   createdAt: number;
 }
 
@@ -115,6 +121,81 @@ export interface AppSettings {
   shiftSystem: 1 | 2 | 3;  // System zmianowy (1, 2 lub 3 zmiany)
 }
 
+// ==================== Absence Management (Zarządzanie nieobecnościami) ====================
+
+export interface AbsenceType {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  defaultDays: number;
+  isPaid: boolean;
+  requiresApproval: boolean;
+  isActive: boolean;
+  sortOrder: number;
+}
+
+export interface EmployeeAbsenceLimit {
+  id: string;
+  employeeId: string;
+  absenceTypeId: string;
+  year: number;
+  totalDays: number;
+  usedDays: number;
+}
+
+export type AbsenceStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
+
+export interface Absence {
+  id: string;
+  employeeId: string;
+  absenceTypeId: string;
+  startDate: string;     // YYYY-MM-DD
+  endDate: string;       // YYYY-MM-DD
+  workDays: number;      // Liczba dni roboczych
+  status: AbsenceStatus;
+  note?: string;
+  createdAt: number;
+  approvedAt?: number;
+  approvedBy?: string;
+  // Joined data
+  typeName?: string;
+  typeIcon?: string;
+  typeColor?: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface EmployeeDetails {
+  employeeId: string;
+  email?: string;
+  phone?: string;
+  birthDate?: string;
+  hireDate?: string;
+  department?: string;
+  position?: string;
+  contractType?: string;
+  workingHours?: number;
+  notes?: string;
+}
+
+export interface EmployeeQualification {
+  id: string;
+  employeeId: string;
+  testId: string;
+  level: number;         // 1 = podstawowy, 2 = zaawansowany, 3 = ekspert
+  certifiedAt?: number;
+  expiresAt?: number;
+  testName?: string;
+}
+
+export interface Holiday {
+  id: string;
+  date: string;          // YYYY-MM-DD
+  name: string;
+  isMovable: boolean;
+}
+
 export interface AppState {
   customers: Customer[];
   types: Type[];
@@ -128,4 +209,8 @@ export interface AppState {
   settings: AppSettings;
   currentView: string;
   selectedYear: number;
+  // Absence management
+  absenceTypes?: AbsenceType[];
+  absences?: Absence[];
+  holidays?: Holiday[];
 }

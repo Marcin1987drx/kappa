@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { runQuery, getAll, getOne, saveDatabase } from '../database/db.js';
 
-// Simple CRUD router generator
+// Simple CRUD router generator with upsert support
 function createCrudRouter(table: string) {
   const router = Router();
 
@@ -30,11 +30,17 @@ function createCrudRouter(table: string) {
     }
   });
 
-  // Create
+  // Create (upsert)
   router.post('/', (req, res) => {
     try {
       const { id, name, created_at } = req.body;
-      runQuery(`INSERT INTO ${table} (id, name, created_at) VALUES (?, ?, ?)`, [id, name, created_at]);
+      const existing = getOne(`SELECT id FROM ${table} WHERE id = ?`, [id]);
+      
+      if (existing) {
+        runQuery(`UPDATE ${table} SET name = ? WHERE id = ?`, [name, id]);
+      } else {
+        runQuery(`INSERT INTO ${table} (id, name, created_at) VALUES (?, ?, ?)`, [id, name, created_at]);
+      }
       res.status(201).json({ id, name, created_at });
     } catch (error) {
       console.error(error);
@@ -119,7 +125,7 @@ export const dataRouter = Router();
 
 dataRouter.get('/export', (req, res) => {
   try {
-    const data = {
+    const data: any = {
       customers: getAll('SELECT * FROM customers'),
       types: getAll('SELECT * FROM types'),
       parts: getAll('SELECT * FROM parts'),
@@ -131,10 +137,15 @@ dataRouter.get('/export', (req, res) => {
     // Get projects with weeks
     const projects = getAll('SELECT * FROM projects') as any[];
     data.projects = projects.map(project => {
-      const weeks = getAll('SELECT week, ist, soll FROM project_weeks WHERE project_id = ?', [project.id]) as any[];
+      const weeks = getAll('SELECT week, ist, soll, stoppage, production_lack FROM project_weeks WHERE project_id = ?', [project.id]) as any[];
       const weeksObj: any = {};
       weeks.forEach(w => {
-        weeksObj[w.week] = { ist: w.ist, soll: w.soll };
+        weeksObj[w.week] = { 
+          ist: w.ist, 
+          soll: w.soll,
+          stoppage: w.stoppage === 1,
+          productionLack: w.production_lack === 1
+        };
       });
       return { ...project, weeks: weeksObj };
     });
@@ -201,7 +212,9 @@ dataRouter.post('/import', (req, res) => {
 
       if (p.weeks) {
         for (const [week, data] of Object.entries(p.weeks)) {
-          runQuery('INSERT INTO project_weeks (project_id, week, ist, soll) VALUES (?, ?, ?, ?)', [p.id, week, (data as any).ist, (data as any).soll]);
+          const weekData = data as any;
+          runQuery('INSERT INTO project_weeks (project_id, week, ist, soll, stoppage, production_lack) VALUES (?, ?, ?, ?, ?, ?)', 
+            [p.id, week, weekData.ist, weekData.soll, weekData.stoppage ? 1 : 0, weekData.productionLack ? 1 : 0]);
         }
       }
     });
@@ -236,5 +249,28 @@ dataRouter.delete('/clear', (req, res) => {
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to clear data' });
+  }
+});
+
+// Clear specific table
+dataRouter.delete('/clear/:table', (req, res) => {
+  try {
+    const table = req.params.table;
+    const allowedTables = ['customers', 'types', 'parts', 'tests', 'projects', 'comments', 'logs', 'employees', 'schedule_assignments', 'project_weeks'];
+    
+    if (!allowedTables.includes(table)) {
+      return res.status(400).json({ error: 'Invalid table name' });
+    }
+    
+    // Special handling for projects - also clear project_weeks
+    if (table === 'projects') {
+      runQuery('DELETE FROM project_weeks', []);
+    }
+    
+    runQuery(`DELETE FROM ${table}`, []);
+    res.json({ success: true, table });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to clear table' });
   }
 });

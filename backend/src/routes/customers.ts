@@ -27,11 +27,17 @@ customersRouter.get('/:id', (req, res) => {
   }
 });
 
-// Create customer
+// Create customer (upsert)
 customersRouter.post('/', (req, res) => {
   try {
     const { id, name, created_at } = req.body;
-    runQuery('INSERT INTO customers (id, name, created_at) VALUES (?, ?, ?)', [id, name, created_at]);
+    const existing = getOne('SELECT id FROM customers WHERE id = ?', [id]);
+    
+    if (existing) {
+      runQuery('UPDATE customers SET name = ? WHERE id = ?', [name, id]);
+    } else {
+      runQuery('INSERT INTO customers (id, name, created_at) VALUES (?, ?, ?)', [id, name, created_at]);
+    }
     res.status(201).json({ id, name, created_at });
   } catch (error) {
     res.status(500).json({ error: 'Failed to create customer' });
