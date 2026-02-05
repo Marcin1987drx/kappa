@@ -47,6 +47,8 @@ export interface Project {
 // ==================== Employee (Pracownik) ====================
 export type EmployeeStatus = 'available' | 'vacation' | 'sick';
 
+export type EmployeeRole = 'worker' | 'leader' | 'manager';
+
 export interface Employee {
   id: string;
   firstName: string;
@@ -55,6 +57,10 @@ export interface Employee {
   status?: EmployeeStatus;        // Domyślnie 'available'
   suggestedShift?: 1 | 2 | 3;     // Sugerowana zmiana
   note?: string;                  // Notatka o pracowniku
+  role?: EmployeeRole;            // Rola: pracownik, lider, kierownik
+  email?: string;                 // Adres email
+  phone?: string;                 // Numer telefonu
+  department?: string;            // Dział
   createdAt: number;
 }
 

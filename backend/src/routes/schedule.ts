@@ -29,24 +29,27 @@ employeesRouter.get('/:id', (req, res) => {
 
 employeesRouter.post('/', (req, res) => {
   try {
-    const { id, firstName, lastName, color, status, suggestedShift } = req.body;
+    const { id, firstName, lastName, color, status, suggestedShift, role, email, phone, department } = req.body;
     const created_at = Date.now();
     
     // Check if exists (upsert)
     const existing = getOne('SELECT id FROM employees WHERE id = ?', [id]);
     if (existing) {
       runQuery(`
-        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?
+        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, 
+        role = ?, email = ?, phone = ?, department = ?
         WHERE id = ?
-      `, [firstName, lastName, color, status || 'available', suggestedShift || null, id]);
+      `, [firstName, lastName, color, status || 'available', suggestedShift || null, 
+          role || 'worker', email || null, phone || null, department || null, id]);
     } else {
       runQuery(`
-        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, created_at]);
+        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, role, email, phone, department, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, 
+          role || 'worker', email || null, phone || null, department || null, created_at]);
     }
     
-    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, created_at });
+    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, role, email, phone, department, created_at });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create employee' });
@@ -55,12 +58,13 @@ employeesRouter.post('/', (req, res) => {
 
 employeesRouter.put('/:id', (req, res) => {
   try {
-    const { firstName, lastName, color, status, suggestedShift } = req.body;
+    const { firstName, lastName, color, status, suggestedShift, role, email, phone, department } = req.body;
     runQuery(`
-      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?
+      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?,
+      role = ?, email = ?, phone = ?, department = ?
       WHERE id = ?
-    `, [firstName, lastName, color, status, suggestedShift, req.params.id]);
-    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift });
+    `, [firstName, lastName, color, status, suggestedShift, role || 'worker', email || null, phone || null, department || null, req.params.id]);
+    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift, role, email, phone, department });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to update employee' });
@@ -173,8 +177,13 @@ export const commentsRouter = Router();
 
 commentsRouter.get('/', (req, res) => {
   try {
-    const items = getAll('SELECT * FROM comments ORDER BY createdAt DESC');
-    res.json(items);
+    const items = getAll('SELECT * FROM comments ORDER BY createdAt DESC') as any[];
+    // Mapuj 'text' na 'comment' dla kompatybilności z frontendem
+    const mappedItems = items.map(item => ({
+      ...item,
+      comment: item.text,
+    }));
+    res.json(mappedItems);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch comments' });
@@ -183,7 +192,9 @@ commentsRouter.get('/', (req, res) => {
 
 commentsRouter.post('/', (req, res) => {
   try {
-    const { id, projectId, week, text, createdAt } = req.body;
+    const { id, projectId, week, createdAt, updatedAt } = req.body;
+    // Obsługuj oba pola: 'text' i 'comment' dla kompatybilności
+    const text = req.body.text || req.body.comment || '';
     
     // Check if exists (upsert)
     const existing = getOne('SELECT id FROM comments WHERE id = ?', [id]);
@@ -196,7 +207,7 @@ commentsRouter.post('/', (req, res) => {
       `, [id, projectId, week, text, createdAt || Date.now()]);
     }
     
-    res.status(201).json({ id, projectId, week, text, createdAt });
+    res.status(201).json({ id, projectId, week, text, comment: text, createdAt, updatedAt });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create comment' });

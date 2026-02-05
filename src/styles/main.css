@@ -76,26 +76,43 @@
 
 /* ==================== Dark Theme ==================== */
 body.dark-theme {
-  --color-bg: #0F172A;
-  --color-bg-elevated: #1E293B;
-  --color-bg-secondary: #1E293B;
-  --color-bg-tertiary: #334155;
-  --color-surface: #1E293B;
+  --color-bg: #0d1117;
+  --color-bg-elevated: #161b22;
+  --color-bg-secondary: #21262d;
+  --color-bg-tertiary: #30363d;
+  --color-surface: #161b22;
   
-  --color-text: #F1F5F9;
-  --color-text-secondary: #94A3B8;
-  --color-text-muted: #64748B;
+  --color-text: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-text-muted: #6e7681;
   
-  --color-border: #334155;
-  --color-border-light: #1E293B;
+  --color-border: #30363d;
+  --color-border-light: #21262d;
   
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -1px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -2px rgba(0, 0, 0, 0.2);
+  /* Lepsze kolory primary dla dark mode */
+  --color-primary: #58a6ff;
+  --color-primary-dark: #388bfd;
+  --color-primary-light: #79c0ff;
+  --color-primary-subtle: rgba(88, 166, 255, 0.15);
   
-  --gradient-surface: linear-gradient(180deg, #1E293B 0%, #0F172A 100%);
-  --gradient-shimmer: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
+  /* Status colors - jaśniejsze dla lepszej widoczności */
+  --color-success: #3fb950;
+  --color-success-bg: rgba(63, 185, 80, 0.15);
+  --color-warning: #d29922;
+  --color-warning-bg: rgba(210, 153, 34, 0.15);
+  --color-danger: #f85149;
+  --color-danger-bg: rgba(248, 81, 73, 0.15);
+  --color-info: #58a6ff;
+  --color-info-bg: rgba(88, 166, 255, 0.15);
+  
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
+  
+  --gradient-surface: linear-gradient(180deg, #161b22 0%, #0d1117 100%);
+  --gradient-shimmer: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.05) 50%, transparent 100%);
+  --gradient-brand: linear-gradient(135deg, #58a6ff 0%, #79c0ff 100%);
 }
 
 /* ==================== Global Animations ==================== */
@@ -8143,6 +8160,42 @@ textarea.form-control {
   box-shadow: var(--shadow-md);
 }
 
+/* Employee Form Grid */
+.employee-form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.form-section {
+  background: var(--color-bg-secondary);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+}
+
+.form-section-title {
+  margin: 0 0 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Employee Default Colors */
 :root {
   --employee-color-1: #E91E63;
@@ -10101,13 +10154,13 @@ textarea.form-control {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-right: 0;
+  margin-right: 60px; /* Match sched-main margin when sidebar collapsed */
   transition: margin-right 0.3s ease;
 }
 
 /* Przesuwanie topbar-right gdy sidebar otwarty */
 #scheduleView.sidebar-open .sched-topbar-right {
-  margin-right: 330px;
+  margin-right: 340px; /* Match sched-main margin when sidebar open */
 }
 
 /* View toggle (1T/3T) */
@@ -10370,12 +10423,12 @@ textarea.form-control {
   display: flex;
   flex-direction: column;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06);
-  margin-right: 0;
+  margin-right: 60px; /* Space for sidebar tab when collapsed */
   transition: margin-right 0.3s ease;
 }
 
 .sched-container.sidebar-open .sched-main {
-  margin-right: 320px;
+  margin-right: 340px; /* Sidebar width + padding */
 }
 
 /* === SCHEDULE SIDEBAR - SLIDING PANEL === */
@@ -10638,6 +10691,72 @@ textarea.form-control {
 .sched-row.shifts-1 { grid-template-columns: 200px 1fr; }
 .sched-row.shifts-2 { grid-template-columns: 200px 1fr 1fr; }
 .sched-row.shifts-3 { grid-template-columns: 200px 1fr 1fr 1fr; }
+
+/* Projekt z postojem - wyszarzony */
+.sched-row.project-stoppage {
+  opacity: 0.7;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 8px,
+    rgba(239, 68, 68, 0.12) 8px,
+    rgba(239, 68, 68, 0.12) 16px
+  );
+  position: relative;
+}
+
+.sched-row.project-stoppage::after {
+  content: '⏸ POSTÓJ';
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(239, 68, 68, 0.2);
+  color: #dc2626;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+  z-index: 5;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.sched-row.project-stoppage .sched-project-cell {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.sched-row.project-stoppage .shift-cell {
+  pointer-events: none;
+  background: rgba(239, 68, 68, 0.06);
+}
+
+/* Dark mode - POSTÓJ */
+body.dark-theme .sched-row.project-stoppage {
+  opacity: 0.8;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 8px,
+    rgba(248, 81, 73, 0.25) 8px,
+    rgba(248, 81, 73, 0.25) 16px
+  );
+}
+
+body.dark-theme .sched-row.project-stoppage::after {
+  background: rgba(248, 81, 73, 0.35);
+  color: #ff6b6b;
+  border: 1px solid rgba(248, 81, 73, 0.5);
+  font-weight: 700;
+}
+
+body.dark-theme .sched-row.project-stoppage .sched-project-cell {
+  background: rgba(248, 81, 73, 0.15);
+}
+
+body.dark-theme .sched-row.project-stoppage .shift-cell {
+  background: rgba(248, 81, 73, 0.12);
+}
 
 /* Komórka projektu - elegancka */
 .sched-project-cell {
@@ -14271,40 +14390,295 @@ textarea.form-control {
 }
 
 /* === DARK MODE === */
-[data-theme="dark"] .sched-shift-btn.active {
+[data-theme="dark"] .sched-shift-btn.active,
+body.dark-theme .sched-shift-btn.active {
   background: var(--color-bg-tertiary);
 }
 
-[data-theme="dark"] .sched-team-card {
+[data-theme="dark"] .sched-team-card,
+body.dark-theme .sched-team-card {
   background: var(--color-bg-tertiary);
 }
 
-[data-theme="dark"] .sched-team-card:hover {
-  background: rgba(255,255,255,0.05);
+[data-theme="dark"] .sched-team-card:hover,
+body.dark-theme .sched-team-card:hover {
+  background: rgba(255,255,255,0.08);
 }
 
-[data-theme="dark"] .sched-main {
+[data-theme="dark"] .sched-main,
+body.dark-theme .sched-main {
   background: var(--color-surface);
+  border-color: var(--color-border);
 }
 
-[data-theme="dark"] .sched-table-header {
-  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+[data-theme="dark"] .sched-table-header,
+body.dark-theme .sched-table-header {
+  background: linear-gradient(180deg, #21262d 0%, #161b22 100%);
 }
 
-[data-theme="dark"] .sched-panel-header {
-  background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
+[data-theme="dark"] .sched-panel-header,
+body.dark-theme .sched-panel-header {
+  background: linear-gradient(180deg, #21262d 0%, #161b22 100%);
 }
 
-[data-theme="dark"] .sched-project-cell {
+[data-theme="dark"] .sched-project-cell,
+body.dark-theme .sched-project-cell {
   background: transparent;
 }
 
-[data-theme="dark"] .note-modal-info {
-  background: #1e293b;
+[data-theme="dark"] .note-modal-info,
+body.dark-theme .note-modal-info {
+  background: #21262d;
 }
 
-[data-theme="dark"] .note-modal-employee {
-  background: #0f172a;
+[data-theme="dark"] .note-modal-employee,
+body.dark-theme .note-modal-employee {
+  background: #161b22;
+}
+
+/* Dark mode - Email preview fix */
+body.dark-theme .email-preview {
+  background: #21262d;
+  color: var(--color-text);
+}
+
+body.dark-theme .email-preview div[style*="background: white"],
+body.dark-theme .email-preview div[style*="background:#f8f9fa"],
+body.dark-theme .email-preview div[style*="background: #f8f9fa"] {
+  background: #21262d !important;
+  color: var(--color-text) !important;
+}
+
+body.dark-theme .email-preview h2,
+body.dark-theme .email-preview h3,
+body.dark-theme .email-preview h4,
+body.dark-theme .email-preview p,
+body.dark-theme .email-preview span,
+body.dark-theme .email-preview div {
+  color: var(--color-text) !important;
+}
+
+body.dark-theme .email-preview [style*="color: #1e293b"],
+body.dark-theme .email-preview [style*="color:#1e293b"],
+body.dark-theme .email-preview [style*="color: #475569"],
+body.dark-theme .email-preview [style*="color:#475569"] {
+  color: var(--color-text-secondary) !important;
+}
+
+/* Dark mode - Assignment chips and cards */
+body.dark-theme .sched-assignment {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .sched-assignment-name {
+  color: var(--color-text);
+}
+
+/* Dark mode - Shift columns */
+body.dark-theme .sched-shift-col {
+  background: var(--color-bg-secondary) !important;
+}
+
+body.dark-theme .sched-shift-col.shift-1 {
+  background: rgba(251, 191, 36, 0.1) !important;
+}
+
+body.dark-theme .sched-shift-col.shift-2 {
+  background: rgba(248, 113, 113, 0.1) !important;
+}
+
+body.dark-theme .sched-shift-col.shift-3 {
+  background: rgba(129, 140, 248, 0.1) !important;
+}
+
+/* Dark mode - Header cells */
+body.dark-theme .sched-header-cell {
+  color: var(--color-text);
+}
+
+body.dark-theme .sched-header-cell .shift-label {
+  color: var(--color-text);
+}
+
+body.dark-theme .sched-header-cell .shift-time {
+  color: var(--color-text-secondary);
+}
+
+/* Dark mode - Project labels */
+body.dark-theme .sched-project-name {
+  color: var(--color-text);
+}
+
+body.dark-theme .sched-project-type {
+  color: var(--color-text-secondary);
+}
+
+/* Dark mode - Sidebar */
+body.dark-theme .sched-sidebar {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .sched-sidebar-header {
+  background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+}
+
+body.dark-theme .sched-sidebar-toggle {
+  background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+}
+
+body.dark-theme .sched-sidebar-toggle:hover {
+  background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%);
+}
+
+/* Dark mode - Panels in sidebar */
+body.dark-theme .sched-panel {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .sched-panel-header {
+  color: var(--color-text);
+}
+
+body.dark-theme .sched-emp-card {
+  background: var(--color-bg-tertiary);
+}
+
+body.dark-theme .sched-emp-card:hover {
+  background: rgba(255,255,255,0.08);
+}
+
+body.dark-theme .sched-emp-name {
+  color: var(--color-text);
+}
+
+body.dark-theme .sched-emp-tasks {
+  color: var(--color-text-secondary);
+}
+
+/* Dark mode - Buttons */
+body.dark-theme .btn-primary {
+  background: var(--gradient-brand);
+}
+
+body.dark-theme .btn-secondary {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .btn-secondary:hover {
+  background: rgba(255,255,255,0.1);
+}
+
+/* Dark mode - Inputs */
+body.dark-theme .form-control,
+body.dark-theme input,
+body.dark-theme select,
+body.dark-theme textarea {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .form-control:focus,
+body.dark-theme input:focus,
+body.dark-theme select:focus,
+body.dark-theme textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-subtle);
+}
+
+/* Dark mode - Modal */
+body.dark-theme .modal-content {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .modal-header {
+  border-bottom-color: var(--color-border);
+}
+
+body.dark-theme .modal-footer {
+  border-top-color: var(--color-border);
+}
+
+/* Dark mode - Info boxes */
+body.dark-theme .info-box {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .info-box-primary {
+  background: var(--color-primary-subtle);
+  border-color: var(--color-primary);
+}
+
+/* Dark mode - Top bar */
+body.dark-theme .sched-topbar {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .sched-week-display {
+  color: var(--color-primary);
+}
+
+body.dark-theme .sched-week-dates {
+  color: var(--color-text-secondary);
+}
+
+/* Dark mode - Dropdown */
+body.dark-theme .dropdown-menu,
+body.dark-theme .schedule-employee-filter {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+/* Dark mode - Tables */
+body.dark-theme .data-table th {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+body.dark-theme .data-table td {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .data-table tr:hover td {
+  background: var(--color-bg-tertiary);
+}
+
+/* Dark mode - POSTÓJ label */
+body.dark-theme .stoppage-label {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.15);
+}
+
+/* Dark mode - Alerts */
+body.dark-theme .sched-alert {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .sched-alert.warning {
+  background: var(--color-warning-bg);
+  border-color: var(--color-warning);
+}
+
+body.dark-theme .sched-alert.danger {
+  background: var(--color-danger-bg);
+  border-color: var(--color-danger);
+}
+
+body.dark-theme .sched-alert.success {
+  background: var(--color-success-bg);
+  border-color: var(--color-success);
 }
 
 /* === RESPONSIVE === */
@@ -14941,6 +15315,228 @@ textarea.form-control {
 .info-box svg {
   flex-shrink: 0;
   margin-top: 2px;
+}
+
+/* ==================== ROZBUDOWANY MODAL EMAILOWY ==================== */
+.send-email-modal-expanded {
+  max-height: 75vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.email-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--color-bg-tertiary);
+  padding: 4px;
+  border-radius: 10px;
+}
+
+.email-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.email-tab:hover {
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+}
+
+.email-tab.active {
+  background: var(--color-primary);
+  color: white;
+}
+
+.email-tab svg {
+  flex-shrink: 0;
+}
+
+.email-panel {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.email-panel.active {
+  display: flex;
+}
+
+.email-preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.email-preview-header h4 {
+  margin: 0 !important;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.btn-outline:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Lista pracowników do emaila */
+.employee-email-list {
+  background: var(--color-bg-secondary);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.employee-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.checkbox-inline input[type="checkbox"] {
+  accent-color: var(--color-primary);
+  width: 16px;
+  height: 16px;
+}
+
+.employee-check-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.employee-check-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--color-bg);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.employee-check-item:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.employee-check-item.no-email {
+  opacity: 0.6;
+}
+
+.employee-check-item .emp-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.employee-check-item .emp-name {
+  flex: 1;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.employee-check-item .emp-email {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary);
+}
+
+.employee-check-item .emp-badge {
+  font-size: 0.75rem;
+  background: var(--color-primary);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.employee-check-item .btn-icon {
+  background: none;
+  border: none;
+  padding: 4px;
+  font-size: 0.9rem;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.employee-check-item .btn-icon:hover {
+  opacity: 1;
+  transform: scale(1.2);
+}
+
+.manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.manager-list .checkbox-inline {
+  padding: 10px 16px;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.manager-list .checkbox-inline:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.manager-list .checkbox-inline:has(input:checked) {
+  border-color: var(--color-primary);
+}
+
+.warning-box {
+  padding: 16px;
+  background: var(--color-warning-bg, #fef3c7);
+  color: var(--color-warning-text, #92400e);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.warning-box a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  margin-left: 8px;
 }
 
 /* ==================== MODAL NOTATKI ==================== */

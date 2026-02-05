@@ -10521,7 +10521,14 @@ class KappaApp {
         task.shifts.push(a.shift);
       }
       if (a.note && a.note.trim()) {
-        task.notes.push(`Z${a.shift}: ${a.note}`);
+        // Parsuj notatkę - usuń odpowiedzi (REPLIES)
+        let noteText = a.note;
+        if (noteText.includes('---REPLIES---')) {
+          noteText = noteText.split('---REPLIES---')[0].trim();
+        }
+        if (noteText) {
+          task.notes.push(`Z${a.shift}: ${noteText}`);
+        }
       }
     });
     
@@ -11054,86 +11061,198 @@ class KappaApp {
     // Pobierz zapisane adresy email z bazy danych
     const savedEmails = await db.getPreference('kappa_email_addresses') || '';
     
+    // Pobierz pracowników z przypisaniami w tym tygodniu
+    const employeesWithAssignments = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (emp) {
+        if (!employeesWithAssignments.has(emp.id)) {
+          employeesWithAssignments.set(emp.id, { emp, assignments: [] });
+        }
+        employeesWithAssignments.get(emp.id)!.assignments.push(a);
+      }
+    });
+    
+    // Managerowie
+    const managers = this.state.employees.filter(e => e.role === 'manager' && e.email);
+    
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
       </svg>
-      Wyślij grafik mailem
+      Centrum komunikacji - ${weekKey}
     `;
     
-    // Grupuj przypisania wg pracownika
-    const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      if (emp) {
-        if (!byEmployee.has(emp.id)) {
-          byEmployee.set(emp.id, { emp, assignments: [] });
-        }
-        byEmployee.get(emp.id)!.assignments.push(a);
-      }
-    });
-    
     modalBody.innerHTML = `
-      <div class="send-email-modal">
-        <div class="info-box info-box-primary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-          </svg>
-          <span>Wyślij grafik przez Outlook. Możesz wysłać ogólny grafik lub indywidualne maile dla pracowników.</span>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Adresy email (rozdziel przecinkami lub enterem):</label>
-          <textarea id="emailAddresses" class="form-control" rows="2" placeholder="jan.kowalski@firma.pl, anna.nowak@firma.pl">${savedEmails}</textarea>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">Typ wiadomości:</label>
-          <div class="email-type-options">
-            <label class="radio-option">
-              <input type="radio" name="emailType" value="general" checked>
-              <span>📋 Ogólny grafik (dla wszystkich)</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" name="emailType" value="individual">
-              <span>👤 Indywidualne maile (każdy pracownik dostaje swój)</span>
-            </label>
-          </div>
-        </div>
-        
-        <div class="email-preview-section">
-          <h4>📧 Podgląd wiadomości</h4>
-          <div class="email-preview" id="emailPreviewContent">
-            ${this.generateScheduleEmailHtml(weekKey, 'general')}
-          </div>
-        </div>
-        
-        <div class="form-actions" style="margin-top: 16px; display: flex; gap: 12px;">
-          <button class="btn btn-primary" id="sendGeneralEmail">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-            Otwórz w Outlook
-          </button>
-          <button class="btn btn-secondary" id="sendIndividualEmails" style="display: none;">
+      <div class="send-email-modal send-email-modal-expanded">
+        <!-- Zakładki -->
+        <div class="email-tabs">
+          <button class="email-tab active" data-tab="general">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Wyślij do wszystkich pracowników
+            Grafik ogólny
           </button>
+          <button class="email-tab" data-tab="individual">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Indywidualne
+          </button>
+          <button class="email-tab" data-tab="manager">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+            Raport manager
+          </button>
+        </div>
+        
+        <!-- Panel: Grafik ogólny -->
+        <div class="email-panel active" id="panel-general">
+          <div class="info-box info-box-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>Wyślij pełny grafik tygodniowy do wybranych odbiorców przez Outlook.</span>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Adresy email odbiorców:</label>
+            <textarea id="emailAddresses" class="form-control" rows="2" placeholder="email1@firma.pl, email2@firma.pl">${savedEmails}</textarea>
+          </div>
+          
+          <div class="email-preview-section">
+            <div class="email-preview-header">
+              <h4>📧 Podgląd wiadomości</h4>
+              <button class="btn btn-small btn-outline" id="btnDownloadPDF">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Pobierz PDF
+              </button>
+            </div>
+            <div class="email-preview" id="emailPreviewGeneral">
+              ${this.generateScheduleEmailHtml(weekKey, 'general')}
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button class="btn btn-primary" id="sendGeneralEmail">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              Otwórz w Outlook
+            </button>
+          </div>
+        </div>
+        
+        <!-- Panel: Indywidualne -->
+        <div class="email-panel" id="panel-individual">
+          <div class="info-box info-box-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>Każdy pracownik otrzyma spersonalizowany email ze swoim grafikiem i informacją o urlopie.</span>
+          </div>
+          
+          <div class="employee-email-list">
+            <div class="employee-list-header">
+              <span>Pracownicy z przypisaniami (${employeesWithAssignments.size})</span>
+              <label class="checkbox-inline">
+                <input type="checkbox" id="selectAllEmployees" checked> Zaznacz wszystkich
+              </label>
+            </div>
+            
+            <div class="employee-check-list" id="employeeCheckList">
+              ${Array.from(employeesWithAssignments.values()).map(({ emp, assignments }) => `
+                <label class="employee-check-item ${emp.email ? '' : 'no-email'}">
+                  <input type="checkbox" name="empCheck" value="${emp.id}" ${emp.email ? 'checked' : 'disabled'}>
+                  <span class="emp-color" style="background: ${emp.color}"></span>
+                  <span class="emp-name">${emp.firstName} ${emp.lastName}</span>
+                  <span class="emp-email">${emp.email || '⚠️ brak email'}</span>
+                  <span class="emp-badge">${assignments.length} przyp.</span>
+                  <button class="btn-icon btn-preview" data-emp="${emp.id}" title="Podgląd">👁️</button>
+                  <button class="btn-icon btn-ics" data-emp="${emp.id}" title="Pobierz ICS">📅</button>
+                </label>
+              `).join('')}
+            </div>
+          </div>
+          
+          <div class="email-preview-section">
+            <h4>📧 Podgląd przykładowej wiadomości</h4>
+            <div class="email-preview" id="emailPreviewIndividual">
+              ${employeesWithAssignments.size > 0 ? 
+                this.generateIndividualEmailHtml(
+                  Array.from(employeesWithAssignments.keys())[0], 
+                  weekKey
+                ) : '<p style="text-align:center;color:#94a3b8;">Brak pracowników z przypisaniami</p>'}
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button class="btn btn-primary" id="sendIndividualEmails">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              Wyślij do zaznaczonych
+            </button>
+            <button class="btn btn-secondary" id="downloadAllICS">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Pobierz wszystkie ICS
+            </button>
+          </div>
+        </div>
+        
+        <!-- Panel: Raport manager -->
+        <div class="email-panel" id="panel-manager">
+          <div class="info-box info-box-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>Raport z analizą pokrycia zmian, obciążenia i nieobecności dla kadry zarządzającej.</span>
+          </div>
+          
+          <div class="form-group">
+            <label class="form-label">Wyślij do managerów:</label>
+            <div class="manager-list">
+              ${managers.length > 0 ? managers.map(m => `
+                <label class="checkbox-inline">
+                  <input type="checkbox" name="managerCheck" value="${m.id}" checked>
+                  ${m.firstName} ${m.lastName} (${m.email})
+                </label>
+              `).join('') : `
+                <div class="warning-box">
+                  ⚠️ Brak pracowników z rolą "Manager" lub bez przypisanego emaila.
+                  <a href="#" id="addManagerLink">Dodaj managera</a>
+                </div>
+              `}
+            </div>
+          </div>
+          
+          <div class="email-preview-section">
+            <h4>📊 Podgląd raportu</h4>
+            <div class="email-preview" id="emailPreviewManager">
+              ${this.generateManagerReportHtml(weekKey)}
+            </div>
+          </div>
+          
+          <div class="form-actions">
+            <button class="btn btn-primary" id="sendManagerReport">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+              Wyślij raport
+            </button>
+          </div>
         </div>
       </div>
     `;
     
-    // Obsługa zmiany typu
-    modalBody.querySelectorAll('input[name="emailType"]').forEach(radio => {
-      radio.addEventListener('change', (e) => {
-        const type = (e.target as HTMLInputElement).value as 'general' | 'individual';
-        document.getElementById('emailPreviewContent')!.innerHTML = this.generateScheduleEmailHtml(weekKey, type);
-        document.getElementById('sendGeneralEmail')!.style.display = type === 'general' ? '' : 'none';
-        document.getElementById('sendIndividualEmails')!.style.display = type === 'individual' ? '' : 'none';
+    // Obsługa zakładek
+    modalBody.querySelectorAll('.email-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        modalBody.querySelectorAll('.email-tab').forEach(t => t.classList.remove('active'));
+        modalBody.querySelectorAll('.email-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        const panelId = `panel-${(tab as HTMLElement).dataset.tab}`;
+        document.getElementById(panelId)?.classList.add('active');
       });
     });
     
-    // Zapisz adresy email do bazy danych
+    // Zapisz adresy email
     document.getElementById('emailAddresses')?.addEventListener('blur', async (e) => {
       await db.setPreference('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
+    });
+    
+    // Pobierz PDF
+    document.getElementById('btnDownloadPDF')?.addEventListener('click', () => {
+      this.generateSchedulePDF(weekKey);
     });
     
     // Wysyłanie ogólnego emaila
@@ -11153,24 +11272,104 @@ class KappaApp {
       this.hideModal();
     });
     
+    // Zaznacz wszystkich pracowników
+    document.getElementById('selectAllEmployees')?.addEventListener('change', (e) => {
+      const checked = (e.target as HTMLInputElement).checked;
+      document.querySelectorAll('input[name="empCheck"]:not(:disabled)').forEach(cb => {
+        (cb as HTMLInputElement).checked = checked;
+      });
+    });
+    
+    // Podgląd indywidualny
+    document.querySelectorAll('.btn-preview').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const empId = (btn as HTMLElement).dataset.emp!;
+        document.getElementById('emailPreviewIndividual')!.innerHTML = this.generateIndividualEmailHtml(empId, weekKey);
+      });
+    });
+    
+    // Pobierz ICS dla pracownika
+    document.querySelectorAll('.btn-ics').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const empId = (btn as HTMLElement).dataset.emp!;
+        this.downloadICS(empId, weekKey);
+      });
+    });
+    
+    // Pobierz wszystkie ICS
+    document.getElementById('downloadAllICS')?.addEventListener('click', () => {
+      const checked = document.querySelectorAll('input[name="empCheck"]:checked');
+      if (checked.length === 0) {
+        this.showToast('Zaznacz przynajmniej jednego pracownika', 'warning');
+        return;
+      }
+      checked.forEach(cb => {
+        const empId = (cb as HTMLInputElement).value;
+        this.downloadICS(empId, weekKey);
+      });
+    });
+    
     // Wysyłanie indywidualnych maili
     document.getElementById('sendIndividualEmails')?.addEventListener('click', () => {
+      const checked = document.querySelectorAll('input[name="empCheck"]:checked');
+      if (checked.length === 0) {
+        this.showToast('Zaznacz przynajmniej jednego pracownika', 'warning');
+        return;
+      }
+      
       let count = 0;
-      byEmployee.forEach(({ emp }) => {
-        const email = this.getEmployeeEmail(emp);
-        if (email) {
-          this.openOutlookEmail(email, `Twój grafik na ${weekKey} - ${emp.firstName} ${emp.lastName}`, 
-            this.generateEmployeeScheduleEmailBody(emp.id, weekKey));
+      checked.forEach(cb => {
+        const empId = (cb as HTMLInputElement).value;
+        const emp = this.state.employees.find(e => e.id === empId);
+        if (emp?.email) {
+          this.openOutlookEmail(
+            emp.email, 
+            `Twój grafik na ${weekKey} - ${emp.firstName} ${emp.lastName}`, 
+            this.generateEmployeeScheduleEmailBody(emp.id, weekKey)
+          );
           count++;
         }
       });
       
       if (count > 0) {
         this.showToast(`Otwarto ${count} okien Outlook`, 'success');
-      } else {
-        this.showToast('Brak pracowników z przypisanymi adresami email', 'warning');
+        this.hideModal();
       }
+    });
+    
+    // Wysyłanie raportu do managerów
+    document.getElementById('sendManagerReport')?.addEventListener('click', () => {
+      const checked = document.querySelectorAll('input[name="managerCheck"]:checked');
+      if (checked.length === 0) {
+        this.showToast('Zaznacz przynajmniej jednego managera', 'warning');
+        return;
+      }
+      
+      const emails: string[] = [];
+      checked.forEach(cb => {
+        const empId = (cb as HTMLInputElement).value;
+        const emp = this.state.employees.find(e => e.id === empId);
+        if (emp?.email) emails.push(emp.email);
+      });
+      
+      if (emails.length > 0) {
+        this.openOutlookEmail(
+          emails.join('; '), 
+          `Raport tygodniowy ${weekKey} - Kappa Plannung`, 
+          this.generateManagerReportBody(weekKey)
+        );
+        this.showToast('Otwarto Outlook z raportem', 'success');
+        this.hideModal();
+      }
+    });
+    
+    // Link do dodania managera
+    document.getElementById('addManagerLink')?.addEventListener('click', (e) => {
+      e.preventDefault();
       this.hideModal();
+      setTimeout(() => this.showAddEmployeeModal(), 300);
     });
     
     // Ukryj domyślny przycisk potwierdzenia
@@ -11178,6 +11377,51 @@ class KappaApp {
     confirmBtn.style.display = 'none';
     
     modal.classList.add('active');
+  }
+
+  private generateManagerReportBody(weekKey: string): string {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const activeEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    // Zlicz projekty z weeks jako obiekt
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (!p.weeks) return false;
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll && weekData.soll > 0;
+    });
+    const totalShifts = projectsWithSoll.length * 3;
+    const coveredShifts = new Set(weekAssignments.map(a => `${a.projectId}-${a.shift}`)).size;
+    const coveragePercent = totalShifts > 0 ? Math.round((coveredShifts / totalShifts) * 100) : 0;
+    
+    let body = `RAPORT TYGODNIOWY ${weekKey}\\n`;
+    body += `DRÄXLMAIER Kappa Plannung\\n`;
+    body += `================================\\n\\n`;
+    body += `📊 PODSUMOWANIE:\\n`;
+    body += `   Pokrycie zmian: ${coveragePercent}%\\n`;
+    body += `   Liczba przypisań: ${weekAssignments.length}\\n`;
+    body += `   Dostępnych pracowników: ${activeEmployees.length}\\n\\n`;
+    
+    const workloadMap = new Map<string, number>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      workloadMap.set(a.employeeId, (workloadMap.get(a.employeeId) || 0) + 1);
+    });
+    
+    if (workloadMap.size > 0) {
+      body += `👥 OBCIĄŻENIE PRACOWNIKÓW:\\n`;
+      Array.from(workloadMap.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10)
+        .forEach(([empId, count]) => {
+          const emp = this.state.employees.find(e => e.id === empId);
+          if (emp) {
+            body += `   ${emp.firstName} ${emp.lastName}: ${count} przypisań\\n`;
+          }
+        });
+    }
+    
+    body += `\\nWygenerowano: ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')}`;
+    
+    return body;
   }
   
   private generateScheduleEmailHtml(weekKey: string, type: 'general' | 'individual'): string {
@@ -11331,15 +11575,387 @@ class KappaApp {
   }
   
   private getEmployeeEmail(emp: Employee): string | null {
-    // Sprawdź czy pracownik ma email (możesz dodać pole email do Employee)
-    // Na razie zwracamy null - trzeba będzie rozszerzyć model Employee
-    return (emp as any).email || null;
+    return emp.email || null;
   }
   
   private openOutlookEmail(to: string, subject: string, body: string): void {
-    // Użyj protokołu mailto: który otworzy domyślny klient pocztowy (Outlook)
     const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.replace(/\\n/g, '\n'))}`;
     window.open(mailtoUrl, '_blank');
+  }
+
+  // ==================== ROZBUDOWANY SYSTEM EMAILOWY ====================
+
+  private generateManagerReportHtml(weekKey: string): string {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const activeEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    
+    // Statystyki pokrycia - sprawdź weeks jako obiekt
+    const projectsWithSoll = this.state.projects.filter(p => {
+      if (!p.weeks) return false;
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll && weekData.soll > 0;
+    });
+    const totalShifts = projectsWithSoll.length * 3;
+    const coveredShifts = new Set(weekAssignments.map(a => `${a.projectId}-${a.shift}`)).size;
+    const coveragePercent = totalShifts > 0 ? Math.round((coveredShifts / totalShifts) * 100) : 0;
+    
+    // Obciążenie pracowników
+    const workloadMap = new Map<string, number>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      workloadMap.set(a.employeeId, (workloadMap.get(a.employeeId) || 0) + 1);
+    });
+    
+    const avgWorkload = workloadMap.size > 0 ? 
+      Math.round(Array.from(workloadMap.values()).reduce((a, b) => a + b, 0) / workloadMap.size * 10) / 10 : 0;
+    
+    // Projekty z problemami (niskie pokrycie)
+    const projectIssues: { name: string; issue: string }[] = [];
+    this.state.projects.forEach(p => {
+      const weekData = p.weeks ? p.weeks[weekKey] : null;
+      if (weekData && weekData.soll && weekData.soll > 0) {
+        const assignments = weekAssignments.filter((a: ScheduleAssignment) => 
+          a.projectId === p.id || a.projectId === `${p.customer_id}-${p.type_id}`
+        );
+        if (assignments.length === 0) {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          projectIssues.push({ name: `${customer?.name} - ${p.type_id}`, issue: 'Brak przypisań!' });
+        }
+      }
+    });
+    
+    // Nieobecności
+    const weekStart = this.getWeekStartDate(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+    const absences = (this.state.absences || []).filter(a => {
+      const start = new Date(a.startDate);
+      const end = new Date(a.endDate);
+      return start <= new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000) && end >= weekStart;
+    });
+    
+    return `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 700px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #0097AC 100%); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
+          <h2 style="margin: 0; font-size: 24px;">📊 Raport tygodniowy ${weekKey}</h2>
+          <p style="margin: 8px 0 0; opacity: 0.9;">Podsumowanie dla kadry zarządzającej</p>
+        </div>
+        
+        <div style="padding: 24px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none;">
+          <!-- KPI Cards -->
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;">
+            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+              <div style="font-size: 32px; font-weight: bold; color: ${coveragePercent >= 80 ? '#10b981' : coveragePercent >= 50 ? '#f59e0b' : '#ef4444'};">${coveragePercent}%</div>
+              <div style="color: #64748b; font-size: 12px;">Pokrycie zmian</div>
+            </div>
+            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+              <div style="font-size: 32px; font-weight: bold; color: #0097AC;">${weekAssignments.length}</div>
+              <div style="color: #64748b; font-size: 12px;">Przypisań</div>
+            </div>
+            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
+              <div style="font-size: 32px; font-weight: bold; color: #1e293b;">${avgWorkload}</div>
+              <div style="color: #64748b; font-size: 12px;">Śr. przypisań/os.</div>
+            </div>
+          </div>
+          
+          ${projectIssues.length > 0 ? `
+            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+              <h4 style="margin: 0 0 12px; color: #dc2626;">⚠️ Projekty wymagające uwagi</h4>
+              ${projectIssues.map(i => `<div style="color: #b91c1c; margin: 4px 0;">• ${i.name}: ${i.issue}</div>`).join('')}
+            </div>
+          ` : `
+            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
+              <h4 style="margin: 0; color: #16a34a;">✅ Wszystkie projekty są obsadzone</h4>
+            </div>
+          `}
+          
+          ${absences.length > 0 ? `
+            <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+              <h4 style="margin: 0 0 12px; color: #1e293b;">🏖️ Nieobecności w tym tygodniu (${absences.length})</h4>
+              ${absences.slice(0, 5).map(a => {
+                const emp = this.state.employees.find(e => e.id === a.employeeId);
+                return `<div style="margin: 4px 0; color: #475569;">• ${emp?.firstName} ${emp?.lastName}: ${a.startDate} - ${a.endDate}</div>`;
+              }).join('')}
+              ${absences.length > 5 ? `<div style="color: #94a3b8; font-style: italic;">... i ${absences.length - 5} więcej</div>` : ''}
+            </div>
+          ` : ''}
+          
+          <div style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+            <h4 style="margin: 0 0 12px; color: #1e293b;">👥 Dostępność zespołu</h4>
+            <div style="display: flex; gap: 24px;">
+              <div><span style="color: #10b981; font-weight: bold;">${activeEmployees.length}</span> dostępnych</div>
+              <div><span style="color: #f59e0b; font-weight: bold;">${this.state.employees.filter(e => e.status === 'vacation').length}</span> na urlopie</div>
+              <div><span style="color: #ef4444; font-weight: bold;">${this.state.employees.filter(e => e.status === 'sick').length}</span> chorych</div>
+            </div>
+          </div>
+        </div>
+        
+        <div style="background: #1e293b; color: white; padding: 16px; border-radius: 0 0 12px 12px; text-align: center;">
+          <small>Wygenerowano: ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')}</small>
+        </div>
+      </div>
+    `;
+  }
+
+  private generateIndividualEmailHtml(employeeId: string, weekKey: string): string {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return '';
+    
+    const assignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
+    );
+    
+    const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
+    const shiftColors = ['#22c55e', '#3b82f6', '#8b5cf6'];
+    
+    // Oblicz pozostałe dni urlopowe
+    const vacationInfo = this.getEmployeeVacationInfo(employeeId);
+    
+    return `
+      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <div style="background: linear-gradient(135deg, #0097AC 0%, #00b4cc 100%); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
+          <h2 style="margin: 0;">👋 Cześć, ${emp.firstName}!</h2>
+          <p style="margin: 8px 0 0; opacity: 0.9;">Twój grafik na tydzień ${weekKey}</p>
+        </div>
+        
+        <div style="padding: 24px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none;">
+          ${assignments.length > 0 ? `
+            <div style="margin-bottom: 20px;">
+              ${assignments.map((a: ScheduleAssignment) => {
+                const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+                const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+                const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+                
+                return `
+                  <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid ${shiftColors[a.shift - 1]};">
+                    <div style="font-weight: bold; font-size: 16px; color: #1e293b; margin-bottom: 8px;">
+                      ${customer?.name || '?'} - ${ptype?.name || '?'}
+                    </div>
+                    <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                      <span style="background: ${shiftColors[a.shift - 1]}; color: white; padding: 4px 12px; border-radius: 16px; font-size: 13px;">
+                        ⏰ ${shiftNames[a.shift - 1]}
+                      </span>
+                      ${a.scope !== 'project' ? `
+                        <span style="background: #f1f5f9; color: #475569; padding: 4px 12px; border-radius: 16px; font-size: 13px;">
+                          📋 ${a.scope === 'audit' ? 'Audyt' : a.scope === 'adhesion' ? 'Przyczepność' : a.scope}
+                        </span>
+                      ` : ''}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          ` : `
+            <div style="background: #fef3c7; border-radius: 8px; padding: 16px; text-align: center;">
+              <p style="margin: 0; color: #92400e;">Nie masz przypisań w tym tygodniu.</p>
+            </div>
+          `}
+          
+          ${vacationInfo.limit > 0 ? `
+            <div style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-top: 16px;">
+              <h4 style="margin: 0 0 12px; color: #1e293b;">🏖️ Twój urlop</h4>
+              <div style="display: flex; align-items: center; gap: 16px;">
+                <div style="flex: 1; background: #e5e7eb; border-radius: 8px; height: 12px; overflow: hidden;">
+                  <div style="width: ${(vacationInfo.used / vacationInfo.limit) * 100}%; background: linear-gradient(90deg, #0097AC, #00b4cc); height: 100%;"></div>
+                </div>
+                <div style="white-space: nowrap;">
+                  <span style="color: #0097AC; font-weight: bold;">${vacationInfo.remaining}</span> / ${vacationInfo.limit} dni
+                </div>
+              </div>
+              <div style="margin-top: 8px; font-size: 13px; color: #64748b;">
+                Wykorzystano: ${vacationInfo.used} dni | Pozostało: ${vacationInfo.remaining} dni
+              </div>
+            </div>
+          ` : ''}
+        </div>
+        
+        <div style="background: #1e293b; color: white; padding: 16px; border-radius: 0 0 12px 12px; text-align: center;">
+          <p style="margin: 0 0 8px; font-size: 14px;">Powodzenia w pracy! 💪</p>
+          <small style="opacity: 0.7;">DRÄXLMAIER Kappa Plannung</small>
+        </div>
+      </div>
+    `;
+  }
+
+  private getEmployeeVacationInfo(employeeId: string): { limit: number; used: number; remaining: number } {
+    const year = this.scheduleCurrentYear;
+    
+    // Domyślny limit urlopowy (26 dni w Polsce)
+    const defaultLimit = 26;
+    
+    // Policz wykorzystane dni urlopowe z istniejących nieobecności
+    const absences = this.state.absences || [];
+    const vacations = absences.filter(a => 
+      a.employeeId === employeeId && 
+      new Date(a.startDate).getFullYear() === year
+    );
+    
+    let usedDays = 0;
+    vacations.forEach(v => {
+      usedDays += v.workDays || 1;
+    });
+    
+    return {
+      limit: defaultLimit,
+      used: usedDays,
+      remaining: Math.max(0, defaultLimit - usedDays)
+    };
+  }
+
+  private generateICSContent(employeeId: string, weekKey: string): string {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return '';
+    
+    const assignments = this.state.scheduleAssignments.filter(
+      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
+    );
+    
+    const weekStart = this.getWeekStartDate(this.scheduleCurrentYear, this.scheduleCurrentWeek);
+    
+    const shiftTimes = [
+      { start: '06:00', end: '14:00' },
+      { start: '14:00', end: '22:00' },
+      { start: '22:00', end: '06:00' }
+    ];
+    
+    let ics = `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//DRÄXLMAIER Kappa Plannung//PL
+CALSCALE:GREGORIAN
+METHOD:PUBLISH
+X-WR-CALNAME:Grafik ${weekKey} - ${emp.firstName} ${emp.lastName}
+`;
+
+    assignments.forEach((a: ScheduleAssignment, idx: number) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+      const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+      
+      const shiftTime = shiftTimes[a.shift - 1];
+      
+      // Dla każdego dnia tygodnia (pon-pt dla uproszczenia)
+      for (let day = 0; day < 5; day++) {
+        const eventDate = new Date(weekStart);
+        eventDate.setDate(eventDate.getDate() + day);
+        
+        const dateStr = eventDate.toISOString().split('T')[0].replace(/-/g, '');
+        const startTime = shiftTime.start.replace(':', '');
+        const endTime = shiftTime.end.replace(':', '');
+        
+        const eventEnd = a.shift === 3 ? 
+          new Date(eventDate.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '') :
+          dateStr;
+        
+        ics += `BEGIN:VEVENT
+UID:${a.id}-${day}-${Date.now()}@kappa
+DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z
+DTSTART;TZID=Europe/Warsaw:${dateStr}T${startTime}00
+DTEND;TZID=Europe/Warsaw:${eventEnd}T${endTime}00
+SUMMARY:${customer?.name || '?'} - ${ptype?.name || '?'}
+DESCRIPTION:Zmiana ${a.shift}${a.scope !== 'project' ? ` | Zakres: ${a.scope}` : ''}
+LOCATION:Produkcja
+STATUS:CONFIRMED
+END:VEVENT
+`;
+      }
+    });
+
+    ics += `END:VCALENDAR`;
+    return ics;
+  }
+
+  private downloadICS(employeeId: string, weekKey: string): void {
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    if (!emp) return;
+    
+    const icsContent = this.generateICSContent(employeeId, weekKey);
+    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `grafik-${weekKey}-${emp.firstName}-${emp.lastName}.ics`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    this.showToast(`Pobrano plik ICS dla ${emp.firstName} ${emp.lastName}`, 'success');
+  }
+
+  private async generateSchedulePDF(weekKey: string): Promise<void> {
+    const { jsPDF } = await import('jspdf');
+    const doc = new jsPDF('landscape', 'mm', 'a4');
+    
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    // Header
+    doc.setFillColor(0, 151, 172);
+    doc.rect(0, 0, 297, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(20);
+    doc.text(`Grafik tygodniowy ${weekKey}`, 15, 18);
+    doc.setFontSize(10);
+    doc.text(`DRÄXLMAIER Kappa Plannung | Wygenerowano: ${new Date().toLocaleDateString('pl-PL')}`, 15, 25);
+    
+    // Grupuj wg projektu
+    const byProject = new Map<string, { customer: string; type: string; shifts: Map<number, string[]> }>();
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (project && emp) {
+        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const ptype = this.state.types.find(t => t.id === project.type_id);
+        const key = `${customer?.name || '?'} - ${ptype?.name || '?'}`;
+        
+        if (!byProject.has(key)) {
+          byProject.set(key, { customer: customer?.name || '?', type: ptype?.name || '?', shifts: new Map() });
+        }
+        const data = byProject.get(key)!;
+        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
+        data.shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
+      }
+    });
+    
+    const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
+    
+    let yPos = 40;
+    doc.setTextColor(0, 0, 0);
+    
+    byProject.forEach((data, name) => {
+      if (yPos > 180) {
+        doc.addPage();
+        yPos = 20;
+      }
+      
+      doc.setFillColor(240, 242, 245);
+      doc.rect(10, yPos, 277, 8, 'F');
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text(name, 15, yPos + 6);
+      yPos += 12;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(10);
+      
+      [1, 2, 3].forEach(shift => {
+        if (data.shifts.has(shift)) {
+          doc.setTextColor(100, 116, 139);
+          doc.text(shiftNames[shift - 1] + ':', 15, yPos);
+          doc.setTextColor(0, 0, 0);
+          doc.text(data.shifts.get(shift)!.join(', '), 70, yPos);
+          yPos += 6;
+        }
+      });
+      
+      yPos += 6;
+    });
+    
+    // Footer
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.text('© DRÄXLMAIER Kappa Plannung', 15, 200);
+    
+    doc.save(`grafik-${weekKey}.pdf`);
+    this.showToast('Pobrano PDF z grafikiem', 'success');
   }
 
   // ==================== WIDOK GANTT OBCIĄŻENIA ====================
@@ -12026,9 +12642,15 @@ class KappaApp {
         a.week === weekKey
       );
       
+      // Sprawdź czy projekt ma postój lub brak części w tym tygodniu
+      const hasStoppage = group.items.some(item => {
+        const weekData = item.weeks[weekKey];
+        return weekData?.stoppage || weekData?.productionLack;
+      });
+      
       // Wiersz projektu z nowymi klasami
       const projectRow = document.createElement('div');
-      projectRow.className = `sched-row shifts-${this.scheduleShiftSystem}`;
+      projectRow.className = `sched-row shifts-${this.scheduleShiftSystem} ${hasStoppage ? 'project-stoppage' : ''}`;
       projectRow.dataset.groupKey = groupKey;
       
       // Pobierz komentarz dla tego projektu i policz odpowiedzi
@@ -14704,33 +15326,69 @@ class KappaApp {
     const selectedColor = employee?.color || EMPLOYEE_COLORS[this.state.employees.length % EMPLOYEE_COLORS.length];
     const currentStatus = employee?.status || 'available';
     const currentShift = employee?.suggestedShift || '';
+    const currentRole = employee?.role || 'worker';
     
     modalBody.innerHTML = `
-      <div class="form-group">
-        <label>${i18n.t('schedule.firstName')}:</label>
-        <input type="text" id="employeeFirstName" class="form-control" value="${employee?.firstName || ''}" placeholder="${i18n.t('schedule.firstName')}..." />
-      </div>
-      <div class="form-group">
-        <label>${i18n.t('schedule.lastName')}:</label>
-        <input type="text" id="employeeLastName" class="form-control" value="${employee?.lastName || ''}" placeholder="${i18n.t('schedule.lastName')}..." />
-      </div>
-      <div class="form-group">
-        <label>${i18n.t('schedule.employeeColor')}:</label>
-        <div class="employee-color-picker" id="employeeColorPicker">
-          ${EMPLOYEE_COLORS.map(color => `
-            <div class="employee-color-option ${color === selectedColor ? 'selected' : ''}" 
-                 data-color="${color}" 
-                 style="background: ${color}"></div>
-          `).join('')}
+      <div class="employee-form-grid">
+        <div class="form-section">
+          <h4 class="form-section-title">👤 Dane podstawowe</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>${i18n.t('schedule.firstName')}:</label>
+              <input type="text" id="employeeFirstName" class="form-control" value="${employee?.firstName || ''}" placeholder="${i18n.t('schedule.firstName')}..." />
+            </div>
+            <div class="form-group">
+              <label>${i18n.t('schedule.lastName')}:</label>
+              <input type="text" id="employeeLastName" class="form-control" value="${employee?.lastName || ''}" placeholder="${i18n.t('schedule.lastName')}..." />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>📧 Email:</label>
+            <input type="email" id="employeeEmail" class="form-control" value="${employee?.email || ''}" placeholder="imie.nazwisko@firma.pl" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>📱 Telefon:</label>
+              <input type="tel" id="employeePhone" class="form-control" value="${employee?.phone || ''}" placeholder="+48 123 456 789" />
+            </div>
+            <div class="form-group">
+              <label>🏢 Dział:</label>
+              <input type="text" id="employeeDepartment" class="form-control" value="${employee?.department || ''}" placeholder="np. Produkcja, Jakość..." />
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="form-group">
-        <label>${i18n.t('schedule.status')}:</label>
-        <select id="employeeStatus" class="form-control">
-          <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
-          <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
-          <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
-        </select>
+        
+        <div class="form-section">
+          <h4 class="form-section-title">⚙️ Ustawienia</h4>
+          <div class="form-row">
+            <div class="form-group">
+              <label>👔 Rola:</label>
+              <select id="employeeRole" class="form-control">
+                <option value="worker" ${currentRole === 'worker' ? 'selected' : ''}>👷 Pracownik</option>
+                <option value="leader" ${currentRole === 'leader' ? 'selected' : ''}>👨‍💼 Lider zespołu</option>
+                <option value="manager" ${currentRole === 'manager' ? 'selected' : ''}>👔 Kierownik</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>${i18n.t('schedule.status')}:</label>
+              <select id="employeeStatus" class="form-control">
+                <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
+                <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
+                <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>${i18n.t('schedule.employeeColor')}:</label>
+            <div class="employee-color-picker" id="employeeColorPicker">
+              ${EMPLOYEE_COLORS.map(color => `
+                <div class="employee-color-option ${color === selectedColor ? 'selected' : ''}" 
+                     data-color="${color}" 
+                     style="background: ${color}"></div>
+              `).join('')}
+            </div>
+          </div>
+        </div>
       </div>
     `;
     
@@ -14747,6 +15405,10 @@ class KappaApp {
     confirmBtn.onclick = async () => {
       const firstName = (document.getElementById('employeeFirstName') as HTMLInputElement).value.trim();
       const lastName = (document.getElementById('employeeLastName') as HTMLInputElement).value.trim();
+      const email = (document.getElementById('employeeEmail') as HTMLInputElement).value.trim();
+      const phone = (document.getElementById('employeePhone') as HTMLInputElement).value.trim();
+      const department = (document.getElementById('employeeDepartment') as HTMLInputElement).value.trim();
+      const role = (document.getElementById('employeeRole') as HTMLSelectElement).value as 'worker' | 'leader' | 'manager';
       const colorEl = document.querySelector('.employee-color-option.selected') as HTMLElement;
       const color = colorEl?.dataset.color || EMPLOYEE_COLORS[0];
       const status = (document.getElementById('employeeStatus') as HTMLSelectElement).value as EmployeeStatus;
@@ -14765,6 +15427,10 @@ class KappaApp {
         employee.color = color;
         employee.status = status;
         employee.suggestedShift = suggestedShift;
+        employee.email = email || undefined;
+        employee.phone = phone || undefined;
+        employee.department = department || undefined;
+        employee.role = role;
         await db.put('employees', employee);
         await this.addLog('updated', 'Employee', `${firstName} ${lastName}`);
       } else {
@@ -14775,6 +15441,10 @@ class KappaApp {
           color,
           status,
           suggestedShift,
+          email: email || undefined,
+          phone: phone || undefined,
+          department: department || undefined,
+          role,
           createdAt: Date.now(),
         };
         this.state.employees.push(newEmployee);

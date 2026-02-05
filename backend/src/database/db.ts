@@ -90,9 +90,25 @@ async function initDatabase() {
       week TEXT NOT NULL,
       ist INTEGER DEFAULT 0,
       soll INTEGER DEFAULT 0,
+      stoppage INTEGER DEFAULT 0,
+      production_lack INTEGER DEFAULT 0,
       UNIQUE(project_id, week)
     )
   `);
+
+  // Add stoppage and production_lack columns if they don't exist (migration)
+  try {
+    db.run(`ALTER TABLE project_weeks ADD COLUMN stoppage INTEGER DEFAULT 0`);
+    console.log('✅ Added stoppage column to project_weeks table');
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  try {
+    db.run(`ALTER TABLE project_weeks ADD COLUMN production_lack INTEGER DEFAULT 0`);
+    console.log('✅ Added production_lack column to project_weeks table');
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS settings (
@@ -110,9 +126,31 @@ async function initDatabase() {
       color TEXT,
       status TEXT DEFAULT 'available',
       suggestedShift TEXT,
+      role TEXT DEFAULT 'worker',
+      email TEXT,
+      phone TEXT,
+      department TEXT,
       created_at INTEGER
     )
   `);
+
+  // Migracja - dodaj nowe kolumny do employees
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN role TEXT DEFAULT 'worker'`);
+    console.log('✅ Added role column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN email TEXT`);
+    console.log('✅ Added email column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN phone TEXT`);
+    console.log('✅ Added phone column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN department TEXT`);
+    console.log('✅ Added department column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS schedule_assignments (

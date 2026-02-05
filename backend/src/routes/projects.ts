@@ -11,11 +11,16 @@ projectsRouter.get('/', (req, res) => {
 
     // Fetch weeks data for each project
     const projectsWithWeeks = projects.map(project => {
-      const weeks = getAll('SELECT week, ist, soll FROM project_weeks WHERE project_id = ?', [project.id]) as any[];
+      const weeks = getAll('SELECT week, ist, soll, stoppage, production_lack FROM project_weeks WHERE project_id = ?', [project.id]) as any[];
 
       const weeksObj: { [key: string]: WeekData } = {};
       weeks.forEach(w => {
-        weeksObj[w.week] = { ist: w.ist, soll: w.soll };
+        weeksObj[w.week] = { 
+          ist: w.ist, 
+          soll: w.soll,
+          stoppage: w.stoppage === 1,
+          productionLack: w.production_lack === 1
+        };
       });
 
       return {
@@ -46,10 +51,15 @@ projectsRouter.get('/:id', (req, res) => {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const weeks = getAll('SELECT week, ist, soll FROM project_weeks WHERE project_id = ?', [project.id]) as any[];
+    const weeks = getAll('SELECT week, ist, soll, stoppage, production_lack FROM project_weeks WHERE project_id = ?', [project.id]) as any[];
     const weeksObj: { [key: string]: WeekData } = {};
     weeks.forEach(w => {
-      weeksObj[w.week] = { ist: w.ist, soll: w.soll };
+      weeksObj[w.week] = { 
+        ist: w.ist, 
+        soll: w.soll,
+        stoppage: w.stoppage === 1,
+        productionLack: w.production_lack === 1
+      };
     });
 
     res.json({
@@ -61,23 +71,44 @@ projectsRouter.get('/:id', (req, res) => {
   }
 });
 
-// Create project
+// Create project (upsert - INSERT OR REPLACE)
 projectsRouter.post('/', (req, res) => {
   try {
     const { id, customer_id, type_id, part_id, test_id, weeks, timePerUnit, created_at, updated_at } = req.body;
     
-    runQuery(`
-      INSERT INTO projects (id, customer_id, type_id, part_id, test_id, time_per_unit, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, customer_id, type_id, part_id, test_id, timePerUnit || 0, created_at, updated_at]);
+    // Check if project exists
+    const existing = getOne('SELECT id FROM projects WHERE id = ?', [id]);
+    
+    if (existing) {
+      // Update existing project
+      runQuery(`
+        UPDATE projects 
+        SET customer_id = ?, type_id = ?, part_id = ?, test_id = ?, time_per_unit = ?, updated_at = ?
+        WHERE id = ?
+      `, [customer_id, type_id, part_id, test_id, timePerUnit || 0, updated_at || Date.now(), id]);
+    } else {
+      // Insert new project
+      runQuery(`
+        INSERT INTO projects (id, customer_id, type_id, part_id, test_id, time_per_unit, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, customer_id, type_id, part_id, test_id, timePerUnit || 0, created_at, updated_at]);
+    }
 
-    // Insert weeks data
+    // Upsert weeks data
     if (weeks) {
       for (const [week, data] of Object.entries(weeks)) {
-        runQuery(`
-          INSERT INTO project_weeks (project_id, week, ist, soll)
-          VALUES (?, ?, ?, ?)
-        `, [id, week, (data as WeekData).ist, (data as WeekData).soll]);
+        const weekData = data as WeekData;
+        const existingWeek = getOne('SELECT id FROM project_weeks WHERE project_id = ? AND week = ?', [id, week]);
+        
+        if (existingWeek) {
+          runQuery('UPDATE project_weeks SET ist = ?, soll = ?, stoppage = ?, production_lack = ? WHERE project_id = ? AND week = ?', 
+            [weekData.ist, weekData.soll, weekData.stoppage ? 1 : 0, weekData.productionLack ? 1 : 0, id, week]);
+        } else {
+          runQuery(`
+            INSERT INTO project_weeks (project_id, week, ist, soll, stoppage, production_lack)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `, [id, week, weekData.ist, weekData.soll, weekData.stoppage ? 1 : 0, weekData.productionLack ? 1 : 0]);
+        }
       }
     }
 
@@ -106,10 +137,11 @@ projectsRouter.put('/:id', (req, res) => {
       
       // Insert new weeks data
       for (const [week, data] of Object.entries(weeks)) {
+        const weekData = data as WeekData;
         runQuery(`
-          INSERT INTO project_weeks (project_id, week, ist, soll)
-          VALUES (?, ?, ?, ?)
-        `, [req.params.id, week, (data as WeekData).ist, (data as WeekData).soll]);
+          INSERT INTO project_weeks (project_id, week, ist, soll, stoppage, production_lack)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [req.params.id, week, weekData.ist, weekData.soll, weekData.stoppage ? 1 : 0, weekData.productionLack ? 1 : 0]);
       }
     }
 
@@ -123,16 +155,18 @@ projectsRouter.put('/:id', (req, res) => {
 // Update week data
 projectsRouter.patch('/:id/weeks/:week', (req, res) => {
   try {
-    const { ist, soll } = req.body;
+    const { ist, soll, stoppage, productionLack } = req.body;
     const { id, week } = req.params;
 
     // Check if week exists
     const existing = getOne('SELECT * FROM project_weeks WHERE project_id = ? AND week = ?', [id, week]);
     
     if (existing) {
-      runQuery('UPDATE project_weeks SET ist = ?, soll = ? WHERE project_id = ? AND week = ?', [ist, soll, id, week]);
+      runQuery('UPDATE project_weeks SET ist = ?, soll = ?, stoppage = ?, production_lack = ? WHERE project_id = ? AND week = ?', 
+        [ist, soll, stoppage ? 1 : 0, productionLack ? 1 : 0, id, week]);
     } else {
-      runQuery('INSERT INTO project_weeks (project_id, week, ist, soll) VALUES (?, ?, ?, ?)', [id, week, ist, soll]);
+      runQuery('INSERT INTO project_weeks (project_id, week, ist, soll, stoppage, production_lack) VALUES (?, ?, ?, ?, ?, ?)', 
+        [id, week, ist, soll, stoppage ? 1 : 0, productionLack ? 1 : 0]);
     }
 
     // Update project updated_at
