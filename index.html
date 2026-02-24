@@ -178,11 +178,7 @@
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
               </button>
-              <button class="btn-toolbar-compact" id="importData" title="Import">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-              </button>
+
             </div>
           </div>
         </div>
@@ -354,12 +350,7 @@
                 </svg>
                 <span>Eksport</span>
               </button>
-              <button class="btn-secondary" id="importProjectsCSV">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                <span>Import</span>
-              </button>
+
             </div>
           </div>
         </div>
@@ -1033,6 +1024,18 @@
           </div>
           
           <div class="sched-topbar-right">
+            <!-- Przełącznik widoków -->
+            <div class="sched-view-toggle">
+              <button class="sched-view-btn active" data-view="week" data-i18n-title="schedule.weekViewTooltip" title="Standardowy widok tygodniowy">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span data-i18n="schedule.weekView">Tydzień</span>
+              </button>
+              <button class="sched-view-btn" data-view="history" data-i18n-title="schedule.historyViewTooltip" title="Pokaż 3 poprzednie tygodnie jako odniesienie">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span data-i18n="schedule.historyView">Historia</span>
+              </button>
+            </div>
+
             <!-- Filtr pracownika -->
             <div class="sched-employee-filter">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1311,6 +1314,18 @@
                       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                     </svg>
                   </button>
+                  <button class="absence-view-btn" data-view="timeline" title="Widok roczny (oś czasu)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="4" y1="6" x2="20" y2="6"/>
+                      <line x1="4" y1="10" x2="20" y2="10"/>
+                      <line x1="4" y1="14" x2="20" y2="14"/>
+                      <line x1="4" y1="18" x2="20" y2="18"/>
+                      <rect x="6" y="4" width="5" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+                      <rect x="13" y="8" width="4" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+                      <rect x="8" y="12" width="6" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+                      <rect x="4" y="16" width="3" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+                    </svg>
+                  </button>
                 </div>
               </div>
               <div class="absence-topbar-right">
@@ -1431,6 +1446,252 @@
             </div>
           </div>
 
+          <!-- Backup & Restore -->
+          <div class="setting-group backup-group">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              </svg>
+              <span data-i18n="settings.backup">Backup & Restore</span>
+            </h3>
+
+            <!-- Backup path -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.backupPath">Backup Path</label>
+                <p class="setting-hint" data-i18n="settings.backupPathHint">Where to store automatic backups</p>
+              </div>
+              <div class="backup-path-input">
+                <input type="text" id="backupPathInput" class="setting-input" placeholder="/path/to/backups" style="width: 280px;">
+              </div>
+            </div>
+
+            <!-- Auto backup frequency -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.backupFrequency">Backup Frequency</label>
+                <p class="setting-hint" data-i18n="settings.backupFrequencyHint">How often to automatically create backups</p>
+              </div>
+              <select id="backupFrequency" class="setting-select">
+                <option value="none" data-i18n="settings.backupNone">Disabled</option>
+                <option value="session" data-i18n="settings.backupSession">Once per session</option>
+                <option value="daily" data-i18n="settings.backupDaily">Daily</option>
+                <option value="weekly" data-i18n="settings.backupWeekly">Weekly</option>
+              </select>
+            </div>
+
+            <!-- Manual backup -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.createBackup">Create Backup Now</label>
+                <p class="setting-hint" data-i18n="settings.createBackupHint">Manually create a full database backup</p>
+              </div>
+              <button class="btn-secondary" id="createBackupBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                </svg>
+                <span data-i18n="settings.backupNow">Backup Now</span>
+              </button>
+            </div>
+
+            <!-- Backup list -->
+            <div class="setting-item backup-list-container">
+              <div style="width:100%">
+                <label data-i18n="settings.existingBackups">Existing Backups</label>
+                <div id="backupListContainer" class="backup-list">
+                  <p class="setting-hint">Loading...</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Last backup info -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.lastBackup">Last Backup</label>
+                <p class="setting-hint" id="lastBackupInfo">-</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Import Wizard -->
+          <div class="setting-group import-group">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span data-i18n="settings.importExportWizard">Import / Export</span>
+            </h3>
+
+            <!-- Full database import/export -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.fullDatabase">Full Database</label>
+                <p class="setting-hint" data-i18n="settings.fullDatabaseHint">Import or export the entire database as a JSON file</p>
+              </div>
+              <div class="module-actions-row">
+                <button class="btn-secondary btn-module-action btn-import" id="importFullBackupBtn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  <span data-i18n="settings.import">Import</span>
+                </button>
+                <button class="btn-secondary btn-module-action btn-export" id="exportFullDatabaseBtn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <span data-i18n="settings.export">Export</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Combined modules import/export -->
+            <div class="setting-item import-modules-container">
+              <div style="width:100%">
+                <label data-i18n="settings.moduleGroups">Module Groups</label>
+                <p class="setting-hint" data-i18n="settings.moduleGroupsHint">Import or export grouped modules</p>
+                <div class="import-modules-grid">
+                  <div class="module-card-wrapper" data-module="planning">
+                    <div class="module-card-header">
+                      <div class="module-icon">📊</div>
+                      <div class="module-name" data-i18n="settings.modulePlanning">Planning</div>
+                      <div class="module-desc" data-i18n="settings.modulePlanningDesc">Customers, types, parts, tests, projects</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModulePlanning" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModulePlanning" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper" data-module="employees">
+                    <div class="module-card-header">
+                      <div class="module-icon">👥</div>
+                      <div class="module-name" data-i18n="settings.moduleEmployees">Employees</div>
+                      <div class="module-desc" data-i18n="settings.moduleEmployeesDesc">Workers, details, qualifications</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleEmployees" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModuleEmployees" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper" data-module="schedule">
+                    <div class="module-card-header">
+                      <div class="module-icon">📅</div>
+                      <div class="module-name" data-i18n="settings.moduleSchedule">Schedule</div>
+                      <div class="module-desc" data-i18n="settings.moduleScheduleDesc">Shift assignments, templates</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleSchedule" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModuleSchedule" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper" data-module="absences">
+                    <div class="module-card-header">
+                      <div class="module-icon">🏖️</div>
+                      <div class="module-name" data-i18n="settings.moduleAbsences">Absences</div>
+                      <div class="module-desc" data-i18n="settings.moduleAbsencesDesc">Absence types, vacations, holidays</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleAbsences" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModuleAbsences" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                </div>
+
+                <label style="margin-top: 16px; display: block;" data-i18n="settings.individualTables">Individual Tables</label>
+                <p class="setting-hint" data-i18n="settings.individualTablesHint">Import or export a single table</p>
+                <div class="import-modules-grid import-modules-individual">
+                  <div class="module-card-wrapper module-card-small" data-module="customers">
+                    <div class="module-card-header">
+                      <div class="module-icon">👤</div>
+                      <div class="module-name" data-i18n="settings.moduleCustomers">Customers</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleCustomers" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleCustomers" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="types">
+                    <div class="module-card-header">
+                      <div class="module-icon">🏷️</div>
+                      <div class="module-name" data-i18n="settings.moduleTypes">Types</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleTypes" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleTypes" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="parts">
+                    <div class="module-card-header">
+                      <div class="module-icon">🔧</div>
+                      <div class="module-name" data-i18n="settings.moduleParts">Parts</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleParts" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleParts" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="tests">
+                    <div class="module-card-header">
+                      <div class="module-icon">🧪</div>
+                      <div class="module-name" data-i18n="settings.moduleTests">Tests</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleTests" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleTests" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="projects">
+                    <div class="module-card-header">
+                      <div class="module-icon">📋</div>
+                      <div class="module-name" data-i18n="settings.moduleProjects">Projects</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleProjects" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleProjects" title="Export">⬇</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Local Database File (SQLite) -->
+          <div class="setting-group local-db-group">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+              </svg>
+              <span data-i18n="settings.localDatabase">Local Database File</span>
+            </h3>
+            <p class="setting-hint" style="margin: -8px 0 12px 0;" data-i18n="settings.localDatabaseHint">Save the SQLite database file to your computer for safekeeping. If someone accidentally deletes the application, your data is safe.</p>
+
+            <!-- Download DB file -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.downloadDb">Download Database File</label>
+                <p class="setting-hint" data-i18n="settings.downloadDbHint">Save the .db file locally on your computer</p>
+              </div>
+              <button class="btn-secondary" id="downloadDbBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span data-i18n="settings.downloadDbBtn">Download .db File</span>
+              </button>
+            </div>
+
+            <!-- Upload DB file -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.uploadDb">Upload Database File</label>
+                <p class="setting-hint" data-i18n="settings.uploadDbHint">Restore from a previously saved .db file. This will replace all current data!</p>
+              </div>
+              <button class="btn-secondary btn-warning-outline" id="uploadDbBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span data-i18n="settings.uploadDbBtn">Upload .db File</span>
+              </button>
+            </div>
+            <input type="file" id="uploadDbFileInput" accept=".db,.sqlite,.sqlite3" style="display:none" />
+          </div>
+
           <div class="setting-group">
             <h3 data-i18n="settings.data">Data Management</h3>
             <div class="setting-item">
@@ -1477,6 +1738,9 @@
             </div>
           </div>
         </div>
+        <!-- Hidden file inputs for import -->
+        <input type="file" id="settingsImportFileInput" accept=".json" hidden>
+        <input type="file" id="settingsModuleImportFileInput" accept=".json" hidden>
       </div>
 
       <!-- Logs View -->

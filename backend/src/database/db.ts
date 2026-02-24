@@ -427,4 +427,16 @@ export function getAll<T>(sql: string, params: any[] = []): T[] {
   return results;
 }
 
-export { db, initDatabase, saveDatabase };
+function getDatabaseBuffer(): Buffer {
+  saveDatabase();
+  return readFileSync(dbPath);
+}
+
+async function replaceDatabase(buffer: Buffer): Promise<void> {
+  const SQL = await initSqlJs();
+  writeFileSync(dbPath, buffer);
+  db = new SQL.Database(buffer);
+  console.log('✅ Database replaced from uploaded file');
+}
+
+export { db, initDatabase, saveDatabase, getDatabaseBuffer, replaceDatabase, dbPath };

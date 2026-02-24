@@ -119,6 +119,10 @@ export interface AppSettings {
   userName: string;   // Nazwa użytkownika dla logów
   zoomLevel: number;  // Poziom zoom siatki (50-150)
   shiftSystem: 1 | 2 | 3;  // System zmianowy (1, 2 lub 3 zmiany)
+  // Backup settings
+  backupPath: string;
+  backupFrequency: 'none' | 'session' | 'daily' | 'weekly';
+  lastBackupDate: string;
 }
 
 // ==================== Absence Management (Zarządzanie nieobecnościami) ====================
@@ -153,7 +157,7 @@ export interface Absence {
   startDate: string;     // YYYY-MM-DD
   endDate: string;       // YYYY-MM-DD
   workDays: number;      // Liczba dni roboczych
-  status: AbsenceStatus;
+  status?: string;       // Legacy field - kept for backward compatibility
   note?: string;
   createdAt: number;
   approvedAt?: number;
