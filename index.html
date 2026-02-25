@@ -28,12 +28,7 @@
             </svg>
             <span data-i18n="nav.planning">Planning</span>
           </button>
-          <button class="nav-btn" data-view="projects">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-            </svg>
-            <span data-i18n="nav.projects">Projects</span>
-          </button>
+
           <button class="nav-btn" data-view="schedule">
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
@@ -103,11 +98,17 @@
         <div class="planning-toolbar" id="planningToolbar">
           <div class="toolbar-main">
             <div class="toolbar-left">
-              <button class="btn-primary btn-compact" id="addProject">
+              <button class="btn-primary btn-compact admin-only" id="addProject" style="display:none">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
                 <span data-i18n="planning.addProject">Add Project</span>
+              </button>
+              <button class="btn-secondary btn-compact admin-only" id="openProjectsPanel" style="display:none" title="Manage Customers, Types, Parts, Tests">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span data-i18n="planning.manage">Manage</span>
               </button>
               <div class="toolbar-divider"></div>
               <select id="filterYear" class="filter-select-compact" title="Year">
@@ -173,7 +174,7 @@
                 </div>
               </div>
               <div class="toolbar-divider"></div>
-              <button class="btn-toolbar-compact" id="exportData" title="Export">
+              <button class="btn-toolbar-compact admin-only" id="exportData" title="Export" style="display:none">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
@@ -292,7 +293,7 @@
               </div>
 
               <!-- Quick Actions -->
-              <div class="stats-section">
+              <div class="stats-section admin-only" style="display:none">
                 <div class="stats-section-title">⚡ Szybkie akcje</div>
                 <div class="quick-actions">
                   <button class="quick-action-btn" id="quickAddProject">
@@ -314,203 +315,115 @@
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Projects View -->
-      <div id="projectsView" class="view">
-        <div class="view-header">
-          <div class="view-title">
-            <h2 data-i18n="projects.title">Project Management</h2>
-            <span class="subtitle" data-i18n="projects.subtitle">Manage customers, types, parts and tests</span>
+        <!-- Projects Management Slide Panel (admin-only, inside Planning) -->
+        <div class="projects-slide-panel admin-only" id="projectsSlidePanel" style="display:none">
+          <div class="projects-panel-header">
+            <h3 data-i18n="projects.title">Project Management</h3>
+            <button class="projects-panel-close" id="projectsPanelClose" title="Close">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
           </div>
-          <div class="view-actions projects-toolbar">
-            <div class="toolbar-left">
+          <div class="projects-panel-body">
+            <div class="projects-panel-toolbar">
               <div class="search-box">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                   <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                 </svg>
                 <input type="text" id="projectsSearch" placeholder="Szukaj..." class="search-input">
               </div>
-              <select id="projectsFilter" class="filter-select">
+              <select id="projectsFilter" class="filter-select" style="font-size:12px;padding:4px 8px">
                 <option value="all">Wszystkie</option>
                 <option value="used">Używane</option>
                 <option value="unused">Nieużywane</option>
               </select>
             </div>
-            <div class="toolbar-right">
-              <button class="btn-secondary" id="bulkDeleteProjects" disabled>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                </svg>
-                <span>Usuń zaznaczone</span>
-              </button>
-              <button class="btn-secondary" id="exportProjectsCSV">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-                <span>Eksport</span>
-              </button>
 
-            </div>
-          </div>
-        </div>
-
-        <!-- Stats Dashboard -->
-        <div class="projects-stats-dashboard">
-          <div class="project-stat-card" data-category="customers">
-            <div class="stat-icon customers-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statCustomers">0</span>
-              <span class="stat-label">Klienci</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statCustomersBar"></div></div>
-              <span class="stat-detail" id="statCustomersDetail">0 używanych</span>
-            </div>
-          </div>
-          <div class="project-stat-card" data-category="types">
-            <div class="stat-icon types-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statTypes">0</span>
-              <span class="stat-label">Typy</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statTypesBar"></div></div>
-              <span class="stat-detail" id="statTypesDetail">0 używanych</span>
-            </div>
-          </div>
-          <div class="project-stat-card" data-category="parts">
-            <div class="stat-icon parts-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statParts">0</span>
-              <span class="stat-label">Części</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statPartsBar"></div></div>
-              <span class="stat-detail" id="statPartsDetail">0 używanych</span>
-            </div>
-          </div>
-          <div class="project-stat-card" data-category="tests">
-            <div class="stat-icon tests-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statTests">0</span>
-              <span class="stat-label">Testy</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statTestsBar"></div></div>
-              <span class="stat-detail" id="statTestsDetail">0 używanych</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tabs for different views -->
-        <div class="projects-tabs">
-          <button class="projects-tab active" data-tab="list">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-            </svg>
-            Lista
-          </button>
-          <button class="projects-tab" data-tab="tree">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="12" x2="6" y2="16"/><line x1="12" y1="12" x2="18" y2="16"/><circle cx="6" cy="19" r="3"/><circle cx="18" cy="19" r="3"/>
-            </svg>
-            Drzewo połączeń
-          </button>
-        </div>
-
-        <!-- List View -->
-        <div id="projectsListView" class="projects-tab-content active">
-          <div class="projects-container">
-            <div class="project-section" data-section="customers">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllCustomers">
-                  <h3 data-i18n="projects.customers">Customers</h3>
-                  <span class="section-count" id="customersCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportCustomersCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addCustomer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+            <!-- Stats mini -->
+            <div class="projects-stats-dashboard projects-stats-mini">
+              <div class="project-stat-card" data-category="customers">
+                <div class="stat-content">
+                  <span class="stat-value" id="statCustomers">0</span>
+                  <span class="stat-label">Klienci</span>
                 </div>
               </div>
-              <ul id="customersList" class="items-list" data-sortable="customers"></ul>
-            </div>
-
-            <div class="project-section" data-section="types">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllTypes">
-                  <h3 data-i18n="projects.types">Types</h3>
-                  <span class="section-count" id="typesCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportTypesCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addType"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+              <div class="project-stat-card" data-category="types">
+                <div class="stat-content">
+                  <span class="stat-value" id="statTypes">0</span>
+                  <span class="stat-label">Typy</span>
                 </div>
               </div>
-              <ul id="typesList" class="items-list" data-sortable="types"></ul>
-            </div>
-
-            <div class="project-section" data-section="parts">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllParts">
-                  <h3 data-i18n="projects.parts">Parts</h3>
-                  <span class="section-count" id="partsCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportPartsCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addPart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+              <div class="project-stat-card" data-category="parts">
+                <div class="stat-content">
+                  <span class="stat-value" id="statParts">0</span>
+                  <span class="stat-label">Części</span>
                 </div>
               </div>
-              <ul id="partsList" class="items-list" data-sortable="parts"></ul>
-            </div>
-
-            <div class="project-section" data-section="tests">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllTests">
-                  <h3 data-i18n="projects.tests">Tests</h3>
-                  <span class="section-count" id="testsCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportTestsCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addTest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+              <div class="project-stat-card" data-category="tests">
+                <div class="stat-content">
+                  <span class="stat-value" id="statTests">0</span>
+                  <span class="stat-label">Testy</span>
                 </div>
               </div>
-              <ul id="testsList" class="items-list" data-sortable="tests"></ul>
+            </div>
+
+            <!-- Sections -->
+            <div class="projects-container">
+              <div class="project-section" data-section="customers">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.customers">Customers</h3>
+                    <span class="section-count" id="customersCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addCustomer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="customersList" class="items-list" data-sortable="customers"></ul>
+              </div>
+
+              <div class="project-section" data-section="types">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.types">Types</h3>
+                    <span class="section-count" id="typesCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addType"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="typesList" class="items-list" data-sortable="types"></ul>
+              </div>
+
+              <div class="project-section" data-section="parts">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.parts">Parts</h3>
+                    <span class="section-count" id="partsCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addPart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="partsList" class="items-list" data-sortable="parts"></ul>
+              </div>
+
+              <div class="project-section" data-section="tests">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.tests">Tests</h3>
+                    <span class="section-count" id="testsCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addTest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="testsList" class="items-list" data-sortable="tests"></ul>
+              </div>
             </div>
           </div>
-        </div>
-
-        <!-- Tree View -->
-        <div id="projectsTreeView" class="projects-tab-content">
-          <div class="tree-container" id="projectsTree"></div>
         </div>
       </div>
 
@@ -1280,7 +1193,7 @@
               </div>
               <div class="absence-topbar-center">
                 <div class="absence-view-toggle">
-                  <button class="absence-view-btn active" data-view="calendar" title="Widok kalendarza">
+                  <button class="absence-view-btn" data-view="calendar" title="Widok kalendarza">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                       <line x1="16" y1="2" x2="16" y2="6"/>
@@ -1314,7 +1227,7 @@
                       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                     </svg>
                   </button>
-                  <button class="absence-view-btn" data-view="timeline" title="Widok roczny (oś czasu)">
+                  <button class="absence-view-btn active" data-view="timeline" title="Widok roczny (oś czasu)">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <line x1="4" y1="6" x2="20" y2="6"/>
                       <line x1="4" y1="10" x2="20" y2="10"/>
@@ -1430,6 +1343,20 @@
 
           <div class="setting-group">
             <h3 data-i18n="settings.security">Security</h3>
+            <!-- Admin Unlock -->
+            <div class="setting-item admin-unlock-section">
+              <div>
+                <label data-i18n="settings.unlockApp">Unlock Application</label>
+                <p class="setting-hint" data-i18n="settings.unlockAppHint">Enter password to unlock admin features (add, delete, import, export)</p>
+              </div>
+              <button class="btn-primary" id="toggleAdminUnlock">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                <span id="adminUnlockBtnText" data-i18n="settings.unlock">Unlock</span>
+              </button>
+            </div>
             <div class="setting-item">
               <div>
                 <label data-i18n="settings.deletePassword">Delete Password</label>
@@ -1446,8 +1373,8 @@
             </div>
           </div>
 
-          <!-- Backup & Restore -->
-          <div class="setting-group backup-group">
+          <!-- Backup & Restore (admin-only) -->
+          <div class="setting-group backup-group admin-only" style="display:none">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
@@ -1513,8 +1440,8 @@
             </div>
           </div>
 
-          <!-- Import Wizard -->
-          <div class="setting-group import-group">
+          <!-- Import Wizard (admin-only) -->
+          <div class="setting-group import-group admin-only" style="display:none">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
@@ -1650,8 +1577,8 @@
             </div>
           </div>
 
-          <!-- Local Database File (SQLite) -->
-          <div class="setting-group local-db-group">
+          <!-- Local Database File (SQLite) (admin-only) -->
+          <div class="setting-group local-db-group admin-only" style="display:none">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
                 <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
@@ -1692,7 +1619,7 @@
             <input type="file" id="uploadDbFileInput" accept=".db,.sqlite,.sqlite3" style="display:none" />
           </div>
 
-          <div class="setting-group">
+          <div class="setting-group admin-only" style="display:none">
             <h3 data-i18n="settings.data">Data Management</h3>
             <div class="setting-item">
               <div>

@@ -96,7 +96,7 @@ class KappaApp {
 
   // Absence module state
   private absenceYear: number = new Date().getFullYear();
-  private absenceViewMode: 'calendar' | 'list' | 'heatmap' | 'employees' | 'timeline' = 'calendar';
+  private absenceViewMode: 'calendar' | 'list' | 'heatmap' | 'employees' | 'timeline' = 'timeline';
   private absenceCalendarMonth: number = new Date().getMonth();
   private absenceFilterEmployee: string = '';
   private absenceFilterType: string = '';
@@ -106,6 +106,9 @@ class KappaApp {
   private absenceLimits: any[] = [];
   private holidays: any[] = [];
   private absenceEventsInitialized: boolean = false;
+
+  // Admin mode - unlocked by password in settings
+  private adminUnlocked: boolean = false;
 
   async init(): Promise<void> {
     try {
@@ -126,6 +129,7 @@ class KappaApp {
       this.setupEventListeners();
       this.applyTheme();
       this.applyZoom();
+      this.updateAdminUI(); // Hide admin elements initially
       this.renderCurrentView();
       this.startAnimations();
       
@@ -450,6 +454,22 @@ class KappaApp {
     document.getElementById('quickAnalytics')?.addEventListener('click', () => {
       this.showAnalyticsModal();
     });
+
+    // Projects slide panel (inside Planning)
+    document.getElementById('openProjectsPanel')?.addEventListener('click', () => {
+      const panel = document.getElementById('projectsSlidePanel');
+      if (panel) {
+        panel.classList.add('open');
+        this.renderProjectsView();
+      }
+    });
+    document.getElementById('projectsPanelClose')?.addEventListener('click', () => {
+      const panel = document.getElementById('projectsSlidePanel');
+      panel?.classList.remove('open');
+    });
+
+    // Admin unlock toggle
+    document.getElementById('toggleAdminUnlock')?.addEventListener('click', () => this.toggleAdminUnlock());
 
     // Projects view buttons
     document.getElementById('addCustomer')?.addEventListener('click', () => this.showAddModal('customer'));
@@ -910,9 +930,15 @@ class KappaApp {
     switch (this.state.currentView) {
       case 'planning':
         this.renderPlanningGrid();
+        if (this.adminUnlocked) {
+          this.renderProjectsView();
+        }
         break;
       case 'projects':
-        this.renderProjectsView();
+        this.renderPlanningGrid();
+        if (this.adminUnlocked) {
+          this.renderProjectsView();
+        }
         break;
       case 'analytics':
         this.renderAnalyticsView();
@@ -1936,6 +1962,11 @@ class KappaApp {
   }
 
   private showTimeEditPopup(project: Project, cell: HTMLElement): void {
+    // Admin guard: only allow time editing when unlocked
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     // Remove existing popup
     document.querySelector('.time-edit-popup')?.remove();
     
@@ -2032,6 +2063,11 @@ class KappaApp {
   }
 
   private showFillDownModal(sourceProject: Project): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -2499,20 +2535,14 @@ class KappaApp {
     // Update stats dashboard
     this.updateProjectsStats();
     
-    // Setup tabs
-    this.setupProjectsTabs();
-    
     // Render lists with extended info
     this.renderItemsListExtended('customers', this.state.customers);
     this.renderItemsListExtended('types', this.state.types);
     this.renderItemsListExtended('parts', this.state.parts);
     this.renderItemsListExtended('tests', this.state.tests);
     
-    // Setup event listeners for new features
+    // Setup event listeners for search/filter
     this.setupProjectsEventListeners();
-    
-    // Render tree view
-    this.renderProjectsTree();
   }
   
   private projectsSearchQuery: string = '';
@@ -4397,6 +4427,108 @@ class KappaApp {
 
     // Load backup list
     this.loadBackupList();
+    
+    // Update admin unlock button state
+    this.updateAdminUnlockButton();
+  }
+
+  private toggleAdminUnlock(): void {
+    if (this.adminUnlocked) {
+      // Lock the app
+      this.adminUnlocked = false;
+      this.updateAdminUI();
+      this.updateAdminUnlockButton();
+      // Close projects panel if open
+      document.getElementById('projectsSlidePanel')?.classList.remove('open');
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
+
+    // Need to unlock - check if password is set
+    if (!this.state.settings.deletePassword) {
+      this.showToast(i18n.t('settings.noPasswordSet'), 'warning');
+      return;
+    }
+
+    // Prompt for password
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+
+    modalTitle.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> ${i18n.t('settings.unlockApp')}`;
+    modalBody.innerHTML = `
+      <div class="form-group">
+        <label>${i18n.t('settings.enterPasswordToUnlock')}</label>
+        <div class="password-input-group">
+          <input type="password" id="adminUnlockPassword" class="form-control" autofocus />
+        </div>
+      </div>
+    `;
+
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
+
+    const cleanup = () => {
+      confirmBtn.onclick = null;
+      cancelBtn.onclick = null;
+    };
+
+    confirmBtn.onclick = () => {
+      const password = (document.getElementById('adminUnlockPassword') as HTMLInputElement).value;
+      if (password === this.state.settings.deletePassword) {
+        cleanup();
+        this.hideModal();
+        this.adminUnlocked = true;
+        this.updateAdminUI();
+        this.updateAdminUnlockButton();
+        this.showToast(i18n.t('settings.appUnlocked'), 'success');
+      } else {
+        this.showToast(i18n.t('settings.wrongPassword'), 'error');
+      }
+    };
+
+    cancelBtn.onclick = () => {
+      cleanup();
+      this.hideModal();
+    };
+
+    modal.classList.add('active');
+    setTimeout(() => (document.getElementById('adminUnlockPassword') as HTMLInputElement)?.focus(), 100);
+  }
+
+  private updateAdminUnlockButton(): void {
+    const btn = document.getElementById('toggleAdminUnlock');
+    const btnText = document.getElementById('adminUnlockBtnText');
+    if (btn && btnText) {
+      if (this.adminUnlocked) {
+        btnText.textContent = i18n.t('settings.lock');
+        btn.className = 'btn-danger';
+        btn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+          </svg>
+          <span id="adminUnlockBtnText">${i18n.t('settings.lock')}</span>
+        `;
+      } else {
+        btnText.textContent = i18n.t('settings.unlock');
+        btn.className = 'btn-primary';
+        btn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <span id="adminUnlockBtnText">${i18n.t('settings.unlock')}</span>
+        `;
+      }
+    }
+  }
+
+  private updateAdminUI(): void {
+    const adminElements = document.querySelectorAll('.admin-only');
+    adminElements.forEach(el => {
+      (el as HTMLElement).style.display = this.adminUnlocked ? '' : 'none';
+    });
   }
 
   private renderLogsView(): void {
@@ -4583,6 +4715,11 @@ class KappaApp {
   }
 
   private showAddModal(type: string): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -4658,6 +4795,11 @@ class KappaApp {
   }
 
   private showEditModal(type: string, item: any): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -4739,6 +4881,11 @@ class KappaApp {
   }
 
   private showAddProjectModal(): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     if (this.state.customers.length === 0 || this.state.types.length === 0 || 
         this.state.parts.length === 0 || this.state.tests.length === 0) {
       this.showToast(i18n.t('messages.errorOccurred') + ' - ' + i18n.t('messages.noItems'), 'warning');
@@ -4808,6 +4955,11 @@ class KappaApp {
   }
 
   private async deleteItem(type: string, id: string, showConfirm: boolean = true): Promise<void> {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     if (showConfirm) {
       const confirmed = await this.confirmDeletion();
       if (!confirmed) return;
@@ -4826,6 +4978,11 @@ class KappaApp {
   }
 
   private async deleteProject(id: string): Promise<void> {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const confirmed = await this.confirmDeletion();
     if (!confirmed) return;
 
@@ -17282,26 +17439,41 @@ class KappaApp {
       empUsedTotal.set(emp.id, used);
     });
 
-    // Employee header columns (vertical text)
-    const empHeaders = employees.map(emp =>
-      `<th class="atl-emp-col-header" data-employee-id="${emp.id}">
+    // Employee header columns (horizontal with avatar)
+    const avatarColors = ['#0097AC', '#e74c3c', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e67e22', '#3498db'];
+    const empHeaders = employees.map(emp => {
+      const initials = `${(emp.firstName || '?')[0]}${(emp.lastName || '?')[0]}`.toUpperCase();
+      const ci = (emp.firstName || '').charCodeAt(0) % avatarColors.length;
+      return `<th class="atl-emp-col-header" data-employee-id="${emp.id}">
+        <div class="atl-emp-avatar" style="background: ${avatarColors[ci]}">${initials}</div>
         <div class="atl-emp-col-name">${emp.firstName} ${emp.lastName}</div>
-      </th>`
-    ).join('');
+      </th>`;
+    }).join('');
 
-    // Summary rows per absence type
+    // Summary rows per absence type - collapsible
     const summaryRows = activeTypes.map(t => {
       const empMap = typeUsage.get(t.id) || new Map();
+      const totalForType = Array.from(empMap.values()).reduce((s, v) => s + v, 0);
       const cells = employees.map(emp => {
         const val = empMap.get(emp.id) || 0;
         return `<td class="atl-summary-cell${val > 0 ? ' has-value' : ''}">${val}</td>`;
       }).join('');
-      return `<tr class="atl-summary-type-row">
-        <td colspan="3" class="atl-summary-type-label"><span class="atl-type-badge" style="background: ${t.color}">${t.icon}</span> ${t.name}</td>
+      return `<tr class="atl-summary-type-row atl-type-detail-row">
+        <td colspan="3" class="atl-summary-type-label"><span class="atl-type-badge" style="background: ${t.color}">${t.icon}</span> ${t.name} <span class="atl-type-total">(${totalForType}d)</span></td>
         ${cells}
         <td class="atl-summary-cell atl-summary-count-cell"></td>
       </tr>`;
     }).join('');
+
+    // Toggle header for type breakdown
+    const typeToggleRow = `<tr class="atl-summary-toggle-row" id="atlTypeToggle">
+      <td colspan="${3 + employees.length + 1}" class="atl-summary-toggle-cell">
+        <button class="atl-summary-toggle-btn">
+          <svg class="atl-toggle-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          ${i18n.t('schedule.absenceTimelineByType')} (${activeTypes.length})
+        </button>
+      </td>
+    </tr>`;
 
     // Entitled days row
     const entitledCells = employees.map(emp => {
@@ -17322,6 +17494,18 @@ class KappaApp {
       const remaining = total - used;
       const cls = remaining < 0 ? ' negative' : remaining === 0 ? ' zero' : '';
       return `<td class="atl-remaining-cell${cls}">${remaining}</td>`;
+    }).join('');
+
+    // Utilization % row
+    const utilizationCells = employees.map(emp => {
+      const total = empLimitTotal.get(emp.id) || 0;
+      const used = empUsedTotal.get(emp.id) || 0;
+      const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+      const barColor = pct > 90 ? '#ef4444' : pct > 70 ? '#eab308' : '#22c55e';
+      return `<td class="atl-utilization-cell">
+        <div class="atl-utilization-bar-bg"><div class="atl-utilization-bar" style="width: ${pct}%; background: ${barColor}"></div></div>
+        <span class="atl-utilization-pct">${pct}%</span>
+      </td>`;
     }).join('');
 
     // Build calendar rows - all days of the year
@@ -17417,7 +17601,10 @@ class KappaApp {
       return `<td class="${cls}">${rem}</td>`;
     }).join('');
 
-    // Colgroup
+    // Colgroup + dynamic min-width
+    const fixedColsWidth = 42 + 84 + 100 + 62; // week + date + day + count
+    const minEmpColWidth = 100;
+    const minTableWidth = fixedColsWidth + employees.length * minEmpColWidth;
     const colgroup = `<colgroup>
       <col class="atl-col-week">
       <col class="atl-col-date">
@@ -17429,7 +17616,7 @@ class KappaApp {
     container.innerHTML = `
       <div class="atl-container">
         <div class="atl-table-wrapper">
-          <table class="atl-table">
+          <table class="atl-table" style="min-width: ${minTableWidth}px">
             ${colgroup}
             <thead>
               <tr class="atl-main-header">
@@ -17439,6 +17626,7 @@ class KappaApp {
               </tr>
             </thead>
             <tbody class="atl-summary-body">
+              ${typeToggleRow}
               ${summaryRows}
               <tr class="atl-total-row atl-entitled-row">
                 <td colspan="3" class="atl-total-label">📋 ${i18n.t('schedule.absenceEntitledDays')}</td>
@@ -17454,6 +17642,11 @@ class KappaApp {
                 <td colspan="3" class="atl-total-label">✅ ${i18n.t('schedule.absenceRemainingDays')}</td>
                 ${remainingCells}
                 <td class="atl-remaining-cell atl-total-count-cell"></td>
+              </tr>
+              <tr class="atl-total-row atl-utilization-row">
+                <td colspan="3" class="atl-total-label">📈 ${i18n.t('utilization')}</td>
+                ${utilizationCells}
+                <td class="atl-utilization-cell atl-total-count-cell"></td>
               </tr>
             </tbody>
             <tbody class="atl-calendar-body">
@@ -17492,6 +17685,22 @@ class KappaApp {
     `;
 
     // Event handlers
+    // Toggle type breakdown rows
+    const toggleBtn = container.querySelector('#atlTypeToggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        const detailRows = container.querySelectorAll('.atl-type-detail-row');
+        const chevron = toggleBtn.querySelector('.atl-toggle-chevron');
+        const isCollapsed = toggleBtn.classList.toggle('collapsed');
+        detailRows.forEach(row => {
+          (row as HTMLElement).style.display = isCollapsed ? 'none' : '';
+        });
+        if (chevron) {
+          (chevron as HTMLElement).style.transform = isCollapsed ? 'rotate(-90deg)' : '';
+        }
+      });
+    }
+
     // Click absence cell to edit
     container.querySelectorAll('.atl-day-cell.has-absence').forEach(cell => {
       (cell as HTMLElement).style.cursor = 'pointer';
@@ -18617,43 +18826,242 @@ class KappaApp {
 
       this.showToast(i18n.t('schedule.exportGenerating'), 'success');
 
-      // Create render container
-      const pageWidth = 1200;
-      const pageHeight = 1697; // A4 landscape aspect
+      // A4 landscape: 297mm x 210mm at 96dpi ~ 1123 x 794
+      const pageWidth = 1123;
+      const pageHeight = 794;
+      const padding = 28;
+      const contentWidth = pageWidth - padding * 2;
       const pages: HTMLDivElement[] = [];
 
-      // ---- PAGE 1: Overview + Statistics ----
-      const page1 = document.createElement('div');
-      page1.style.cssText = `width: ${pageWidth}px; min-height: ${pageHeight}px; background: white; padding: 0; font-family: Inter, system-ui, sans-serif;`;
-      page1.innerHTML = `
-        <div style="background: #000; color: #fff; padding: 24px 32px; display: flex; justify-content: space-between; align-items: center;">
+      // Load employee details for HR data
+      const empDetailsMap = new Map<string, any>();
+      for (const emp of employees) {
+        try {
+          const details = await api.getEmployeeDetails(emp.id);
+          if (details) empDetailsMap.set(emp.id, details);
+        } catch { /* ignore */ }
+      }
+
+      const headerHtml = `
+        <div style="background: #1a1a2e; color: #fff; padding: 16px ${padding}px; display: flex; justify-content: space-between; align-items: center;">
           <div>
-            <h1 style="margin: 0; font-size: 26px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
-            <p style="margin: 4px 0 0 0; font-size: 14px; opacity: 0.85;">Kappa Planning – ${i18n.t('schedule.absences')}</p>
+            <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
+            <p style="margin: 3px 0 0 0; font-size: 11px; opacity: 0.7;">Kappa Planning – ${i18n.t('schedule.absences')}</p>
           </div>
           <div style="text-align: right;">
-            <p style="margin: 0; font-size: 14px; opacity: 0.9;">${i18n.t('schedule.absences')} ${year}</p>
-            <p style="margin: 3px 0 0 0; font-size: 12px; opacity: 0.7;">${i18n.t('schedule.absenceTimelineYearReport')}</p>
+            <p style="margin: 0; font-size: 13px; font-weight: 600;">${i18n.t('schedule.absences')} ${year}</p>
+            <p style="margin: 2px 0 0 0; font-size: 10px; opacity: 0.7;">${i18n.t('schedule.absenceTimelineYearReport')}</p>
           </div>
         </div>
-        <div style="background: #0097AC; color: #fff; padding: 10px 32px; display: flex; justify-content: space-between; font-size: 11px;">
+        <div style="background: #0097AC; color: #fff; padding: 6px ${padding}px; display: flex; justify-content: space-between; font-size: 9px;">
           <span><strong>${i18n.t('export.generatedAt')}:</strong> ${dateStr} ${timeStr}</span>
           <span><strong>${i18n.t('export.user')}:</strong> ${this.state.settings.userName || 'System'}</span>
         </div>
-        <div style="padding: 28px 32px;">
-          <h2 style="margin: 0 0 20px 0; font-size: 20px; color: #1e293b;">${i18n.t('schedule.absenceTimelineYearReport')} ${year}</h2>
-          ${this.buildPdfStatsSection(employees, months, year)}
-          ${this.buildPdfListSection(employees, year)}
+      `;
+
+      const footerHtml = (pageNum: number, total: number) => `
+        <div style="position: absolute; bottom: 8px; left: ${padding}px; right: ${padding}px; display: flex; justify-content: space-between; font-size: 8px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 6px;">
+          <span>DRÄXLMAIER Group – Kappa Planning | ${i18n.t('schedule.absences')} ${year}</span>
+          <span>${i18n.t('schedule.absenceTimelineYearReport')} | ${dateStr} | ${pageNum}/${total}</span>
         </div>
-        <div style="position: absolute; bottom: 12px; left: 32px; right: 32px; display: flex; justify-content: space-between; font-size: 9px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 8px;">
-          <span>DRÄXLMAIER Group – Kappa Planning</span>
-          <span>${i18n.t('schedule.absences')} ${year} | ${dateStr}</span>
+      `;
+
+      // ---- PAGE 1: Statistics Overview ----
+      const totalAbsences = this.absences.length;
+      const totalDays = this.absences.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+      const affectedEmployees = new Set(this.absences.map((a: any) => a.employeeId)).size;
+      const avgPerEmp = employees.length > 0 ? (totalDays / employees.length).toFixed(1) : '0';
+      const activeTypes = this.absenceTypes.filter((t: any) => t.isActive);
+
+      // Per-type breakdown with more data
+      const typeBreakdown = activeTypes.map((t: any) => {
+        const typeAbs = this.absences.filter((a: any) => a.absenceTypeId === t.id);
+        const typeDays = typeAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+        const typeEmps = new Set(typeAbs.map((a: any) => a.employeeId)).size;
+        const avgDays = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
+        return `<tr>
+          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 10px; height: 10px; border-radius: 3px; background: ${t.color}; flex-shrink: 0;"></div>
+              ${t.icon} ${t.name}
+            </div>
+          </td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${typeDays}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeAbs.length}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeEmps}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${avgDays}</td>
+        </tr>`;
+      }).join('');
+
+      // Per-employee summary table with HR data
+      const empSummaryRows = employees.map((emp) => {
+        const details = empDetailsMap.get(emp.id);
+        const empAbs = this.absences.filter((a: any) => a.employeeId === emp.id);
+        const usedDays = empAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+        const limitTotal = this.absenceLimits
+          .filter((l: any) => l.employeeId === emp.id && l.year === year)
+          .reduce((sum: number, l: any) => sum + (l.totalDays || 0), 0);
+        const remaining = limitTotal - usedDays;
+        const remColor = remaining < 0 ? '#dc2626' : remaining === 0 ? '#d97706' : '#16a34a';
+        const percent = limitTotal > 0 ? Math.round((usedDays / limitTotal) * 100) : 0;
+        
+        return `<tr>
+          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp.firstName?.charAt(0) || ''}${emp.lastName?.charAt(0) || ''}</div>
+              <span style="font-weight: 500;">${emp.firstName} ${emp.lastName}</span>
+            </div>
+          </td>
+          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.department || '–'}</td>
+          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.position || '–'}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #3b82f6; font-weight: 600;">${limitTotal}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${usedDays}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: ${remColor}; font-weight: 700;">${remaining}</td>
+          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9;">
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <div style="flex: 1; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+                <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${percent > 90 ? '#dc2626' : percent > 70 ? '#d97706' : '#0097AC'}; border-radius: 2px;"></div>
+              </div>
+              <span style="font-size: 8px; color: #64748b; min-width: 24px;">${percent}%</span>
+            </div>
+          </td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${empAbs.length}</td>
+        </tr>`;
+      }).join('');
+
+      const page1 = document.createElement('div');
+      page1.style.cssText = `width: ${pageWidth}px; height: ${pageHeight}px; background: white; padding: 0; font-family: Inter, system-ui, sans-serif; position: relative; overflow: hidden;`;
+      page1.innerHTML = `
+        ${headerHtml}
+        <div style="padding: ${padding}px;">
+          <h2 style="margin: 0 0 14px 0; font-size: 16px; color: #1e293b;">${i18n.t('schedule.absenceTimelineYearReport')} ${year}</h2>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;">
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #0097AC;">
+              <div style="font-size: 24px; font-weight: 700; color: #0097AC;">${totalAbsences}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</div>
+            </div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #3b82f6;">
+              <div style="font-size: 24px; font-weight: 700; color: #3b82f6;">${totalDays}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatTotalDays')}</div>
+            </div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #8b5cf6;">
+              <div style="font-size: 24px; font-weight: 700; color: #8b5cf6;">${affectedEmployees}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatEmployees')}</div>
+            </div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #f59e0b;">
+              <div style="font-size: 24px; font-weight: 700; color: #f59e0b;">${avgPerEmp}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceTimelineAvgPerEmp')}</div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <!-- Left: Type breakdown -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+              <div style="padding: 8px 12px; background: #1e293b; color: white;">
+                <h3 style="margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceTimelineByType')}</h3>
+              </div>
+              <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: #f1f5f9;">
+                    <th style="padding: 5px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListType')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListDays')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatAbsences')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatEmployees')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">Ø ${i18n.t('schedule.absenceListDays')}</th>
+                  </tr>
+                </thead>
+                <tbody>${typeBreakdown}</tbody>
+              </table>
+            </div>
+
+            <!-- Right: Monthly distribution -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+              <div style="padding: 8px 12px; background: #1e293b; color: white;">
+                <h3 style="margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.monthlyDistribution') || 'Rozkład miesięczny'}</h3>
+              </div>
+              <div style="padding: 10px 12px;">
+                ${months.map((m, idx) => {
+                  const monthStart = new Date(year, idx, 1);
+                  const monthEnd = new Date(year, idx + 1, 0);
+                  let monthDays = 0;
+                  this.absences.forEach((a: any) => {
+                    const s = new Date(a.startDate);
+                    const e = new Date(a.endDate);
+                    const os = s > monthStart ? s : monthStart;
+                    const oe = e < monthEnd ? e : monthEnd;
+                    if (os <= oe) {
+                      const cur = new Date(os);
+                      while (cur <= oe) { if (cur.getDay() !== 0 && cur.getDay() !== 6) monthDays++; cur.setDate(cur.getDate() + 1); }
+                    }
+                  });
+                  const barWidth = totalDays > 0 ? Math.round((monthDays / totalDays) * 100) : 0;
+                  return `<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
+                    <span style="font-size: 8px; color: #64748b; width: 24px; text-align: right;">${m.substring(0, 3)}</span>
+                    <div style="flex: 1; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden;">
+                      <div style="height: 100%; width: ${barWidth}%; background: #0097AC; border-radius: 3px;"></div>
+                    </div>
+                    <span style="font-size: 8px; color: #334155; font-weight: 600; min-width: 16px; text-align: right;">${monthDays}</span>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
         </div>
+        FOOTER_PLACEHOLDER_1
       `;
       pages.push(page1);
 
-      // Render each page to canvas
-      document.body.appendChild(page1);
+      // ---- PAGE 2: Employee Summary (VDA / HR compliant) ----
+      const page2 = document.createElement('div');
+      page2.style.cssText = `width: ${pageWidth}px; height: ${pageHeight}px; background: white; padding: 0; font-family: Inter, system-ui, sans-serif; position: relative; overflow: hidden;`;
+      page2.innerHTML = `
+        ${headerHtml}
+        <div style="padding: ${padding}px;">
+          <h2 style="margin: 0 0 14px 0; font-size: 16px; color: #1e293b;">👥 ${i18n.t('schedule.employeeSummary') || 'Podsumowanie pracowników'} – ${year}</h2>
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="background: #1e293b;">
+                <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.department') || 'Dział'}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.position') || 'Stanowisko'}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceEntitledDays')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceUsedDays')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceRemainingDays')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.utilization') || 'Wykorzystanie'}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</th>
+              </tr>
+            </thead>
+            <tbody>${empSummaryRows}</tbody>
+          </table>
+
+          <div style="margin-top: 16px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; font-size: 9px; color: #92400e;">
+            <strong>⚠️ ${i18n.t('schedule.vdaNotice') || 'Uwaga VDA/HR'}:</strong> 
+            ${i18n.t('schedule.vdaNoticeText') || 'Dane dotyczące urlopów zgodne z wymogami VDA 6.3 (P6.3.2) – ewidencja czasu pracy. Urlop wypoczynkowy powinien być planowany równomiernie w ciągu roku. Pracownicy z pozostałym urlopem >5 dni powinni zaplanować wykorzystanie do końca Q4.'}
+          </div>
+        </div>
+        FOOTER_PLACEHOLDER_2
+      `;
+      pages.push(page2);
+
+      // ---- PAGE 3: Absence List (detailed) ----
+      const page3 = document.createElement('div');
+      page3.style.cssText = `width: ${pageWidth}px; min-height: ${pageHeight}px; background: white; padding: 0; font-family: Inter, system-ui, sans-serif; position: relative; overflow: hidden;`;
+      page3.innerHTML = `
+        ${headerHtml}
+        <div style="padding: ${padding}px;">
+          ${this.buildPdfListSection(employees, year)}
+        </div>
+        FOOTER_PLACEHOLDER_3
+      `;
+      pages.push(page3);
+
+      // Render pages to PDF
+      const totalPages = pages.length;
+      pages.forEach((page, i) => {
+        page.innerHTML = page.innerHTML.replace(`FOOTER_PLACEHOLDER_${i + 1}`, footerHtml(i + 1, totalPages));
+        document.body.appendChild(page);
+      });
+
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [pageWidth, pageHeight] });
 
       for (let p = 0; p < pages.length; p++) {
@@ -18663,7 +19071,7 @@ class KappaApp {
         pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, pageHeight);
       }
 
-      page1.remove();
+      pages.forEach(p => p.remove());
       pdf.save(`Absences_${year}_${dateStr.replace(/\./g, '-')}.pdf`);
       this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
     } catch (e) {
@@ -18672,86 +19080,50 @@ class KappaApp {
     }
   }
 
-  private buildPdfStatsSection(employees: any[], months: string[], year: number): string {
-    const totalAbsences = this.absences.length;
-    const totalDays = this.absences.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
-    const affectedEmployees = new Set(this.absences.map((a: any) => a.employeeId)).size;
-    const avgPerEmp = employees.length > 0 ? (totalDays / employees.length).toFixed(1) : '0';
-
-    // Per-type breakdown
-    const typeBreakdown = this.absenceTypes.filter((t: any) => t.isActive).map((t: any) => {
-      const typeAbs = this.absences.filter((a: any) => a.absenceTypeId === t.id);
-      const typeDays = typeAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
-      return `<div style="display: flex; align-items: center; gap: 8px; padding: 6px 0;">
-        <div style="width: 10px; height: 10px; border-radius: 3px; background: ${t.color};"></div>
-        <span style="flex: 1; font-size: 11px;">${t.icon} ${t.name}</span>
-        <span style="font-weight: 600; font-size: 12px;">${typeDays} ${i18n.t('schedule.days')}</span>
-        <span style="font-size: 10px; color: #64748b;">(${typeAbs.length}×)</span>
-      </div>`;
-    }).join('');
-
-    return `
-      <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px;">
-        <div style="background: #f1f5f9; border-radius: 8px; padding: 16px; text-align: center;">
-          <div style="font-size: 28px; font-weight: 700; color: #0097AC;">${totalAbsences}</div>
-          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">${i18n.t('schedule.absenceStatAbsences')}</div>
-        </div>
-        <div style="background: #f1f5f9; border-radius: 8px; padding: 16px; text-align: center;">
-          <div style="font-size: 28px; font-weight: 700; color: #0097AC;">${totalDays}</div>
-          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">${i18n.t('schedule.absenceStatTotalDays')}</div>
-        </div>
-        <div style="background: #f1f5f9; border-radius: 8px; padding: 16px; text-align: center;">
-          <div style="font-size: 28px; font-weight: 700; color: #0097AC;">${affectedEmployees}</div>
-          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">${i18n.t('schedule.absenceStatEmployees')}</div>
-        </div>
-        <div style="background: #f1f5f9; border-radius: 8px; padding: 16px; text-align: center;">
-          <div style="font-size: 28px; font-weight: 700; color: #0097AC;">${avgPerEmp}</div>
-          <div style="font-size: 11px; color: #64748b; margin-top: 4px;">${i18n.t('schedule.absenceTimelineAvgPerEmp')}</div>
-        </div>
-      </div>
-      <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
-        <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #334155;">${i18n.t('schedule.absenceTimelineByType')}</h3>
-        ${typeBreakdown}
-      </div>
-    `;
-  }
-
   private buildPdfListSection(employees: any[], year: number): string {
     if (this.absences.length === 0) return `<p style="color: #94a3b8; text-align: center; padding: 20px;">${i18n.t('schedule.noAbsencesFound')}</p>`;
 
     const sorted = [...this.absences].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
-    const rows = sorted.map((a: any) => {
+    const rows = sorted.map((a: any, idx: number) => {
       const emp = employees.find(e => e.id === a.employeeId) || this.state.employees.find(e => e.id === a.employeeId);
       const type = this.absenceTypes.find((t: any) => t.id === a.absenceTypeId);
-      const start = new Date(a.startDate).toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short' });
-      const end = new Date(a.endDate).toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short' });
-      return `<tr>
-        <td style="padding: 6px 10px; font-size: 11px; border-bottom: 1px solid #f1f5f9;">
-          <div style="display: flex; align-items: center; gap: 6px;">
-            <div style="width: 22px; height: 22px; border-radius: 50%; background: ${emp?.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700;">${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}</div>
-            ${emp?.firstName || ''} ${emp?.lastName || ''}
+      const startD = new Date(a.startDate);
+      const endD = new Date(a.endDate);
+      const start = startD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
+      const end = endD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
+      const weekday = startD.toLocaleDateString(i18n.getDateLocale(), { weekday: 'short' });
+      const bg = idx % 2 === 0 ? '#f8fafc' : 'white';
+      return `<tr style="background: ${bg};">
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp?.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}</div>
+            <span style="font-weight: 500;">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
           </div>
         </td>
-        <td style="padding: 6px 10px; font-size: 11px; border-bottom: 1px solid #f1f5f9;">
-          <span style="display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: ${type?.color || '#64748b'}; margin-right: 4px;"></span>
-          ${type?.icon || ''} ${type?.name || ''}
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <div style="width: 8px; height: 8px; border-radius: 2px; background: ${type?.color || '#64748b'}; flex-shrink: 0;"></div>
+            ${type?.icon || ''} ${type?.name || ''}
+          </div>
         </td>
-        <td style="padding: 6px 10px; font-size: 11px; border-bottom: 1px solid #f1f5f9;">${start} – ${end}</td>
-        <td style="padding: 6px 10px; font-size: 11px; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${a.workDays}</td>
-        <td style="padding: 6px 10px; font-size: 11px; border-bottom: 1px solid #f1f5f9; color: #64748b;">${a.note || '–'}</td>
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${weekday}, ${start}</td>
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${end}</td>
+        <td style="padding: 5px 8px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 700; color: #0097AC;">${a.workDays}</td>
+        <td style="padding: 5px 8px; font-size: 9px; border-bottom: 1px solid #f1f5f9; color: #64748b; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${a.note || '–'}</td>
       </tr>`;
     }).join('');
 
     return `
-      <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #334155;">${i18n.t('schedule.absenceHistory')} (${sorted.length})</h3>
+      <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b;">📋 ${i18n.t('schedule.absenceHistory')} (${sorted.length})</h3>
       <table style="width: 100%; border-collapse: collapse;">
         <thead>
-          <tr style="background: #f8fafc;">
-            <th style="padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0;">${i18n.t('schedule.absenceListEmployee')}</th>
-            <th style="padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0;">${i18n.t('schedule.absenceListType')}</th>
-            <th style="padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0;">${i18n.t('schedule.absenceListDates')}</th>
-            <th style="padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0;">${i18n.t('schedule.absenceListDays')}</th>
-            <th style="padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; color: #64748b; border-bottom: 2px solid #e2e8f0;">${i18n.t('schedule.noteLabel')}</th>
+          <tr style="background: #1e293b;">
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListType')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateFrom')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateTo')}</th>
+            <th style="padding: 6px 8px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListDays')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.noteLabel')}</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
