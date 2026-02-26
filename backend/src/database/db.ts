@@ -151,6 +151,10 @@ async function initDatabase() {
     db.run(`ALTER TABLE employees ADD COLUMN department TEXT`);
     console.log('✅ Added department column to employees table');
   } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN shiftSystem INTEGER DEFAULT 2`);
+    console.log('✅ Added shiftSystem column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS schedule_assignments (

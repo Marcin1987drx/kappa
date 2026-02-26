@@ -14727,6 +14727,69 @@ body.dark-theme .sched-history-readonly-badge {
   margin-top: 1px;
 }
 
+/* Shift system badge (small tag next to name) */
+.emp-shift-sys-tag {
+  display: inline-block;
+  font-size: 0.55rem;
+  font-weight: 700;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  line-height: 1.4;
+  border: 1px solid var(--color-border);
+}
+
+.emp-shift-system-badge {
+  display: inline-block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-muted);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 4px;
+  border: 1px solid var(--color-border);
+}
+
+/* Workload bar */
+.sched-emp-workload {
+  margin-top: 3px;
+}
+
+.workload-bar-bg {
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 1px;
+}
+
+.workload-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.workload-bar-fill.workload-empty { width: 0; }
+.workload-bar-fill.workload-low { background: #22c55e; }
+.workload-bar-fill.workload-medium { background: #f59e0b; }
+.workload-bar-fill.workload-high { background: #f97316; }
+.workload-bar-fill.workload-over { background: #ef4444; }
+
+.workload-text {
+  font-size: 0.55rem;
+  line-height: 1.2;
+}
+
+.workload-text.workload-empty { color: var(--color-text-muted); }
+.workload-text.workload-low { color: #22c55e; }
+.workload-text.workload-medium { color: #f59e0b; }
+.workload-text.workload-high { color: #f97316; }
+.workload-text.workload-over { color: #ef4444; font-weight: 700; }
+
 /* Karta nieobecnego */
 .sched-absent-card {
   display: flex;

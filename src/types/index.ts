@@ -56,6 +56,7 @@ export interface Employee {
   color: string;
   status?: EmployeeStatus;        // Domyślnie 'available'
   suggestedShift?: 1 | 2 | 3;     // Sugerowana zmiana
+  shiftSystem?: 1 | 2 | 3;        // System zmianowy (1=jednozmianowy, 2=dwuzmianowy, 3=trzyzmianowy)
   note?: string;                  // Notatka o pracowniku
   role?: EmployeeRole;            // Rola: pracownik, lider, kierownik
   email?: string;                 // Adres email

@@ -10589,14 +10589,16 @@ class KappaApp {
       const employee = this.state.employees[employeeIndex % this.state.employees.length];
       
       if (strategy === 'rotate') {
-        // Get previous week's shift for this employee
+        // Get previous week's shift for this employee, respecting shiftSystem
+        const empMax = employee.shiftSystem || 2;
         const prevWeekKey = this.getPreviousWeekKey(weekKey);
         const prevAssignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => 
           a.employeeId === employee.id && a.week === prevWeekKey
         );
         
         if (prevAssignment) {
-          shift = (prevAssignment.shift % this.scheduleShiftSystem) + 1;
+          const nextShift = (prevAssignment.shift % Math.min(this.scheduleShiftSystem, empMax)) + 1;
+          shift = nextShift;
         }
       }
       
@@ -10772,18 +10774,19 @@ class KappaApp {
       
       const bestEmployee = scored[0].employee;
       
-      // Determine best shift (least loaded)
+      // Determine best shift (least loaded), respecting employee's shiftSystem
+      const empMaxShift = bestEmployee.shiftSystem || 2;
       let bestShift = 1;
       let minShiftCount = Infinity;
-      for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+      for (let s = 1; s <= Math.min(this.scheduleShiftSystem, empMaxShift); s++) {
         if ((shiftCounts[s] || 0) < minShiftCount) {
           minShiftCount = shiftCounts[s] || 0;
           bestShift = s;
         }
       }
       
-      // Check employee's suggested shift preference
-      if (bestEmployee.suggestedShift && bestEmployee.suggestedShift <= this.scheduleShiftSystem) {
+      // Check employee's suggested shift preference (must be within their shiftSystem)
+      if (bestEmployee.suggestedShift && bestEmployee.suggestedShift <= Math.min(this.scheduleShiftSystem, empMaxShift)) {
         bestShift = bestEmployee.suggestedShift;
       }
       
@@ -10849,17 +10852,27 @@ class KappaApp {
         const [groupKey] = sortedGroups[groupIndex % sortedGroups.length];
         
         // Determine shift: use existing assignments' shift for this group, or balance
+        // Respect employee's shiftSystem
+        const empMax = unassignedEmp.shiftSystem || 2;
         const groupAssigns = allWeekAssignmentsAfter.filter(a => a.projectId === groupKey);
         let bestShift = 1;
         if (groupAssigns.length > 0) {
-          // Use the most common shift for this group
+          // Use the most common shift for this group, but only if within employee's shiftSystem
           const shiftMap: Record<number, number> = {};
           groupAssigns.forEach(a => shiftMap[a.shift] = (shiftMap[a.shift] || 0) + 1);
-          bestShift = parseInt(Object.entries(shiftMap).sort((a, b) => b[1] - a[1])[0][0]);
+          const sortedShifts = Object.entries(shiftMap).sort((a, b) => b[1] - a[1]);
+          // Pick the most common shift that is within employee's shiftSystem
+          for (const [shiftStr] of sortedShifts) {
+            const s = parseInt(shiftStr);
+            if (s <= empMax) {
+              bestShift = s;
+              break;
+            }
+          }
         } else {
-          // Find least loaded shift
+          // Find least loaded shift within employee's shiftSystem
           let minCount = Infinity;
-          for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+          for (let s = 1; s <= Math.min(this.scheduleShiftSystem, empMax); s++) {
             if ((shiftCounts[s] || 0) < minCount) {
               minCount = shiftCounts[s] || 0;
               bestShift = s;
@@ -11024,7 +11037,9 @@ class KappaApp {
       .map(key => ({ key, group: peelOffGroups.get(key)! }))
       .sort((a, b) => b.group.totalWorkload - a.group.totalWorkload);
     
-    // 7. Assign each peel-off project to the employee with LEAST total peel-off workload
+    // 7. Assign each peel-off project to the best employee
+    // PRIORITY: First assign employees who have NO assignments at all this week,
+    // then fall back to those with least workload.
     let assignedCount = 0;
     
     // Determine shift: balance across shifts
@@ -11033,14 +11048,29 @@ class KappaApp {
       shiftCounts[s] = weekAssignments.filter((a: ScheduleAssignment) => a.shift === s).length;
     }
     
+    // Track which employees are fully unassigned (no assignments at all this week)
+    const empTotalThisWeek = new Map<string, number>();
+    availableEmployees.forEach(e => empTotalThisWeek.set(e.id, 0));
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (empTotalThisWeek.has(a.employeeId)) {
+        empTotalThisWeek.set(a.employeeId, (empTotalThisWeek.get(a.employeeId) || 0) + 1);
+      }
+    });
+    
     for (const { key: groupKey, group } of sortedPeelOff) {
-      // Score: lower workload = better
+      // Score: lower = better
+      // PRIORITY 1: Employees with ZERO assignments this week (completely free)
+      // PRIORITY 2: Employees with least peel-off workload
+      // PRIORITY 3: Employees with least total assignments
       const scored = availableEmployees.map(emp => {
         const currentWorkload = empPeelOffWorkload.get(emp.id) || 0;
         const historyOnProject = empPeelOffHistory.get(emp.id)?.get(groupKey) || 0;
+        const totalThisWeek = empTotalThisWeek.get(emp.id) || 0;
+        const isUnassigned = totalThisWeek === 0;
         
-        // Score: primary by current workload, secondary by history
-        const score = currentWorkload + (historyOnProject * 10);
+        // Unassigned employees get huge priority bonus (lower score)
+        const unassignedBonus = isUnassigned ? 0 : 100000;
+        const score = unassignedBonus + currentWorkload + (historyOnProject * 10) + (totalThisWeek * 50);
         
         return { employee: emp, score, currentWorkload };
       });
@@ -11052,17 +11082,18 @@ class KappaApp {
       
       const bestEmployee = scored[0].employee;
       
-      // Pick least loaded shift
+      // Pick least loaded shift, respecting employee's shiftSystem
+      const empMaxShift = bestEmployee.shiftSystem || 2;
       let bestShift = 1;
       let minShiftCount = Infinity;
-      for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+      for (let s = 1; s <= Math.min(this.scheduleShiftSystem, empMaxShift); s++) {
         if ((shiftCounts[s] || 0) < minShiftCount) {
           minShiftCount = shiftCounts[s] || 0;
           bestShift = s;
         }
       }
       
-      if (bestEmployee.suggestedShift && bestEmployee.suggestedShift <= this.scheduleShiftSystem) {
+      if (bestEmployee.suggestedShift && bestEmployee.suggestedShift <= Math.min(this.scheduleShiftSystem, empMaxShift)) {
         bestShift = bestEmployee.suggestedShift;
       }
       
@@ -11077,6 +11108,7 @@ class KappaApp {
       
       // Update workload tracking
       empPeelOffWorkload.set(bestEmployee.id, (empPeelOffWorkload.get(bestEmployee.id) || 0) + group.totalWorkload);
+      empTotalThisWeek.set(bestEmployee.id, (empTotalThisWeek.get(bestEmployee.id) || 0) + 1);
       shiftCounts[bestShift] = (shiftCounts[bestShift] || 0) + 1;
       
       assignedCount++;
@@ -11380,6 +11412,7 @@ class KappaApp {
                       <td class="emp-name-cell">
                         <span class="emp-avatar-mini" style="background:${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
                         <span class="emp-name-text">${emp.firstName} ${emp.lastName}</span>
+                        <span class="emp-shift-system-badge" title="${i18n.t('schedule.shiftSystemLabel')}">${emp.shiftSystem || 2}Z</span>
                       </td>
                       <td class="shift-col-wide">
                         <span class="prev-shift-badge shift-${prevShift}">${prevShift === '-' ? '–' : `Z${prevShift}`}</span>
@@ -11387,7 +11420,8 @@ class KappaApp {
                       <td class="shift-col-wide">
                         <select class="shift-select" data-employee="${emp.id}">
                           <option value="1" ${currentShift === 1 ? 'selected' : ''}>☀️ Z1</option>
-                          <option value="2" ${currentShift === 2 ? 'selected' : ''}>🌅 Z2</option>
+                          ${(emp.shiftSystem || 2) >= 2 ? `<option value="2" ${currentShift === 2 ? 'selected' : ''}>🌅 Z2</option>` : ''}
+                          ${(emp.shiftSystem || 2) >= 3 ? `<option value="3" ${currentShift === 3 ? 'selected' : ''}>🌙 Z3</option>` : ''}
                         </select>
                       </td>
                     </tr>
@@ -11590,11 +11624,15 @@ class KappaApp {
     const empByShift = new Map<number, Employee[]>();
     empByShift.set(1, []);
     empByShift.set(2, []);
+    empByShift.set(3, []);
     
     availableEmployees.forEach(emp => {
       const shift = this.employeeWeekShift.get(emp.id) || this.getEmployeeSuggestedShift(emp.id);
-      const shiftGroup = shift <= 2 ? shift : 1; // Default to shift 1 if somehow 3
-      empByShift.get(shiftGroup)!.push(emp);
+      const empShiftSystem = emp.shiftSystem || 2;
+      // Validate: employee can't be on a shift higher than their shiftSystem
+      const validShift = shift <= empShiftSystem ? shift : 1;
+      if (!empByShift.has(validShift)) empByShift.set(validShift, []);
+      empByShift.get(validShift)!.push(emp);
     });
     
     // 5. Build historical assignment counts
@@ -11634,6 +11672,7 @@ class KappaApp {
       // The assignment shift is always the employee's own shift.
       
       // Build candidate pool: only employees whose shift matches the project's shift(s)
+      // Also respect employee's shiftSystem: a 2-shift employee cannot work on Z3
       let candidatePool: Employee[] = [];
       
       if (projectShifts.has(1)) {
@@ -11642,10 +11681,14 @@ class KappaApp {
       if (projectShifts.has(2)) {
         candidatePool.push(...(empByShift.get(2) || []));
       }
-      
-      // Night-only projects (Z3): any employee can be assigned
-      if (projectShifts.has(3) && candidatePool.length === 0) {
-        candidatePool.push(...(empByShift.get(1) || []), ...(empByShift.get(2) || []));
+      if (projectShifts.has(3)) {
+        // Z3 projects: only employees in 3-shift system can be directly on Z3
+        candidatePool.push(...(empByShift.get(3) || []));
+        // If no Z3 employees available, Z1/Z2 employees from 3-shift system can cover
+        if (candidatePool.length === 0) {
+          const threeShiftEmps = availableEmployees.filter(e => (e.shiftSystem || 2) >= 3);
+          candidatePool.push(...threeShiftEmps);
+        }
       }
       
       // Remove duplicates (in case project runs on both Z1 and Z2)
@@ -11731,8 +11774,10 @@ class KappaApp {
         
         const [groupKey] = groupWorkload[gIdx % groupWorkload.length];
         
-        // Use employee's configured shift
-        const empShiftVal = this.employeeWeekShift.get(unassignedEmp.id) || 1;
+        // Use employee's configured shift, validated against their shiftSystem
+        const empMaxShiftVal = unassignedEmp.shiftSystem || 2;
+        const configuredShift = this.employeeWeekShift.get(unassignedEmp.id) || 1;
+        const empShiftVal = configuredShift <= empMaxShiftVal ? configuredShift : 1;
         
         await this.addScopedAssignment(
           groupKey,
@@ -11818,6 +11863,33 @@ class KappaApp {
     const assignedAvailable = availableEmployees.filter(e => assignedEmployeeIds.has(e.id));
     const unassignedAvailable = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id));
     
+    // Helper: calculate weekly workload in minutes for an employee
+    const calcEmployeeWorkloadMinutes = (empId: string): number => {
+      const empAssignments = weekAssignments.filter((a: ScheduleAssignment) => a.employeeId === empId);
+      let totalMinutes = 0;
+      
+      empAssignments.forEach((a: ScheduleAssignment) => {
+        // Find projects in this group
+        const groupProjects = this.state.projects.filter(p => 
+          `${p.customer_id}-${p.type_id}` === a.projectId || p.id === a.projectId
+        );
+        
+        groupProjects.forEach(p => {
+          const wd = p.weeks?.[weekKey];
+          if (wd && wd.soll > 0) {
+            // How many employees share this project group?
+            const sharedCount = weekAssignments.filter((x: ScheduleAssignment) => x.projectId === a.projectId).length;
+            totalMinutes += (wd.soll * (p.timePerUnit || 0)) / Math.max(sharedCount, 1);
+          }
+        });
+      });
+      
+      return Math.round(totalMinutes);
+    };
+    
+    // Weekly available minutes: 5 days × 8h = 2400 min
+    const WEEKLY_AVAILABLE_MINUTES = 2400;
+    
     // Helper: karta pracownika
     const renderEmployeeCard = (emp: Employee, isDraggable: boolean = true) => {
       const tasks = weekAssignments
@@ -11832,12 +11904,27 @@ class KappaApp {
         });
       const uniqueTasks = [...new Set(tasks)];
       
+      // Calculate workload
+      const workloadMin = calcEmployeeWorkloadMinutes(emp.id);
+      const workloadPct = WEEKLY_AVAILABLE_MINUTES > 0 ? Math.round((workloadMin / WEEKLY_AVAILABLE_MINUTES) * 100) : 0;
+      const isOverloaded = workloadPct > 100;
+      const workloadClass = workloadPct === 0 ? 'workload-empty' : workloadPct <= 60 ? 'workload-low' : workloadPct <= 90 ? 'workload-medium' : workloadPct <= 100 ? 'workload-high' : 'workload-over';
+      const shiftSystemBadge = emp.shiftSystem || 2;
+      
       return `
         <div class="sched-emp-card" ${isDraggable ? 'draggable="true"' : ''} data-employee-id="${emp.id}">
           <div class="sched-emp-avatar" style="background: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
           <div class="sched-emp-info">
-            <span class="sched-emp-name">${emp.firstName} ${emp.lastName}</span>
+            <span class="sched-emp-name">${emp.firstName} ${emp.lastName} <span class="emp-shift-sys-tag">${shiftSystemBadge}Z</span></span>
             ${uniqueTasks.length > 0 ? `<span class="sched-emp-tasks">${uniqueTasks.slice(0, 2).join(', ')}${uniqueTasks.length > 2 ? '...' : ''}</span>` : ''}
+            ${workloadMin > 0 ? `
+              <div class="sched-emp-workload">
+                <div class="workload-bar-bg">
+                  <div class="workload-bar-fill ${workloadClass}" style="width: ${Math.min(workloadPct, 100)}%"></div>
+                </div>
+                <span class="workload-text ${workloadClass}">${workloadMin} / ${WEEKLY_AVAILABLE_MINUTES} min (${workloadPct}%)${isOverloaded ? ' ⚠️' : ''}</span>
+              </div>
+            ` : ''}
           </div>
         </div>
       `;
@@ -17804,6 +17891,7 @@ class KappaApp {
     const selectedColor = employee?.color || EMPLOYEE_COLORS[this.state.employees.length % EMPLOYEE_COLORS.length];
     const currentStatus = employee?.status || 'available';
     const currentShift = employee?.suggestedShift || '';
+    const currentShiftSystem = employee?.shiftSystem || 2;
     
     modalBody.innerHTML = `
       <div class="form-group">
@@ -17832,6 +17920,14 @@ class KappaApp {
           <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
         </select>
       </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.shiftSystemLabel')}:</label>
+        <select id="employeeShiftSystem" class="form-control">
+          <option value="1" ${currentShiftSystem === 1 ? 'selected' : ''}>1️⃣ ${i18n.t('schedule.shiftSystem1')}</option>
+          <option value="2" ${currentShiftSystem === 2 ? 'selected' : ''}>2️⃣ ${i18n.t('schedule.shiftSystem2')}</option>
+          <option value="3" ${currentShiftSystem === 3 ? 'selected' : ''}>3️⃣ ${i18n.t('schedule.shiftSystem3')}</option>
+        </select>
+      </div>
     `;
     
     // Color picker logic
@@ -17853,6 +17949,8 @@ class KappaApp {
       const shiftSelect = document.getElementById('employeeShift') as HTMLSelectElement | null;
       const shiftValue = shiftSelect?.value || '';
       const suggestedShift = shiftValue ? parseInt(shiftValue) as 1 | 2 | 3 : undefined;
+      const shiftSystemSelect = document.getElementById('employeeShiftSystem') as HTMLSelectElement | null;
+      const shiftSystem = shiftSystemSelect ? parseInt(shiftSystemSelect.value) as 1 | 2 | 3 : 2;
       
       if (!firstName || !lastName) {
         this.showToast(i18n.t('messages.errorOccurred'), 'error');
@@ -17865,6 +17963,7 @@ class KappaApp {
         employee.color = color;
         employee.status = status;
         employee.suggestedShift = suggestedShift;
+        employee.shiftSystem = shiftSystem;
         await db.put('employees', employee);
         await this.addLog('updated', 'Employee', `${firstName} ${lastName}`);
       } else {
@@ -17875,6 +17974,7 @@ class KappaApp {
           color,
           status,
           suggestedShift,
+          shiftSystem,
           createdAt: Date.now(),
         };
         this.state.employees.push(newEmployee);

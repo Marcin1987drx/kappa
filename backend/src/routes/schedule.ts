@@ -29,24 +29,24 @@ employeesRouter.get('/:id', (req, res) => {
 
 employeesRouter.post('/', (req, res) => {
   try {
-    const { id, firstName, lastName, color, status, suggestedShift } = req.body;
+    const { id, firstName, lastName, color, status, suggestedShift, shiftSystem } = req.body;
     const created_at = Date.now();
     
     // Check if exists (upsert)
     const existing = getOne('SELECT id FROM employees WHERE id = ?', [id]);
     if (existing) {
       runQuery(`
-        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?
+        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?
         WHERE id = ?
-      `, [firstName, lastName, color, status || 'available', suggestedShift || null, id]);
+      `, [firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2, id]);
     } else {
       runQuery(`
-        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, created_at]);
+        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, shiftSystem, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2, created_at]);
     }
     
-    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, created_at });
+    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, shiftSystem, created_at });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create employee' });
@@ -55,12 +55,12 @@ employeesRouter.post('/', (req, res) => {
 
 employeesRouter.put('/:id', (req, res) => {
   try {
-    const { firstName, lastName, color, status, suggestedShift } = req.body;
+    const { firstName, lastName, color, status, suggestedShift, shiftSystem } = req.body;
     runQuery(`
-      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?
+      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?
       WHERE id = ?
-    `, [firstName, lastName, color, status, suggestedShift, req.params.id]);
-    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift });
+    `, [firstName, lastName, color, status, suggestedShift, shiftSystem || 2, req.params.id]);
+    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift, shiftSystem });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to update employee' });
