@@ -463,6 +463,30 @@ class ApiClient {
   async deleteHoliday(date: string): Promise<void> {
     await this.request(`/holidays/${date}`, { method: 'DELETE' });
   }
+
+  // Extra Tasks (Dodatkowe zadania)
+  async getExtraTasks(week?: string): Promise<any[]> {
+    const query = week ? `?week=${encodeURIComponent(week)}` : '';
+    return this.request(`/extra-tasks${query}`);
+  }
+
+  async addExtraTask(task: any): Promise<void> {
+    await this.request('/extra-tasks', {
+      method: 'POST',
+      body: JSON.stringify(task),
+    });
+  }
+
+  async updateExtraTask(id: string, task: any): Promise<void> {
+    await this.request(`/extra-tasks/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(task),
+    });
+  }
+
+  async deleteExtraTask(id: string): Promise<void> {
+    await this.request(`/extra-tasks/${id}`, { method: 'DELETE' });
+  }
 }
 
 export const api = new ApiClient();

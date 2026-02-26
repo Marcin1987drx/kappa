@@ -200,6 +200,16 @@ export interface Holiday {
   isMovable: boolean;
 }
 
+export interface ExtraTask {
+  id: string;
+  name: string;
+  week: string;           // np. "2026-KW09"
+  timePerUnit: number;    // Czas na jednostkę w minutach
+  units: number;          // Liczba jednostek
+  comment?: string;       // Komentarz
+  created_at: number;
+}
+
 export interface AppState {
   customers: Customer[];
   types: Type[];
@@ -210,6 +220,7 @@ export interface AppState {
   scheduleEntries: ScheduleEntry[];
   scheduleAssignments: ScheduleAssignment[];
   projectComments: ProjectComment[];
+  extraTasks: ExtraTask[];
   settings: AppSettings;
   currentView: string;
   selectedYear: number;

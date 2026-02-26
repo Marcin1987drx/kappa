@@ -732,3 +732,76 @@ holidaysRouter.delete('/:date', (req, res) => {
     res.status(500).json({ error: 'Failed to delete holiday' });
   }
 });
+
+// ==================== EXTRA TASKS ====================
+export const extraTasksRouter = Router();
+
+extraTasksRouter.get('/', (req, res) => {
+  try {
+    const week = req.query.week as string | undefined;
+    let items;
+    if (week) {
+      items = getAll('SELECT * FROM extra_tasks WHERE week = ? ORDER BY created_at', [week]);
+    } else {
+      items = getAll('SELECT * FROM extra_tasks ORDER BY week, created_at');
+    }
+    res.json(items);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch extra tasks' });
+  }
+});
+
+extraTasksRouter.post('/', (req, res) => {
+  try {
+    const { id, name, week, timePerUnit, units, comment } = req.body;
+    const created_at = req.body.created_at || Date.now();
+    
+    const existing = getOne('SELECT id FROM extra_tasks WHERE id = ?', [id]);
+    if (existing) {
+      runQuery(`
+        UPDATE extra_tasks SET name = ?, week = ?, timePerUnit = ?, units = ?, comment = ?
+        WHERE id = ?
+      `, [name, week, timePerUnit || 15, units || 1, comment || null, id]);
+    } else {
+      runQuery(`
+        INSERT INTO extra_tasks (id, name, week, timePerUnit, units, comment, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [id, name, week, timePerUnit || 15, units || 1, comment || null, created_at]);
+    }
+    
+    saveDatabase();
+    res.status(201).json({ id, name, week, timePerUnit, units, comment, created_at });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create/update extra task' });
+  }
+});
+
+extraTasksRouter.put('/:id', (req, res) => {
+  try {
+    const { name, week, timePerUnit, units, comment } = req.body;
+    runQuery(`
+      UPDATE extra_tasks SET name = ?, week = ?, timePerUnit = ?, units = ?, comment = ?
+      WHERE id = ?
+    `, [name, week, timePerUnit || 15, units || 1, comment || null, req.params.id]);
+    saveDatabase();
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update extra task' });
+  }
+});
+
+extraTasksRouter.delete('/:id', (req, res) => {
+  try {
+    runQuery('DELETE FROM extra_tasks WHERE id = ?', [req.params.id]);
+    // Also remove assignments for this extra task
+    runQuery('DELETE FROM schedule_assignments WHERE projectId = ?', [`extra-${req.params.id}`]);
+    saveDatabase();
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to delete extra task' });
+  }
+});

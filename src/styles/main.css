@@ -10127,10 +10127,12 @@ textarea.form-control {
   padding: 12px;
   background: var(--color-bg-secondary);
   border-radius: var(--radius-md);
+  flex-wrap: wrap;
 }
 
 .stat {
   flex: 1;
+  min-width: 60px;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -10148,6 +10150,361 @@ textarea.form-control {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--color-text-muted);
+}
+
+.auto-strategy-desc {
+  padding: 8px 12px;
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-primary);
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  transition: all 0.2s ease;
+}
+
+/* ====================================================
+   SHIFT PLANNER MODAL STYLES
+   ==================================================== */
+
+.shift-planner-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.shift-planner-summary {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+
+.shift-planner-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 20px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+  min-width: 90px;
+}
+
+.shift-planner-stat .stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.shift-planner-stat .stat-label {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.shift-planner-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.shift-planner-col {
+  background: var(--color-bg-secondary);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  border: 1px solid var(--color-border);
+}
+
+.shift-planner-col h4 {
+  margin: 0 0 4px 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text);
+}
+
+.shift-planner-col h4 svg {
+  color: var(--color-primary);
+}
+
+.shift-planner-info {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 10px;
+  line-height: 1.4;
+}
+
+.shift-planner-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.shift-planner-table thead th {
+  padding: 6px 8px;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-muted);
+  border-bottom: 2px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.shift-planner-table tbody td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border-light, var(--color-border));
+  vertical-align: middle;
+}
+
+.shift-planner-table tbody tr:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.shift-planner-table tfoot td {
+  padding: 8px;
+  border-top: 2px solid var(--color-border);
+}
+
+.shift-col, .shift-col-wide {
+  text-align: center !important;
+  width: 50px;
+}
+
+.shift-col-wide {
+  width: 80px;
+}
+
+.shift-header-icon {
+  display: block;
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+.project-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.project-name-cell .project-name {
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+
+.project-name-cell .project-type {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+}
+
+.project-name-cell .project-tests {
+  font-size: 0.68rem;
+  color: var(--color-primary);
+  opacity: 0.8;
+}
+
+/* Custom checkbox styling for shift planner */
+.shift-checkbox {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.shift-checkbox input[type="checkbox"] {
+  display: none;
+}
+
+.shift-check-mark {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.shift-checkbox input[type="checkbox"]:checked + .shift-check-mark {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.shift-checkbox input[type="checkbox"]:checked + .shift-check-mark::after {
+  content: '✓';
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.shift-checkbox:hover .shift-check-mark {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb, 99, 102, 241), 0.15);
+}
+
+/* Employee row styling */
+.emp-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.emp-avatar-mini {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.emp-name-text {
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prev-shift-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  min-width: 32px;
+}
+
+.prev-shift-badge.shift-1 {
+  background: rgba(251, 191, 36, 0.15);
+  color: #b45309;
+}
+
+.prev-shift-badge.shift-2 {
+  background: rgba(99, 102, 241, 0.15);
+  color: #4338ca;
+}
+
+.prev-shift-badge.shift-3 {
+  background: rgba(107, 114, 128, 0.15);
+  color: #374151;
+}
+
+.prev-shift-badge.shift-- {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-muted);
+}
+
+.shift-select {
+  width: 80px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--color-text);
+  cursor: pointer;
+  text-align: center;
+}
+
+.shift-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(var(--color-primary-rgb, 99, 102, 241), 0.15);
+}
+
+.shift-planner-totals td {
+  background: var(--color-bg-tertiary);
+}
+
+.emp-shift-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  margin-right: 8px;
+}
+
+.shift-planner-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.shift-planner-scope {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shift-planner-scope .form-label {
+  font-size: 0.78rem;
+  font-weight: 500;
+  white-space: nowrap;
+  margin: 0;
+}
+
+.shift-planner-scope .form-control {
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  min-width: 140px;
+}
+
+.shift-planner-night-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  background: rgba(251, 191, 36, 0.08);
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+
+.shift-planner-night-info svg {
+  color: #b45309;
+  flex-shrink: 0;
+}
+
+/* Highlighted action button (shift planner in topbar) */
+.sched-action-btn.sched-action-highlight {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+.sched-action-btn.sched-action-highlight:hover {
+  background: var(--color-primary-hover, var(--color-primary));
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(var(--color-primary-rgb, 99, 102, 241), 0.3);
+}
+
+@media (max-width: 768px) {
+  .shift-planner-columns {
+    grid-template-columns: 1fr;
+  }
+  
+  .shift-planner-summary {
+    flex-wrap: wrap;
+  }
 }
 
 /* ====================================================
@@ -19631,6 +19988,318 @@ body.dark-theme .sched-alert.success {
 .admin-lock-indicator.locked {
   background: var(--color-text-secondary);
   opacity: 0.6;
+}
+
+/* ===================== Extra Tasks - Schedule View ===================== */
+
+.sched-extra-separator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px 8px;
+  margin-top: 12px;
+  border-top: 2px dashed var(--color-border);
+}
+
+.sched-extra-separator-icon {
+  font-size: 1.1rem;
+}
+
+.sched-extra-separator-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sched-extra-row {
+  display: grid;
+  grid-template-columns: 200px 1fr 1fr 1fr;
+  border-bottom: 1px solid var(--color-border);
+  transition: background 0.15s;
+}
+
+.sched-extra-row:hover {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.sched-extra-task-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-right: 1px solid var(--color-border);
+  min-width: 0;
+}
+
+.sched-extra-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.sched-extra-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sched-extra-time {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.sched-extra-edit-btn,
+.sched-extra-delete-btn {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  opacity: 0;
+  transition: opacity 0.2s;
+  border-radius: 4px;
+}
+
+.sched-extra-row:hover .sched-extra-edit-btn,
+.sched-extra-row:hover .sched-extra-delete-btn {
+  opacity: 0.6;
+}
+
+.sched-extra-edit-btn:hover,
+.sched-extra-delete-btn:hover {
+  opacity: 1 !important;
+  background: var(--color-surface-hover);
+}
+
+.sched-extra-delete-btn:hover {
+  color: var(--color-danger);
+}
+
+.sched-extra-add-row {
+  padding: 8px 16px;
+}
+
+.sched-extra-add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: 8px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sched-extra-add-btn:hover {
+  background: var(--color-primary);
+  color: white;
+  border-style: solid;
+  border-color: var(--color-primary);
+}
+
+/* Extra task shift cells reuse sched-shift-cell styling */
+
+/* ===================== Extra Task Modal ===================== */
+
+.extra-task-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+}
+
+.extra-task-modal .form-group {
+  margin-bottom: 14px;
+}
+
+.extra-task-modal .form-label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+
+.extra-task-modal .form-control {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.extra-task-modal .form-control:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.extra-task-modal .form-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.extra-task-modal .form-row .form-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.extra-task-total {
+  padding: 10px 14px;
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+}
+
+/* ===================== Extra Tasks - Planner View ===================== */
+
+.planner-extra-separator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  margin-top: 8px;
+  border-top: 2px dashed var(--color-border);
+  background: rgba(59, 130, 246, 0.03);
+}
+
+.planner-extra-sep-icon {
+  font-size: 1rem;
+}
+
+.planner-extra-sep-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.planner-extra-sep-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.planner-extra-add-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  background: var(--color-surface);
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.planner-extra-add-btn:hover {
+  background: var(--color-primary);
+  color: white;
+  border-style: solid;
+  border-color: var(--color-primary);
+}
+
+.planner-extra-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.planner-extra-row:hover {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+.planner-extra-cell {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-right: 1px solid var(--color-border);
+  min-width: 160px;
+  max-width: 200px;
+  gap: 6px;
+}
+
+.planner-extra-name {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.planner-extra-total {
+  font-size: 0.7rem;
+  color: var(--color-text-secondary);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.planner-extra-week {
+  flex: 1;
+  min-width: 48px;
+  padding: 6px 8px;
+  text-align: center;
+  border-right: 1px solid var(--color-border);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.planner-extra-week:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.planner-extra-week.planner-extra-active {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+  font-weight: 600;
+}
+
+.planner-extra-value {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+/* ===================== Scope picker divider for tests ===================== */
+
+.sched-scope-divider {
+  padding: 6px 12px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 @media (max-width: 768px) {

@@ -207,6 +207,20 @@ async function initDatabase() {
     )
   `);
 
+  // ==================== EXTRA TASKS (Dodatkowe zadania w grafiku) ====================
+  
+  db.run(`
+    CREATE TABLE IF NOT EXISTS extra_tasks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      week TEXT NOT NULL,
+      timePerUnit INTEGER DEFAULT 15,
+      units INTEGER DEFAULT 1,
+      comment TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
   // ==================== ABSENCE MANAGEMENT ====================
   
   // Absence types configuration (typy nieobecności z limitami domyślnymi)
