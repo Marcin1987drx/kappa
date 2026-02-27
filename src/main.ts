@@ -252,6 +252,9 @@ class KappaApp {
       this.state.extraTasks = [];
     }
     
+    // Cleanup: usuń duplikaty i osierocone przypisania (po załadowaniu projektów i extra tasks)
+    await this.cleanupDuplicateAssignments();
+    
     // Sort logs by timestamp descending
     this.logs.sort((a, b) => b.timestamp - a.timestamp);
     
@@ -264,6 +267,56 @@ class KappaApp {
     }
     
     i18n.setLanguage(this.state.settings.language);
+  }
+
+  private async cleanupDuplicateAssignments(): Promise<void> {
+    const seen = new Map<string, ScheduleAssignment>();
+    const toRemove: string[] = [];
+    
+    // Zbierz prawidłowe project IDs
+    const validProjectIds = new Set<string>();
+    this.state.projects.forEach(p => {
+      validProjectIds.add(p.id);
+      validProjectIds.add(`${p.customer_id}-${p.type_id}`);
+    });
+    // Extra task project IDs
+    this.state.extraTasks.forEach(t => {
+      validProjectIds.add(`extra-${t.id}`);
+    });
+    
+    for (const a of this.state.scheduleAssignments) {
+      // Usuń przypisania do nieistniejących projektów (osierocone)
+      if (!validProjectIds.has(a.projectId)) {
+        toRemove.push(a.id);
+        continue;
+      }
+      
+      // Klucz unikalności: pracownik + projekt + tydzień + zmiana + scope + test + part
+      const key = `${a.employeeId}|${a.projectId}|${a.week}|${a.shift}|${a.scope || ''}|${a.testId || ''}|${a.partId || ''}`;
+      if (seen.has(key)) {
+        // Duplikat - zachowaj nowsze (wyższe updatedAt/createdAt)
+        const existing = seen.get(key)!;
+        const existingTime = existing.updatedAt || existing.createdAt || 0;
+        const currentTime = a.updatedAt || a.createdAt || 0;
+        if (currentTime > existingTime) {
+          toRemove.push(existing.id);
+          seen.set(key, a);
+        } else {
+          toRemove.push(a.id);
+        }
+      } else {
+        seen.set(key, a);
+      }
+    }
+    
+    if (toRemove.length > 0) {
+      console.log(`[Kappa] Cleaning up ${toRemove.length} orphan/duplicate assignment(s)`);
+      for (const id of toRemove) {
+        const idx = this.state.scheduleAssignments.findIndex((a: ScheduleAssignment) => a.id === id);
+        if (idx !== -1) this.state.scheduleAssignments.splice(idx, 1);
+        await db.delete('scheduleAssignments', id);
+      }
+    }
   }
 
   // Migrate week keys from old format (KW01) to new format (2026-KW01)
@@ -1497,40 +1550,54 @@ class KappaApp {
       
       // Name cell (klient kolumna)
       const nameCell = document.createElement('div');
-      nameCell.className = 'grid-cell fixed-cell col-customer planner-extra-cell';
-      nameCell.innerHTML = `<span class="planner-extra-name">📌 ${name}</span>`;
+      nameCell.className = 'grid-cell fixed-cell col-customer planner-extra-row-cell';
+      nameCell.innerHTML = `
+        <div class="cell-with-badge">
+          <span class="planner-extra-pin">📌</span>
+          <span class="cell-text">${name}</span>
+        </div>
+      `;
       nameCell.title = name;
       container.appendChild(nameCell);
       
-      // Time info cell (typ kolumna)
-      const timeInfoCell = document.createElement('div');
-      timeInfoCell.className = 'grid-cell fixed-cell col-type planner-extra-cell';
-      timeInfoCell.textContent = `${firstTask.units}×${firstTask.timePerUnit}m`;
-      timeInfoCell.title = `${firstTask.units} × ${firstTask.timePerUnit}min = ${timeStr}`;
-      container.appendChild(timeInfoCell);
+      // Empty cell (typ kolumna)
+      const typeCell = document.createElement('div');
+      typeCell.className = 'grid-cell fixed-cell col-type planner-extra-row-cell';
+      container.appendChild(typeCell);
       
-      // Comment cell (część kolumna)  
+      // Comment cell (część kolumna) - editable
       const commentCell = document.createElement('div');
-      commentCell.className = 'grid-cell fixed-cell col-part planner-extra-cell';
-      commentCell.textContent = firstTask.comment || '';
-      commentCell.title = firstTask.comment || '';
+      commentCell.className = 'grid-cell fixed-cell col-part planner-extra-row-cell planner-extra-comment-cell';
+      commentCell.innerHTML = firstTask.comment 
+        ? `<span class="cell-text planner-extra-comment-text">${firstTask.comment}</span>` 
+        : `<span class="cell-text planner-extra-comment-placeholder">${i18n.t('schedule.addComment')}</span>`;
+      commentCell.title = firstTask.comment || i18n.t('schedule.addComment');
+      commentCell.style.cursor = 'pointer';
+      commentCell.addEventListener('click', () => {
+        const currentComment = firstTask.comment || '';
+        const newComment = prompt(i18n.t('schedule.addComment'), currentComment);
+        if (newComment !== null) {
+          tasks.forEach(t => t.comment = newComment);
+          this.updateExtraTaskComment(firstTask.id, newComment);
+          this.renderPlanningGrid();
+        }
+      });
       container.appendChild(commentCell);
       
-      // Total time cell (test kolumna)
-      const totalCell = document.createElement('div');
-      totalCell.className = 'grid-cell fixed-cell col-test planner-extra-cell';
-      totalCell.innerHTML = `<span class="planner-extra-total">${timeStr}</span>`;
-      container.appendChild(totalCell);
+      // Empty cell (test kolumna)
+      const testCell = document.createElement('div');
+      testCell.className = 'grid-cell fixed-cell col-test planner-extra-row-cell';
+      container.appendChild(testCell);
       
       // Time per unit cell (czas kolumna)
       const tpuCell = document.createElement('div');
-      tpuCell.className = 'grid-cell fixed-cell col-time planner-extra-cell';
-      tpuCell.textContent = `${firstTask.timePerUnit}`;
+      tpuCell.className = 'grid-cell fixed-cell col-time time-cell planner-extra-row-cell';
+      tpuCell.innerHTML = `<span class="time-value">${firstTask.timePerUnit}</span><span class="time-unit">min</span>`;
       container.appendChild(tpuCell);
       
       // Actions cell
       const actionsCell = document.createElement('div');
-      actionsCell.className = 'grid-cell fixed-cell col-actions planner-extra-cell';
+      actionsCell.className = 'grid-cell actions-cell col-actions planner-extra-row-cell';
       actionsCell.innerHTML = `
         <button class="btn-icon planner-extra-del" title="${i18n.t('common.delete')}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
@@ -1558,24 +1625,26 @@ class KappaApp {
         
         // IST cell - pokaż liczbę przypisanych pracowników
         const istCell = document.createElement('div');
-        istCell.className = `grid-cell week-cell planner-extra-week ${isCurrentWeek ? 'current-week' : ''}`;
+        istCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
         if (weekTask) {
           const extraProjectId = `extra-${weekTask.id}`;
           const assignments = this.state.scheduleAssignments.filter(
             (a: ScheduleAssignment) => a.projectId === extraProjectId && a.week === yearWeekKey
           );
-          istCell.innerHTML = `<span class="cell-value planner-extra-value">${assignments.length > 0 ? `👤${assignments.length}` : ''}</span>`;
-          istCell.classList.add('planner-extra-active');
+          istCell.innerHTML = assignments.length > 0 
+            ? `<span class="cell-value planner-extra-ist">${assignments.length}</span>` 
+            : '';
+          istCell.classList.add('planner-extra-active-cell');
           istCell.title = `${name} - ${yearWeekKey}: ${assignments.length} ${i18n.t('schedule.employeesAssigned')}`;
         }
         container.appendChild(istCell);
         
         // SOLL cell - pokaż jednostki zadania
         const sollCell = document.createElement('div');
-        sollCell.className = `grid-cell week-cell planner-extra-week ${isCurrentWeek ? 'current-week' : ''}`;
+        sollCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
         if (weekTask) {
-          sollCell.innerHTML = `<span class="cell-value planner-extra-value">${weekTask.units}</span>`;
-          sollCell.classList.add('planner-extra-active');
+          sollCell.innerHTML = `<span class="cell-value planner-extra-soll">${weekTask.units}</span>`;
+          sollCell.classList.add('planner-extra-active-cell');
           sollCell.title = `${weekTask.units} × ${weekTask.timePerUnit}min`;
           
           // Kliknięcie na cell otwiera modal edycji
@@ -8684,9 +8753,6 @@ class KappaApp {
     // Shift Planner
     document.getElementById('shiftPlannerBtn')?.addEventListener('click', () => this.showShiftPlannerModal());
     
-    // Auto-Planner
-    document.getElementById('autoPlannerBtn')?.addEventListener('click', () => this.showAutoAssignModal());
-    
     // Szablony
     document.getElementById('templatesBtn')?.addEventListener('click', () => this.showTemplatesModal());
     
@@ -10153,8 +10219,8 @@ class KappaApp {
                 if (sourceProject !== gKey) {
                   const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
                   if (assignment) {
-                    await this.removeAssignment(assignmentId);
-                    this.showScopePickerAtPosition(gKey, group.items, assignment.employeeId, wKey, shift, dropX, dropY);
+                    // Nie usuwaj od razu - przekaż do pickera, usunie po potwierdzeniu
+                    this.showScopePickerAtPosition(gKey, group.items, assignment.employeeId, wKey, shift, dropX, dropY, assignmentId);
                   }
                   return;
                 }
@@ -11126,12 +11192,22 @@ class KappaApp {
   // ==================== Shift Planner Modal ====================
   
   private projectShiftConfig: Map<string, Set<number>> = new Map(); // groupKey -> Set of shifts (1,2,3)
-  private employeeWeekShift: Map<string, number> = new Map(); // empId -> shift (1 or 2) for this week
+  private employeeWeekShift: Map<string, number> = new Map(); // empId -> shift (1 or 2 or 3) for this week
+  private currentShiftSystem: number = 2; // 1, 2 or 3 - global shift system for this week
+  private shiftPlannerGroupMode: 'project' | 'customer' = 'project'; // grouping mode
   
   private async loadShiftPlannerConfig(): Promise<void> {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     
     try {
+      // Load global shift system for this week
+      const shiftSystem = await db.getPreference(`shiftSystem_${weekKey}`);
+      this.currentShiftSystem = (typeof shiftSystem === 'number' && [1, 2, 3].includes(shiftSystem)) ? shiftSystem : 2;
+      
+      // Load grouping mode
+      const groupMode = await db.getPreference(`shiftGroupMode_${weekKey}`);
+      this.shiftPlannerGroupMode = (groupMode === 'customer') ? 'customer' : 'project';
+      
       // Load project shift config for this week
       const projectConfig = await db.getPreference(`shiftConfig_${weekKey}`);
       this.projectShiftConfig.clear();
@@ -11157,6 +11233,12 @@ class KappaApp {
   private async saveShiftPlannerConfig(): Promise<void> {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     
+    // Save global shift system
+    await db.setPreference(`shiftSystem_${weekKey}`, this.currentShiftSystem);
+    
+    // Save grouping mode
+    await db.setPreference(`shiftGroupMode_${weekKey}`, this.shiftPlannerGroupMode);
+    
     // Save project shift config
     const projectConfig: Record<string, number[]> = {};
     this.projectShiftConfig.forEach((shifts, key) => {
@@ -11176,6 +11258,12 @@ class KappaApp {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     const prevWeekKey = this.getPreviousWeekKey(weekKey);
     
+    const emp = this.state.employees.find(e => e.id === empId);
+    const empShiftSystem = emp?.shiftSystem || 2;
+    
+    // Limit to the global shift system setting
+    const maxShift = Math.min(empShiftSystem, this.currentShiftSystem);
+    
     // Check previous week's actual shift
     const prevAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => 
       a.employeeId === empId && a.week === prevWeekKey
@@ -11183,13 +11271,17 @@ class KappaApp {
     
     if (prevAssignments.length > 0) {
       const prevShift = this.getMostCommonShift(prevAssignments);
-      // Rotate: 1→2, 2→1
-      return prevShift === 1 ? 2 : 1;
+      // Rotate based on shift system: 1→2, 2→1 for 2-shift; 1→2→3→1 for 3-shift
+      if (maxShift >= 3) {
+        return prevShift === 1 ? 2 : prevShift === 2 ? 3 : 1;
+      } else if (maxShift >= 2) {
+        return prevShift === 1 ? 2 : 1;
+      }
+      return 1;
     }
     
     // Check employee's preference
-    const emp = this.state.employees.find(e => e.id === empId);
-    if (emp?.suggestedShift && emp.suggestedShift <= 2) {
+    if (emp?.suggestedShift && emp.suggestedShift <= maxShift) {
       return emp.suggestedShift;
     }
     
@@ -11198,7 +11290,6 @@ class KappaApp {
   }
   
   private getDefaultProjectShifts(groupKey: string, groupItems: Project[]): Set<number> {
-    // By default, projects run on shifts 1 and 2
     // Check if there's a pattern in historical assignments
     const allAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
       a.projectId === groupKey || groupItems.some(item => item.id === a.projectId)
@@ -11210,7 +11301,11 @@ class KappaApp {
       if (shifts.size > 0) return shifts;
     }
     
-    return new Set([1, 2]);
+    // Default: respect global shift system setting
+    const defaults = new Set([1]);
+    if (this.currentShiftSystem >= 2) defaults.add(2);
+    if (this.currentShiftSystem >= 3) defaults.add(3);
+    return defaults;
   }
   
   private async showShiftPlannerModal(): Promise<void> {
@@ -11229,21 +11324,34 @@ class KappaApp {
       return weekData && weekData.soll > 0 && !p.hidden;
     });
     
-    // Group projects by customer-type
+    // Group projects by customer-type OR customer only
     const projectGroups = new Map<string, { customerName: string; typeName: string; items: Project[] }>();
     weekProjects.forEach(p => {
-      const groupKey = `${p.customer_id}-${p.type_id}`;
+      const groupKey = this.shiftPlannerGroupMode === 'customer' 
+        ? p.customer_id 
+        : `${p.customer_id}-${p.type_id}`;
       if (!projectGroups.has(groupKey)) {
         const customer = this.state.customers.find(c => c.id === p.customer_id);
         const type = this.state.types.find(t => t.id === p.type_id);
         projectGroups.set(groupKey, {
           customerName: customer?.name || '?',
-          typeName: type?.name || '?',
+          typeName: this.shiftPlannerGroupMode === 'customer' ? '' : (type?.name || '?'),
           items: []
         });
       }
       projectGroups.get(groupKey)!.items.push(p);
     });
+    
+    // In customer mode, collect all type names for display
+    if (this.shiftPlannerGroupMode === 'customer') {
+      projectGroups.forEach((group) => {
+        const typeNames = [...new Set(group.items.map(p => {
+          const type = this.state.types.find(t => t.id === p.type_id);
+          return type?.name || '?';
+        }))];
+        group.typeName = typeNames.join(', ');
+      });
+    }
     
     // Initialize shift config for projects that don't have config yet
     projectGroups.forEach((group, groupKey) => {
@@ -11276,6 +11384,7 @@ class KappaApp {
     // Count per shift
     const empOnShift1 = availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 1).length;
     const empOnShift2 = availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 2).length;
+    const empOnShift3 = availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 3).length;
     const projectsOnShift1 = Array.from(projectGroups.keys()).filter(k => this.projectShiftConfig.get(k)?.has(1)).length;
     const projectsOnShift2 = Array.from(projectGroups.keys()).filter(k => this.projectShiftConfig.get(k)?.has(2)).length;
     const projectsOnShift3 = Array.from(projectGroups.keys()).filter(k => this.projectShiftConfig.get(k)?.has(3)).length;
@@ -11304,6 +11413,30 @@ class KappaApp {
           <div class="shift-planner-stat">
             <span class="stat-value">${unassignedCount}</span>
             <span class="stat-label">${i18n.t('schedule.autoPlannerUnassigned')}</span>
+          </div>
+        </div>
+        
+        <!-- SHIFT SYSTEM SELECTOR -->
+        <div class="shift-system-selector">
+          <div class="shift-system-selector-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+            <span>${i18n.t('schedule.globalShiftSystem')}</span>
+          </div>
+          <div class="shift-system-buttons" id="shiftSystemButtons">
+            <button class="shift-system-btn ${this.currentShiftSystem === 1 ? 'active' : ''}" data-system="1">
+              <span class="shift-system-num">1</span>
+              <span class="shift-system-label">${i18n.t('schedule.shiftSystem1Short')}</span>
+            </button>
+            <button class="shift-system-btn ${this.currentShiftSystem === 2 ? 'active' : ''}" data-system="2">
+              <span class="shift-system-num">2</span>
+              <span class="shift-system-label">${i18n.t('schedule.shiftSystem2Short')}</span>
+            </button>
+            <button class="shift-system-btn ${this.currentShiftSystem === 3 ? 'active' : ''}" data-system="3">
+              <span class="shift-system-num">3</span>
+              <span class="shift-system-label">${i18n.t('schedule.shiftSystem3Short')}</span>
+            </button>
           </div>
         </div>
         
@@ -11433,10 +11566,9 @@ class KappaApp {
                   <td><strong>${i18n.t('schedule.total')}</strong></td>
                   <td class="shift-col-wide"></td>
                   <td class="shift-col-wide">
-                    <span id="shiftPlannerEmpSummary">
-                      <span class="emp-shift-count">Z1: <strong id="shiftPlannerEmp1">${empOnShift1}</strong></span>
-                      <span class="emp-shift-count">Z2: <strong id="shiftPlannerEmp2">${empOnShift2}</strong></span>
-                    </span>
+                    <span class="emp-shift-count"><span id="shiftPlannerEmp1">${availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 1).length}</span> ☀️</span>
+                    <span class="emp-shift-count"><span id="shiftPlannerEmp2">${availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 2).length}</span> 🌅</span>
+                    <span class="emp-shift-count" style="${this.currentShiftSystem >= 3 ? '' : 'display:none'}"><span id="shiftPlannerEmp3">${availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 3).length}</span> 🌙</span>
                   </td>
                 </tr>
               </tfoot>
@@ -11445,20 +11577,35 @@ class KappaApp {
         </div>
         
         <div class="shift-planner-footer">
-          <div class="shift-planner-scope">
-            <label class="form-label">${i18n.t('schedule.autoPlannerDefaultScope')}</label>
-            <select id="shiftPlannerScope" class="form-control">
-              <option value="project">${i18n.t('schedule.wholeProjectLabel')}</option>
-              ${(() => {
-                const weekTestIds = new Set(weekProjects.map(p => p.test_id).filter(Boolean));
-                return this.state.tests
-                  .filter(t => weekTestIds.has(t.id))
-                  .map(t => `<option value="test-${t.id}">🧪 ${t.name}</option>`)
-                  .join('');
-              })()}
-            </select>
+          <div class="shift-planner-options-row">
+            <div class="shift-planner-scope">
+              <label class="form-label">${i18n.t('schedule.autoPlannerDefaultScope')}</label>
+              <select id="shiftPlannerScope" class="form-control">
+                <option value="project">${i18n.t('schedule.wholeProjectLabel')}</option>
+                ${(() => {
+                  const weekTestIds = new Set(weekProjects.map(p => p.test_id).filter(Boolean));
+                  return this.state.tests
+                    .filter(t => weekTestIds.has(t.id))
+                    .map(t => `<option value="test-${t.id}">🧪 ${t.name}</option>`)
+                    .join('');
+                })()}
+              </select>
+            </div>
+            <div class="shift-planner-group-mode">
+              <label class="form-label">${i18n.t('schedule.groupModeLabel')}</label>
+              <div class="group-mode-toggle" id="groupModeToggle">
+                <button class="group-mode-btn ${this.shiftPlannerGroupMode === 'project' ? 'active' : ''}" data-mode="project">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                  ${i18n.t('schedule.groupByProject')}
+                </button>
+                <button class="group-mode-btn ${this.shiftPlannerGroupMode === 'customer' ? 'active' : ''}" data-mode="customer">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  ${i18n.t('schedule.groupByCustomer')}
+                </button>
+              </div>
+            </div>
           </div>
-          <div class="shift-planner-night-info">
+          <div class="shift-planner-night-info" id="shiftPlannerNightInfo" style="${this.currentShiftSystem >= 3 ? '' : 'display:none'}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
               <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
             </svg>
@@ -11467,6 +11614,76 @@ class KappaApp {
         </div>
       </div>
     `;
+    
+    // Event listeners for shift system buttons
+    modalBody.querySelectorAll('.shift-system-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const button = (e.currentTarget as HTMLElement);
+        const system = parseInt(button.dataset.system!);
+        this.currentShiftSystem = system;
+        
+        // Update active button state
+        modalBody.querySelectorAll('.shift-system-btn').forEach(b => b.classList.remove('active'));
+        button.classList.add('active');
+        
+        // Auto-configure project shifts based on shift system
+        this.projectShiftConfig.forEach((shifts, groupKey) => {
+          shifts.clear();
+          shifts.add(1); // always include shift 1
+          if (system >= 2) shifts.add(2);
+          if (system >= 3) shifts.add(3);
+        });
+        
+        // Update project checkboxes in the UI
+        modalBody.querySelectorAll('.shift-checkbox input[type="checkbox"]').forEach(cb => {
+          const input = cb as HTMLInputElement;
+          const shift = parseInt(input.dataset.shift!);
+          input.checked = shift <= system;
+        });
+        
+        // Recalculate employee shifts based on new system
+        availableEmployees.forEach(emp => {
+          const currentEmpShift = this.employeeWeekShift.get(emp.id) || 1;
+          const empShiftSystem = emp.shiftSystem || 2;
+          const maxShift = Math.min(empShiftSystem, system);
+          
+          // If employee's current shift exceeds the new system, reassign
+          if (currentEmpShift > maxShift) {
+            const newShift = this.getEmployeeSuggestedShift(emp.id);
+            this.employeeWeekShift.set(emp.id, Math.min(newShift, maxShift));
+          }
+        });
+        
+        // Update employee shift dropdowns
+        modalBody.querySelectorAll('.shift-select').forEach(select => {
+          const sel = select as HTMLSelectElement;
+          const empId = sel.dataset.employee!;
+          const emp = this.state.employees.find(e => e.id === empId);
+          const empShiftSystem = emp?.shiftSystem || 2;
+          const maxShift = Math.min(empShiftSystem, system);
+          const currentValue = this.employeeWeekShift.get(empId) || 1;
+          
+          // Rebuild options
+          sel.innerHTML = `
+            <option value="1" ${currentValue === 1 ? 'selected' : ''}>☀️ Z1</option>
+            ${maxShift >= 2 ? `<option value="2" ${currentValue === 2 ? 'selected' : ''}>🌅 Z2</option>` : ''}
+            ${maxShift >= 3 ? `<option value="3" ${currentValue === 3 ? 'selected' : ''}>🌙 Z3</option>` : ''}
+          `;
+          
+          // Ensure selected value is valid
+          if (currentValue > maxShift) {
+            sel.value = '1';
+            this.employeeWeekShift.set(empId, 1);
+          }
+        });
+        
+        // Toggle night info visibility
+        const nightInfo = document.getElementById('shiftPlannerNightInfo');
+        if (nightInfo) nightInfo.style.display = system >= 3 ? '' : 'none';
+        
+        this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+      });
+    });
     
     // Event listeners for project shift checkboxes
     modalBody.querySelectorAll('.shift-checkbox input[type="checkbox"]').forEach(cb => {
@@ -11498,6 +11715,128 @@ class KappaApp {
         this.employeeWeekShift.set(empId, parseInt(sel.value));
         
         this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+      });
+    });
+    
+    // Helper to rebuild project groups based on current group mode
+    const rebuildProjectGroups = () => {
+      const newGroups = new Map<string, { customerName: string; typeName: string; items: Project[] }>();
+      weekProjects.forEach(p => {
+        const gk = this.shiftPlannerGroupMode === 'customer' 
+          ? p.customer_id 
+          : `${p.customer_id}-${p.type_id}`;
+        if (!newGroups.has(gk)) {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          const type = this.state.types.find(t => t.id === p.type_id);
+          newGroups.set(gk, {
+            customerName: customer?.name || '?',
+            typeName: this.shiftPlannerGroupMode === 'customer' ? '' : (type?.name || '?'),
+            items: []
+          });
+        }
+        newGroups.get(gk)!.items.push(p);
+      });
+      if (this.shiftPlannerGroupMode === 'customer') {
+        newGroups.forEach((group) => {
+          const typeNames = [...new Set(group.items.map(p => {
+            const type = this.state.types.find(t => t.id === p.type_id);
+            return type?.name || '?';
+          }))];
+          group.typeName = typeNames.join(', ');
+        });
+      }
+      newGroups.forEach((group, gk) => {
+        if (!this.projectShiftConfig.has(gk)) {
+          this.projectShiftConfig.set(gk, this.getDefaultProjectShifts(gk, group.items));
+        }
+      });
+      return newGroups;
+    };
+    
+    // Helper to render project table rows and bind checkbox listeners
+    const renderProjectRows = () => {
+      const tbody = document.getElementById('shiftPlannerProjectsBody');
+      if (!tbody) return;
+      
+      tbody.innerHTML = Array.from(projectGroups.entries()).map(([groupKey, group]) => {
+        const shifts = this.projectShiftConfig.get(groupKey) || new Set([1, 2]);
+        const tests = group.items.map(p => this.state.tests.find(t => t.id === p.test_id)?.name || '').filter(Boolean);
+        const uniqueTests = [...new Set(tests)];
+        return `
+          <tr data-group="${groupKey}">
+            <td class="project-name-cell">
+              <span class="project-name">${group.customerName}</span>
+              <span class="project-type">${group.typeName}</span>
+              ${uniqueTests.length > 0 ? `<span class="project-tests">${uniqueTests.join(', ')}</span>` : ''}
+            </td>
+            <td class="shift-col">
+              <label class="shift-checkbox">
+                <input type="checkbox" data-group="${groupKey}" data-shift="1" ${shifts.has(1) ? 'checked' : ''}/>
+                <span class="shift-check-mark"></span>
+              </label>
+            </td>
+            <td class="shift-col">
+              <label class="shift-checkbox">
+                <input type="checkbox" data-group="${groupKey}" data-shift="2" ${shifts.has(2) ? 'checked' : ''}/>
+                <span class="shift-check-mark"></span>
+              </label>
+            </td>
+            <td class="shift-col">
+              <label class="shift-checkbox">
+                <input type="checkbox" data-group="${groupKey}" data-shift="3" ${shifts.has(3) ? 'checked' : ''}/>
+                <span class="shift-check-mark"></span>
+              </label>
+            </td>
+          </tr>
+        `;
+      }).join('');
+      
+      // Re-bind checkbox listeners on new rows
+      tbody.querySelectorAll('.shift-checkbox input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', (ev) => {
+          const input = ev.target as HTMLInputElement;
+          const gk = input.dataset.group!;
+          const shift = parseInt(input.dataset.shift!);
+          if (!this.projectShiftConfig.has(gk)) {
+            this.projectShiftConfig.set(gk, new Set());
+          }
+          const shifts = this.projectShiftConfig.get(gk)!;
+          if (input.checked) { shifts.add(shift); } else { shifts.delete(shift); }
+          this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+        });
+      });
+      
+      this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+    };
+    
+    // Event listeners for group mode toggle
+    modalBody.querySelectorAll('#groupModeToggle .group-mode-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const button = e.currentTarget as HTMLElement;
+        const mode = button.dataset.mode as 'project' | 'customer';
+        if (mode === this.shiftPlannerGroupMode) return;
+        
+        this.shiftPlannerGroupMode = mode;
+        
+        // Update active button state
+        modalBody.querySelectorAll('#groupModeToggle .group-mode-btn').forEach(b => b.classList.remove('active'));
+        button.classList.add('active');
+        
+        // Rebuild project groups with new mode
+        projectGroups.clear();
+        const newGroups = rebuildProjectGroups();
+        newGroups.forEach((v, k) => projectGroups.set(k, v));
+        
+        // Update summary stats
+        const statValues = modalBody.querySelectorAll('.shift-planner-stat .stat-value');
+        if (statValues[0]) statValues[0].textContent = String(projectGroups.size);
+        const newUnassigned = Array.from(projectGroups.keys()).filter(k => !assignedGroupIds.has(k)).length;
+        if (statValues[2]) statValues[2].textContent = String(newUnassigned);
+        
+        // Re-render project rows in place
+        renderProjectRows();
+        
+        await this.saveShiftPlannerConfig();
       });
     });
     
@@ -11553,17 +11892,24 @@ class KappaApp {
     if (t3) t3.innerHTML = `<strong>${total3}</strong>`;
     
     // Update employee shift counts
-    let emp1 = 0, emp2 = 0;
+    let emp1 = 0, emp2 = 0, emp3 = 0;
     availableEmployees.forEach(e => {
       const shift = this.employeeWeekShift.get(e.id) || 1;
       if (shift === 1) emp1++;
-      else emp2++;
+      else if (shift === 2) emp2++;
+      else if (shift === 3) emp3++;
     });
     
     const e1 = document.getElementById('shiftPlannerEmp1');
     const e2 = document.getElementById('shiftPlannerEmp2');
+    const e3 = document.getElementById('shiftPlannerEmp3');
     if (e1) e1.textContent = String(emp1);
     if (e2) e2.textContent = String(emp2);
+    if (e3) {
+      e3.textContent = String(emp3);
+      const e3Container = e3.closest('.emp-shift-count') as HTMLElement;
+      if (e3Container) e3Container.style.display = this.currentShiftSystem >= 3 ? '' : 'none';
+    }
   }
   
   private async runShiftBasedAssignment(defaultScope: 'project' | 'audit' | 'adhesion' | 'specific', scopeTestId?: string): Promise<void> {
@@ -11578,7 +11924,9 @@ class KappaApp {
     // 2. Build project groups
     const projectGroups = new Map<string, { items: Project[] }>();
     weekProjects.forEach(p => {
-      const groupKey = `${p.customer_id}-${p.type_id}`;
+      const groupKey = this.shiftPlannerGroupMode === 'customer' 
+        ? String(p.customer_id) 
+        : `${p.customer_id}-${p.type_id}`;
       if (!projectGroups.has(groupKey)) {
         projectGroups.set(groupKey, { items: [] });
       }
@@ -12188,8 +12536,16 @@ class KappaApp {
     const allAssignments = this.state.scheduleAssignments;
     
     // ===== PODSTAWOWE STATYSTYKI =====
-    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
-    const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
+    const availableEmployees = this.state.employees.filter(e => {
+      if (e.status && e.status !== 'available') return false;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !absence;
+    });
+    const absentEmployees = this.state.employees.filter(e => {
+      if (e.status === 'vacation' || e.status === 'sick') return true;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !!absence;
+    });
     const assignedEmployeeIds = new Set(weekAssignments.map(a => a.employeeId));
     const unassignedCount = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id)).length;
     
@@ -14709,6 +15065,23 @@ class KappaApp {
     
     if (!shiftChanged && !projectChanged) return;
     
+    // Sprawdź i usuń duplikaty - te same przypisania (employee+project+week+shift) 
+    const targetProjectId = newProjectId || assignment.projectId;
+    const duplicates = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+      a.id !== assignmentId &&
+      a.employeeId === assignment.employeeId &&
+      a.projectId === targetProjectId &&
+      a.week === assignment.week &&
+      a.shift === newShift
+    );
+    for (const dup of duplicates) {
+      const dupIdx = this.state.scheduleAssignments.indexOf(dup);
+      if (dupIdx !== -1) {
+        this.state.scheduleAssignments.splice(dupIdx, 1);
+        await db.delete('scheduleAssignments', dup.id);
+      }
+    }
+    
     if (shiftChanged) {
       assignment.shift = newShift;
     }
@@ -14871,6 +15244,14 @@ class KappaApp {
     
     projectsContainer.innerHTML = '';
     
+    // Build employee multi-shift map for the current week
+    const allWeekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const empShiftsInWeek = new Map<string, Set<number>>();
+    allWeekAssignments.forEach((a: ScheduleAssignment) => {
+      if (!empShiftsInWeek.has(a.employeeId)) empShiftsInWeek.set(a.employeeId, new Set());
+      empShiftsInWeek.get(a.employeeId)!.add(a.shift);
+    });
+    
     sortedGroups.forEach(([groupKey, group]) => {
       const groupAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
         (a.projectId === groupKey || group.items.some(item => item.id === a.projectId)) &&
@@ -14997,6 +15378,7 @@ class KappaApp {
           let scopeLabel = '';
           let scopeClass = '';
           let scopeIcon = '';
+          let exclusionLabel = '';
           
           if (a.scope === 'adhesion') {
             scopeLabel = i18n.t('schedule.scopeAdhesion');
@@ -15018,8 +15400,33 @@ class KappaApp {
             scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>';
           }
           
+          // Smart scope exclusion: if this is a "whole project" assignment,
+          // check if other employees have specific test assignments for same project
+          if (a.scope === 'project' && !a.testId && !a.partId) {
+            const specificAssignments = groupAssignments.filter((other: ScheduleAssignment) =>
+              other.id !== a.id &&
+              other.employeeId !== a.employeeId &&
+              other.scope === 'specific' &&
+              other.testId
+            );
+            
+            if (specificAssignments.length > 0) {
+              const excludedTestNames = [...new Set(specificAssignments.map((sa: ScheduleAssignment) => {
+                const test = this.state.tests.find(t => t.id === sa.testId);
+                return test?.name || 'Test';
+              }))];
+              exclusionLabel = `${i18n.t('schedule.scopeExcluding')} ${excludedTestNames.join(', ')}`;
+              scopeClass = 'scope-project-excluding';
+            }
+          }
+          
           const initials = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
           const fullName = `${emp.firstName} ${emp.lastName}`;
+          
+          // Check if employee is on multiple shifts this week
+          const empShifts = empShiftsInWeek.get(emp.id);
+          const isMultiShift = empShifts ? empShifts.size > 1 : false;
+          const multiShiftLabel = isMultiShift ? `⚠️ ${i18n.t('schedule.multiShiftWarning')}` : '';
           
           // Parsowanie notatki - oddziel główną notatkę od odpowiedzi
           let mainNoteText = a.note || '';
@@ -15039,7 +15446,7 @@ class KappaApp {
           const repliesBadge = repliesCount > 0 ? `<span class="chip-replies-badge">${repliesCount}</span>` : '';
           
           return `
-            <div class="sched-chip ${hasNote ? 'has-note' : ''}" 
+            <div class="sched-chip ${hasNote ? 'has-note' : ''} ${isMultiShift ? 'multi-shift-warning' : ''} chip-shift-${s}" 
                  style="--chip-color: ${emp.color}" 
                  data-id="${a.id}" 
                  data-employee-id="${emp.id}"
@@ -15049,6 +15456,8 @@ class KappaApp {
                 <div class="sched-chip-info">
                   <span class="sched-chip-name">${fullName}</span>
                   ${scopeLabel ? `<span class="sched-chip-badge ${scopeClass}">${scopeIcon} ${scopeLabel}</span>` : ''}
+                  ${exclusionLabel ? `<span class="sched-chip-exclusion">${exclusionLabel}</span>` : ''}
+                  ${multiShiftLabel ? `<span class="sched-chip-multi-shift">${multiShiftLabel}</span>` : ''}
                   ${mainNoteText ? `<span class="sched-chip-note-preview" data-full-note="${mainNoteText.replace(/"/g, '&quot;')}">${notePreview}</span>` : ''}
                 </div>
                 ${repliesBadge}
@@ -15167,9 +15576,8 @@ class KappaApp {
             if (sourceProject !== groupKey) {
               const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
               if (assignment) {
-                // Usuń stare przypisanie i pokaż picker dla nowego
-                await this.removeAssignment(assignmentId);
-                this.showScopePickerAtPosition(groupKey, group.items, assignment.employeeId, weekKey, s as 1 | 2 | 3, dropX, dropY);
+                // Nie usuwaj od razu - przekaż do pickera, usunie po potwierdzeniu
+                this.showScopePickerAtPosition(groupKey, group.items, assignment.employeeId, weekKey, s as 1 | 2 | 3, dropX, dropY, assignmentId);
               }
               return;
             }
@@ -15313,21 +15721,69 @@ class KappaApp {
           if (!emp) return '';
           const initials = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
           const fullName = `${emp.firstName} ${emp.lastName}`;
+          
+          // Parsowanie notatki
+          let mainNoteText = a.note || '';
+          let repliesCount = 0;
+          if (mainNoteText.includes('---REPLIES---')) {
+            const parts = mainNoteText.split('---REPLIES---');
+            mainNoteText = parts[0].trim();
+            try {
+              const parsedReplies = JSON.parse(parts[1]);
+              repliesCount = Array.isArray(parsedReplies) ? parsedReplies.length : 0;
+            } catch (e) { repliesCount = 0; }
+          }
+          
+          const hasNote = mainNoteText.length > 0 || repliesCount > 0;
+          const notePreview = mainNoteText.length > 15 ? mainNoteText.slice(0, 15) + '...' : mainNoteText;
+          const commentIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+          const repliesBadge = repliesCount > 0 ? `<span class="chip-replies-badge">${repliesCount}</span>` : '';
+          
           return `
-            <div class="sched-chip" style="--chip-color: ${emp.color}" data-id="${a.id}" data-employee-id="${emp.id}">
+            <div class="sched-chip ${hasNote ? 'has-note' : ''} chip-shift-${s}" 
+                 style="--chip-color: ${emp.color}" 
+                 data-id="${a.id}" 
+                 data-employee-id="${emp.id}"
+                 data-assignment='${JSON.stringify({ id: a.id, note: a.note || '' })}'>
               <div class="sched-chip-main">
                 <span class="sched-chip-avatar">${initials}</span>
                 <div class="sched-chip-info">
                   <span class="sched-chip-name">${fullName}</span>
-                  ${a.note ? `<span class="sched-chip-note-preview">${a.note.length > 15 ? a.note.slice(0, 15) + '...' : a.note}</span>` : ''}
+                  ${mainNoteText ? `<span class="sched-chip-note-preview" data-full-note="${mainNoteText.replace(/"/g, '&quot;')}">${notePreview}</span>` : ''}
                 </div>
+                ${repliesBadge}
               </div>
+              <button class="sched-chip-comment-btn ${hasNote ? 'has-comment' : ''}" data-aid="${a.id}" title="${hasNote ? i18n.t('schedule.editComment') : i18n.t('schedule.addComment')}">
+                ${commentIcon}
+              </button>
               <button class="sched-chip-remove" data-aid="${a.id}">×</button>
             </div>
           `;
         }).join('');
         
         shiftCell.innerHTML = chipsHtml || '<span class="sched-cell-add">+</span>';
+        
+        // Comment button handler
+        shiftCell.querySelectorAll('.sched-chip-comment-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const assignmentId = (e.target as HTMLElement).closest('.sched-chip-comment-btn')?.getAttribute('data-aid');
+            if (assignmentId) this.showAssignmentNoteModal(assignmentId);
+          });
+        });
+        
+        // Note preview hover - show popup
+        shiftCell.querySelectorAll('.sched-chip-note-preview').forEach(preview => {
+          preview.addEventListener('mouseenter', (e) => {
+            const fullNote = (e.target as HTMLElement).dataset.fullNote || '';
+            if (fullNote.length > 20) {
+              this.showCommentPopup(e.target as HTMLElement, fullNote);
+            }
+          });
+          preview.addEventListener('mouseleave', () => {
+            this.hideCommentPopup();
+          });
+        });
         
         // Remove chip handler
         shiftCell.querySelectorAll('.sched-chip-remove').forEach(btn => {
@@ -15342,6 +15798,7 @@ class KappaApp {
         shiftCell.querySelectorAll('.sched-chip').forEach(chip => {
           chip.addEventListener('click', (ev) => {
             if ((ev.target as HTMLElement).classList.contains('sched-chip-remove')) return;
+            if ((ev.target as HTMLElement).closest('.sched-chip-comment-btn')) return;
             const empId = (chip as HTMLElement).dataset.employeeId;
             if (empId) this.showEmployeeModal(empId);
           });
@@ -15480,7 +15937,11 @@ class KappaApp {
       };
       
       try {
-        await api.addExtraTask(task);
+        if (existingTask) {
+          await api.updateExtraTask(task.id, task);
+        } else {
+          await api.addExtraTask(task);
+        }
         
         // Aktualizuj stan lokalny
         const idx = this.state.extraTasks.findIndex(t => t.id === task.id);
@@ -15492,6 +15953,7 @@ class KappaApp {
         
         this.showToast(existingTask ? i18n.t('schedule.extraTaskUpdated') : i18n.t('schedule.extraTaskAdded'), 'success');
         this.renderScheduleContent();
+        this.renderPlanningGrid();
       } catch (err) {
         this.showToast(i18n.t('schedule.extraTaskError'), 'error');
       }
@@ -15517,6 +15979,20 @@ class KappaApp {
     }
   }
   
+  private async updateExtraTaskComment(taskId: string, comment: string): Promise<void> {
+    try {
+      const task = this.state.extraTasks.find(t => t.id === taskId);
+      if (task) {
+        await api.updateExtraTask(taskId, { ...task, comment });
+        // Update all tasks with same name (grouped)
+        const tasksWithSameName = this.state.extraTasks.filter(t => t.name === task.name);
+        tasksWithSameName.forEach(t => t.comment = comment);
+      }
+    } catch (err) {
+      this.showToast(i18n.t('schedule.extraTaskError'), 'error');
+    }
+  }
+
   private async addExtraTaskAssignment(
     extraProjectId: string,
     employeeId: string,
@@ -15846,7 +16322,8 @@ class KappaApp {
     week: string,
     shift: 1 | 2 | 3,
     x: number,
-    y: number
+    y: number,
+    replaceAssignmentId?: string
   ): void {
     document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
     document.querySelectorAll('.sched-picker').forEach(p => p.remove());
@@ -15898,6 +16375,10 @@ class KappaApp {
         const testId = (btn as HTMLElement).dataset.test;
         const partId = (btn as HTMLElement).dataset.part;
         
+        // Usuń stare przypisanie dopiero po potwierdzeniu scope
+        if (replaceAssignmentId) {
+          await this.removeAssignment(replaceAssignmentId);
+        }
         await this.addScopedAssignment(groupKey, employeeId, week, shift, scope, testId, partId);
         picker.remove();
       });

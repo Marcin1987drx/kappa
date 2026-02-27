@@ -1,0 +1,2520 @@
+{
+  "backupDate": "2026-02-27T14:58:34.266Z",
+  "version": "2.0",
+  "customers": [
+    {
+      "id": "c1",
+      "name": "Porsche",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c2",
+      "name": "Tesla",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c3",
+      "name": "VW",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c4",
+      "name": "Mercedes",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c5",
+      "name": "BMW",
+      "created_at": 1737972000000
+    }
+  ],
+  "types": [
+    {
+      "id": "t1",
+      "name": "G3",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t2",
+      "name": "Model Y",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t3",
+      "name": "310",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t4",
+      "name": "E-Class",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t5",
+      "name": "iX",
+      "created_at": 1737972000000
+    }
+  ],
+  "parts": [
+    {
+      "id": "p1",
+      "name": "Abdeckung HUD / non HUD",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p2",
+      "name": "Front Door",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p3",
+      "name": "Rear Door",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p4",
+      "name": "Z Blenda FS LL",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p5",
+      "name": "Z Blenda BFS LL",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p6",
+      "name": "Außenschale HSK",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p7",
+      "name": "Beflockung Innendeckel HSK",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p8",
+      "name": "Abdeckung ISK",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p9",
+      "name": "D-Träger",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p10",
+      "name": "Außenschale FS",
+      "created_at": 1737972000000
+    }
+  ],
+  "tests": [
+    {
+      "id": "te1",
+      "name": "Produkt Audit",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "te2",
+      "name": "Peel off machine test",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "te3",
+      "name": "Messlehre",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "te4",
+      "name": "Passeinlage",
+      "created_at": 1737972000000
+    }
+  ],
+  "projects": [
+    {
+      "id": "pr1",
+      "customer_id": "c1",
+      "type_id": "t1",
+      "part_id": "p1",
+      "test_id": "te1",
+      "created_at": 1737972000000,
+      "updated_at": 1772194291873,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 20,
+          "soll": 28,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 25,
+          "soll": 26,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW03": {
+          "ist": 32,
+          "soll": 32,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW04": {
+          "ist": 18,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 21,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW09": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW10": {
+          "ist": 0,
+          "soll": 3,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW08": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr2",
+      "customer_id": "c2",
+      "type_id": "t2",
+      "part_id": "p2",
+      "test_id": "te2",
+      "created_at": 1737972000000,
+      "updated_at": 1772194292664,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 10,
+          "soll": 25,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 22,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW03": {
+          "ist": 25,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW09": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW10": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW08": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr3",
+      "customer_id": "c3",
+      "type_id": "t3",
+      "part_id": "p4",
+      "test_id": "te1",
+      "created_at": 1737972000000,
+      "updated_at": 1772194293096,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 4,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW09": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW10": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW08": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr4",
+      "customer_id": "c1",
+      "type_id": "t1",
+      "part_id": "p6",
+      "test_id": "te1",
+      "created_at": 1737972000000,
+      "updated_at": 1772194293432,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 32,
+          "soll": 32,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 0,
+          "soll": 32,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": true,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 1,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW09": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW10": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW08": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr5",
+      "customer_id": "c4",
+      "type_id": "t4",
+      "part_id": "p3",
+      "test_id": "te3",
+      "created_at": 1737972000000,
+      "updated_at": 1772194293849,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 5,
+          "soll": 10,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": true
+        },
+        "2026-KW07": {
+          "ist": 9,
+          "soll": 9,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 6,
+          "soll": 6,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW09": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW10": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW08": {
+          "ist": 0,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    }
+  ],
+  "employees": [
+    {
+      "id": "test-emp",
+      "firstName": "Test",
+      "lastName": "User",
+      "color": "#E91E63",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1770147873947,
+      "role": "manager",
+      "email": null,
+      "phone": null,
+      "department": null,
+      "shiftSystem": 2
+    },
+    {
+      "id": "emp1",
+      "firstName": "Jan",
+      "lastName": "Kowalski",
+      "color": "#E91E63",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null,
+      "shiftSystem": 2
+    },
+    {
+      "id": "emp2",
+      "firstName": "Anna",
+      "lastName": "Nowak",
+      "color": "#9C27B0",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null,
+      "shiftSystem": 2
+    },
+    {
+      "id": "emp3",
+      "firstName": "Piotr",
+      "lastName": "Wiśniewski",
+      "color": "#673AB7",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null,
+      "shiftSystem": 2
+    },
+    {
+      "id": "emp4",
+      "firstName": "Maria",
+      "lastName": "Wójcik",
+      "color": "#3F51B5",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null,
+      "shiftSystem": 2
+    }
+  ],
+  "scheduleAssignments": [
+    {
+      "id": "4f79f4d5-26db-40f9-9504-06e2802aed1f",
+      "employeeId": "emp1",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW05",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770238749421
+    },
+    {
+      "id": "06b4bc89-261b-4e68-a237-6fd8044bf3a5",
+      "employeeId": "emp4",
+      "projectId": "c2-t2",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 1,
+      "scope": "project",
+      "note": "---REPLIES---[{\"text\":\"vdfvfd\",\"date\":\"5.02.2026\",\"author\":\"Użytkownik\"},{\"text\":\"vjmhvjhbg\",\"date\":\"12.02.2026, 14:09:10\",\"author\":\"Użytkownik\"}]",
+      "created_at": 1770246730625
+    },
+    {
+      "id": "d33fccb7-04af-45f1-952a-b55ea4e4bc32",
+      "employeeId": "emp2",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770247759909
+    },
+    {
+      "id": "026351b3-01d6-4e88-a65b-0352cb943940",
+      "employeeId": "test-emp",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770250349309
+    },
+    {
+      "id": "44ea7224-5254-4e2f-9c7e-8d91e4a4a5d5",
+      "employeeId": "emp2",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 1,
+      "scope": "specific",
+      "note": null,
+      "created_at": 1770404795960
+    },
+    {
+      "id": "ea3f9658-771d-47da-aaf2-3cdc990177df",
+      "employeeId": "emp3",
+      "projectId": "c2-t2",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770901642956
+    },
+    {
+      "id": "8deeaa10-b417-4390-a0a3-50d1e5b68aff",
+      "employeeId": "test-emp",
+      "projectId": "c4-t4",
+      "testId": "te3",
+      "week": "2026-KW07",
+      "shift": 1,
+      "scope": "specific",
+      "note": null,
+      "created_at": 1770901651411
+    },
+    {
+      "id": "2ab226ed-255e-49d9-9c09-c8a4717f7eaa",
+      "employeeId": "emp4",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770901719509
+    },
+    {
+      "id": "5a64f2d8-ac0e-4d64-9ce6-0384589759bc",
+      "employeeId": "emp2",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1771935916682
+    },
+    {
+      "id": "6e10282a-3653-4b39-ba69-995aeb55bc26",
+      "employeeId": "emp4",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1771935929268
+    },
+    {
+      "id": "dfbe9c71-3823-4ae3-8c5d-7efb45aca16d",
+      "employeeId": "test-emp",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1771936117840
+    },
+    {
+      "id": "408ca013-9ef2-4aa3-9871-f1a53ead762e",
+      "employeeId": "emp1",
+      "projectId": "c2-t2",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1771936655982
+    },
+    {
+      "id": "8b7698a8-f2a8-497a-b975-d4fdc205c105",
+      "employeeId": "emp3",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW10",
+      "shift": 3,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772104668085
+    },
+    {
+      "id": "3730a0e6-b974-46ea-a09f-c3df992b1624",
+      "employeeId": "emp2",
+      "projectId": "c2-t2",
+      "testId": null,
+      "week": "2026-KW10",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772104668190
+    },
+    {
+      "id": "75d87cef-c479-4d7a-b3ef-236197a3cbe7",
+      "employeeId": "emp1",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW10",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772104668415
+    },
+    {
+      "id": "a7daf400-cfba-491a-8f7b-decac9593fe8",
+      "employeeId": "emp4",
+      "projectId": "c4-t4",
+      "testId": null,
+      "week": "2026-KW10",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772104668519
+    },
+    {
+      "id": "f21f648a-b979-49f2-9940-d93c2a720f56",
+      "employeeId": "emp1",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW09",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772182104730
+    },
+    {
+      "id": "097ceef8-b4c5-4027-851c-14057fb48593",
+      "employeeId": "emp3",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW09",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772192949945
+    },
+    {
+      "id": "2e426b81-008c-45af-9323-a5ba27425c02",
+      "employeeId": "emp4",
+      "projectId": "c2-t2",
+      "testId": null,
+      "week": "2026-KW09",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772192971751
+    },
+    {
+      "id": "5306f9ff-cf32-4a89-9424-ca866b6af8fb",
+      "employeeId": "emp1",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW09",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772192989596
+    },
+    {
+      "id": "aa0edb8a-9614-4559-ad69-fb37bfd01797",
+      "employeeId": "test-emp",
+      "projectId": "c4-t4",
+      "testId": "te3",
+      "week": "2026-KW09",
+      "shift": 2,
+      "scope": "specific",
+      "note": null,
+      "created_at": 1772194074890
+    },
+    {
+      "id": "0f025637-0147-4b96-bf2a-661f4f9a7e80",
+      "employeeId": "emp4",
+      "projectId": "c1-t1",
+      "testId": "te1",
+      "week": "2026-KW08",
+      "shift": 1,
+      "scope": "specific",
+      "note": null,
+      "created_at": 1772194302304
+    },
+    {
+      "id": "e7d8729b-7161-43b7-880c-63d2831659a5",
+      "employeeId": "emp3",
+      "projectId": "extra-6c1616a0-717d-48fa-9715-31cfc5683511",
+      "testId": null,
+      "week": "2026-KW08",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1772194310931
+    },
+    {
+      "id": "5b5e643d-36fe-41df-ba54-81be31e09af2",
+      "employeeId": "emp4",
+      "projectId": "c4-t4",
+      "testId": "te3",
+      "week": "2026-KW09",
+      "shift": 1,
+      "scope": "specific",
+      "note": null,
+      "created_at": 1772194414863
+    }
+  ],
+  "absenceTypes": [
+    {
+      "id": "vacation",
+      "name": "Urlop wypoczynkowy",
+      "icon": "🏖️",
+      "color": "#10b981",
+      "defaultDays": 26,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 1
+    },
+    {
+      "id": "vacation-force",
+      "name": "Urlop siła wyższa 50%",
+      "icon": "⚡",
+      "color": "#f59e0b",
+      "defaultDays": 2,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 2
+    },
+    {
+      "id": "vacation-overdue",
+      "name": "Zaległy urlop",
+      "icon": "📅",
+      "color": "#6366f1",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 3
+    },
+    {
+      "id": "paternity",
+      "name": "Urlop ojcowski",
+      "icon": "👶",
+      "color": "#3b82f6",
+      "defaultDays": 14,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 4
+    },
+    {
+      "id": "parental",
+      "name": "Urlop macierzyński/rodzicielski",
+      "icon": "👨‍👩‍👧",
+      "color": "#ec4899",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 5
+    },
+    {
+      "id": "childcare",
+      "name": "Opieka nad dzieckiem",
+      "icon": "👨‍👧",
+      "color": "#8b5cf6",
+      "defaultDays": 2,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 6
+    },
+    {
+      "id": "occasional",
+      "name": "Urlop okolicznościowy",
+      "icon": "🎭",
+      "color": "#14b8a6",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 7
+    },
+    {
+      "id": "sick",
+      "name": "Chorobowe",
+      "icon": "🤒",
+      "color": "#ef4444",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 8
+    },
+    {
+      "id": "medical",
+      "name": "Badania okresowe",
+      "icon": "🏥",
+      "color": "#06b6d4",
+      "defaultDays": 1,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 9
+    },
+    {
+      "id": "unpaid",
+      "name": "Urlop bezpłatny",
+      "icon": "💼",
+      "color": "#64748b",
+      "defaultDays": 0,
+      "isPaid": 0,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 10
+    },
+    {
+      "id": "occasional-env",
+      "name": "Urlop okolicznościowy",
+      "icon": "🎭",
+      "color": "#14b8a6",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 11
+    },
+    {
+      "id": "delegation",
+      "name": "Delegacja",
+      "icon": "✈️",
+      "color": "#0ea5e9",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 12
+    },
+    {
+      "id": "home-office",
+      "name": "Home Office",
+      "icon": "🏠",
+      "color": "#a855f7",
+      "defaultDays": 12,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 13
+    }
+  ],
+  "absences": [
+    {
+      "id": "abs-1770145956332",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-10",
+      "workDays": 1,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770145956389,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770146079006",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-17",
+      "workDays": 6,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770146079271,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "test-123",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-12",
+      "workDays": 3,
+      "status": "approved",
+      "note": "test",
+      "createdAt": 1770146405029,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770146450649",
+      "employeeId": "1770146270412-d7uxpk4kf",
+      "absenceTypeId": "vacation-force",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-10",
+      "workDays": 1,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770146450993,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "test-456",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-12",
+      "workDays": 3,
+      "status": "approved",
+      "note": "test2",
+      "createdAt": 1770146621764,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770147146789",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-09",
+      "endDate": "2026-02-25",
+      "workDays": 13,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770147146998,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770151739179",
+      "employeeId": "emp1",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-17",
+      "workDays": 6,
+      "status": "rejected",
+      "note": "",
+      "createdAt": 1770151739370,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770224456038",
+      "employeeId": "emp2",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-17",
+      "endDate": "2026-02-19",
+      "workDays": 3,
+      "status": "pending",
+      "note": "",
+      "createdAt": 1770224456100,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770246771933",
+      "employeeId": "emp2",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-23",
+      "endDate": "2026-02-26",
+      "workDays": 4,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770246769360,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770901879065",
+      "employeeId": "emp4",
+      "absenceTypeId": "vacation-force",
+      "startDate": "2026-03-09",
+      "endDate": "2026-03-12",
+      "workDays": 4,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770901879116,
+      "approvedAt": null,
+      "approvedBy": null
+    }
+  ],
+  "absenceLimits": [
+    {
+      "id": "emp1-vacation-2026",
+      "employeeId": "emp1",
+      "absenceTypeId": "vacation",
+      "year": 2026,
+      "totalDays": 30,
+      "usedDays": 6
+    }
+  ],
+  "employeeDetails": [],
+  "qualifications": [],
+  "holidays": [
+    {
+      "id": "2025-01-01",
+      "date": "2025-01-01",
+      "name": "Nowy Rok",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-01-06",
+      "date": "2025-01-06",
+      "name": "Trzech Króli",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-04-20",
+      "date": "2025-04-20",
+      "name": "Wielkanoc",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-04-21",
+      "date": "2025-04-21",
+      "name": "Poniedziałek Wielkanocny",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-05-01",
+      "date": "2025-05-01",
+      "name": "Święto Pracy",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-05-03",
+      "date": "2025-05-03",
+      "name": "Święto Konstytucji 3 Maja",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-06-08",
+      "date": "2025-06-08",
+      "name": "Zielone Świątki",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-06-19",
+      "date": "2025-06-19",
+      "name": "Boże Ciało",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-08-15",
+      "date": "2025-08-15",
+      "name": "Wniebowzięcie NMP",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-11-01",
+      "date": "2025-11-01",
+      "name": "Wszystkich Świętych",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-11-11",
+      "date": "2025-11-11",
+      "name": "Święto Niepodległości",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-12-25",
+      "date": "2025-12-25",
+      "name": "Boże Narodzenie",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-12-26",
+      "date": "2025-12-26",
+      "name": "Drugi dzień Bożego Narodzenia",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-01-01",
+      "date": "2026-01-01",
+      "name": "Nowy Rok",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-01-06",
+      "date": "2026-01-06",
+      "name": "Trzech Króli",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-04-05",
+      "date": "2026-04-05",
+      "name": "Wielkanoc",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-04-06",
+      "date": "2026-04-06",
+      "name": "Poniedziałek Wielkanocny",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-05-01",
+      "date": "2026-05-01",
+      "name": "Święto Pracy",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-05-03",
+      "date": "2026-05-03",
+      "name": "Święto Konstytucji 3 Maja",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-05-24",
+      "date": "2026-05-24",
+      "name": "Zielone Świątki",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-06-04",
+      "date": "2026-06-04",
+      "name": "Boże Ciało",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-08-15",
+      "date": "2026-08-15",
+      "name": "Wniebowzięcie NMP",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-11-01",
+      "date": "2026-11-01",
+      "name": "Wszystkich Świętych",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-11-11",
+      "date": "2026-11-11",
+      "name": "Święto Niepodległości",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-12-25",
+      "date": "2026-12-25",
+      "name": "Boże Narodzenie",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-12-26",
+      "date": "2026-12-26",
+      "name": "Drugi dzień Bożego Narodzenia",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-01-01",
+      "date": "2027-01-01",
+      "name": "Nowy Rok",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-01-06",
+      "date": "2027-01-06",
+      "name": "Trzech Króli",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-03-28",
+      "date": "2027-03-28",
+      "name": "Wielkanoc",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-03-29",
+      "date": "2027-03-29",
+      "name": "Poniedziałek Wielkanocny",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-05-01",
+      "date": "2027-05-01",
+      "name": "Święto Pracy",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-05-03",
+      "date": "2027-05-03",
+      "name": "Święto Konstytucji 3 Maja",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-05-16",
+      "date": "2027-05-16",
+      "name": "Zielone Świątki",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-05-27",
+      "date": "2027-05-27",
+      "name": "Boże Ciało",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-08-15",
+      "date": "2027-08-15",
+      "name": "Wniebowzięcie NMP",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-11-01",
+      "date": "2027-11-01",
+      "name": "Wszystkich Świętych",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-11-11",
+      "date": "2027-11-11",
+      "name": "Święto Niepodległości",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-12-25",
+      "date": "2027-12-25",
+      "name": "Boże Narodzenie",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-12-26",
+      "date": "2027-12-26",
+      "name": "Drugi dzień Bożego Narodzenia",
+      "isMovable": 0
+    }
+  ],
+  "comments": [
+    {
+      "id": "1770247850298-yvn4nsivm",
+      "projectId": "pr3",
+      "week": "2026-KW06",
+      "text": "dffvdvd",
+      "createdAt": 1770247850298
+    },
+    {
+      "id": "1770248418352-uopnxy0b8",
+      "projectId": "c2-t2",
+      "week": "2026-KW06",
+      "text": "vsfvsvs",
+      "createdAt": 1770248418352
+    },
+    {
+      "id": "1770901410949-t3pkbqy09",
+      "projectId": "pr4",
+      "week": "2026-KW07",
+      "text": "hjvf",
+      "createdAt": 1770901410949
+    }
+  ],
+  "logs": [
+    {
+      "id": "1770237861235-ls6ag1khv",
+      "userId": "1770237861235-j9e8hccvv",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Anna Nowak ← Mercedes",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1770237861235
+    },
+    {
+      "id": "1770237893160-1awtyn37h",
+      "userId": "1770237893160-csliwpmxp",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Anna Nowak ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1770237893160
+    },
+    {
+      "id": "1770246728646-8qsuuglsw",
+      "userId": "1770246728646-387nc0og0",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1770246728646
+    },
+    {
+      "id": "1770250159357-d2h1x8yo1",
+      "userId": "1770250159357-5zy2t1oi2",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Employee",
+      "entityName": "Test User",
+      "details": "",
+      "timestamp": 1770250159357
+    },
+    {
+      "id": "1770250346481-6uba2b8hy",
+      "userId": "1770250346481-03hlayw6u",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1770250346481
+    },
+    {
+      "id": "1770901680906-yp81v2d91",
+      "userId": "1770901680906-w46os02u3",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Anna Nowak ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1770901680906
+    },
+    {
+      "id": "1770901718612-xowm6iz27",
+      "userId": "1770901718612-dwyj75dv9",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← VW",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1770901718612
+    },
+    {
+      "id": "1772097579505-cf4u4ly9d",
+      "userId": "1772097579505-ma6dqbwuq",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Porsche",
+      "details": "Z2, Specific",
+      "timestamp": 1772097579505
+    },
+    {
+      "id": "1772097581038-jj2zrhq0e",
+      "userId": "1772097581038-l62n0mhzg",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Porsche",
+      "details": "Z1, Project",
+      "timestamp": 1772097581038
+    },
+    {
+      "id": "1772097588164-g20p8lw6h",
+      "userId": "1772097588164-oity40vcy",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z1, Audits",
+      "timestamp": 1772097588164
+    },
+    {
+      "id": "1772097589541-txnzd0cms",
+      "userId": "1772097589541-tr4o39i5v",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z1, Audits",
+      "timestamp": 1772097589541
+    },
+    {
+      "id": "1772097654432-2horq5lo6",
+      "userId": "1772097654432-jjdx9fi11",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z1, Adhesion",
+      "timestamp": 1772097654432
+    },
+    {
+      "id": "1772101751310-b5mboj4b4",
+      "userId": "1772101751310-o1h4l0hfj",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Porsche",
+      "details": "Z2, Projekt",
+      "timestamp": 1772101751310
+    },
+    {
+      "id": "1772101752458-2zg0we1ia",
+      "userId": "1772101752458-irc3d2jng",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Audyty",
+      "timestamp": 1772101752458
+    },
+    {
+      "id": "1772101753622-w2lo8a3ma",
+      "userId": "1772101753622-z6kp4frun",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772101753622
+    },
+    {
+      "id": "1772101754643-vbb49wr3i",
+      "userId": "1772101754643-cpbadf6os",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← VW",
+      "details": "Z1, Projekt",
+      "timestamp": 1772101754643
+    },
+    {
+      "id": "1772102030964-6ig8dg3h1",
+      "userId": "1772102030964-4ftfe3mfv",
+      "userName": "Anonymous",
+      "action": "created",
+      "entityType": "Assignment",
+      "entityName": "Anna → 2026-KW09 Z1 [Projekt]",
+      "details": "",
+      "timestamp": 1772102030964
+    },
+    {
+      "id": "1772102031142-vqvi897vg",
+      "userId": "1772102031142-wpvvzypd9",
+      "userName": "Anonymous",
+      "action": "created",
+      "entityType": "Assignment",
+      "entityName": "Jan → 2026-KW09 Z2 [Projekt]",
+      "details": "",
+      "timestamp": 1772102031142
+    },
+    {
+      "id": "1772102031401-elpgive2c",
+      "userId": "1772102031401-pyhha7oj6",
+      "userName": "Anonymous",
+      "action": "created",
+      "entityType": "Assignment",
+      "entityName": "Maria → 2026-KW09 Z1 [Projekt]",
+      "details": "",
+      "timestamp": 1772102031401
+    },
+    {
+      "id": "1772102031615-52z4mdml9",
+      "userId": "1772102031615-mlbwh4e2a",
+      "userName": "Anonymous",
+      "action": "created",
+      "entityType": "Assignment",
+      "entityName": "Piotr → 2026-KW09 Z2 [Projekt]",
+      "details": "",
+      "timestamp": 1772102031615
+    },
+    {
+      "id": "1772102043365-s5u4alc8o",
+      "userId": "1772102043365-swk6vi5mj",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772102043365
+    },
+    {
+      "id": "1772102044191-0698j2njp",
+      "userId": "1772102044191-gu4qcgxa7",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772102044191
+    },
+    {
+      "id": "1772102045305-bi7da6to4",
+      "userId": "1772102045305-rtqz9pp8f",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Anna Nowak ← Porsche",
+      "details": "Z1, Projekt",
+      "timestamp": 1772102045305
+    },
+    {
+      "id": "1772102046376-n8u6i15n7",
+      "userId": "1772102046376-wk1et4l5p",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← VW",
+      "details": "Z1, Projekt",
+      "timestamp": 1772102046376
+    },
+    {
+      "id": "1772103793291-1e0yvc3yw",
+      "userId": "1772103793291-ey408wakv",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772103793291
+    },
+    {
+      "id": "1772103793960-udolcjcos",
+      "userId": "1772103793960-rpksgfgbo",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772103793960
+    },
+    {
+      "id": "1772103794542-p3cmeayi0",
+      "userId": "1772103794542-yvximgmhq",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772103794542
+    },
+    {
+      "id": "1772103795941-0scr3gmaf",
+      "userId": "1772103795941-msjximu91",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772103795941
+    },
+    {
+      "id": "1772103796527-ow1v626c0",
+      "userId": "1772103796527-4lzhfqd4d",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772103796527
+    },
+    {
+      "id": "1772103797071-i9uz76ivg",
+      "userId": "1772103797071-8he88et7m",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772103797071
+    },
+    {
+      "id": "1772103798383-adlwtb869",
+      "userId": "1772103798383-nfrohcwnd",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← VW",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772103798383
+    },
+    {
+      "id": "1772103798929-xwgmii21i",
+      "userId": "1772103798929-2t2z4hfg4",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772103798929
+    },
+    {
+      "id": "1772103799597-h52lqiqdb",
+      "userId": "1772103799597-1rja53tlb",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← VW",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772103799597
+    },
+    {
+      "id": "1772103800454-3p3f7tdwc",
+      "userId": "1772103800454-mps89o84d",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Mercedes",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772103800454
+    },
+    {
+      "id": "1772103801142-g4t38xlth",
+      "userId": "1772103801143-unjxbbhkw",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Mercedes",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772103801143
+    },
+    {
+      "id": "1772103801875-3rd4zco7n",
+      "userId": "1772103801875-9ak1msvtp",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Mercedes",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772103801875
+    },
+    {
+      "id": "1772103860094-ou23jpqia",
+      "userId": "1772103860094-0j9rop1yi",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Porsche",
+      "details": "Z2, Projekt",
+      "timestamp": 1772103860094
+    },
+    {
+      "id": "1772103861430-ax6g4ae1c",
+      "userId": "1772103861430-5mo487s6s",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772103861430
+    },
+    {
+      "id": "1772103862684-9ugbcbxru",
+      "userId": "1772103862684-q3f8njjwy",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772103862684
+    },
+    {
+      "id": "1772103863533-txwshjyt4",
+      "userId": "1772103863533-xumwh89r0",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772103863533
+    },
+    {
+      "id": "1772103864827-voa1mfls5",
+      "userId": "1772103864827-2th4g7wlg",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772103864827
+    },
+    {
+      "id": "1772104045673-qwrdqdprk",
+      "userId": "1772104045673-iabv8evec",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772104045673
+    },
+    {
+      "id": "1772104312274-9dgxe1ktt",
+      "userId": "1772104312274-nrm0l7s5e",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772104312274
+    },
+    {
+      "id": "1772104414070-ko0so568a",
+      "userId": "1772104414070-6i34taw6h",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Tesla",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772104414070
+    },
+    {
+      "id": "1772104414970-j3a5s0hd6",
+      "userId": "1772104414970-kpwohc6tk",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772104414970
+    },
+    {
+      "id": "1772104415955-8rwwbkoul",
+      "userId": "1772104415955-ec9p78opu",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Porsche",
+      "details": "Z2, Projekt",
+      "timestamp": 1772104415955
+    },
+    {
+      "id": "1772104416805-tc0ea98hv",
+      "userId": "1772104416805-ofqrozfl1",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772104416805
+    },
+    {
+      "id": "1772104540492-g2b5ppqw2",
+      "userId": "1772104540492-copp6d73p",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Porsche",
+      "details": "Z2, Projekt",
+      "timestamp": 1772104540492
+    },
+    {
+      "id": "1772104541979-qcxmqwot6",
+      "userId": "1772104541979-ztsdi08l2",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772104541979
+    },
+    {
+      "id": "1772104542882-jmbg6sm61",
+      "userId": "1772104542882-amu68z0n9",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772104542882
+    },
+    {
+      "id": "1772104543934-zvvm0ouqh",
+      "userId": "1772104543934-msdnzf9w8",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772104543934
+    },
+    {
+      "id": "1772117809049-q8xw0v7vi",
+      "userId": "1772117809049-kb5nadlsz",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Porsche",
+      "details": "Z1, Projekt",
+      "timestamp": 1772117809049
+    },
+    {
+      "id": "1772117814110-cg37herbo",
+      "userId": "1772117814110-cp821qvz5",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772117814110
+    },
+    {
+      "id": "1772117815485-xhejwxokv",
+      "userId": "1772117815485-9927yw2d7",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772117815485
+    },
+    {
+      "id": "1772117817279-f11on7qgl",
+      "userId": "1772117817279-njjb5v1u0",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772117817279
+    },
+    {
+      "id": "1772118363973-q1lnur2b9",
+      "userId": "1772118363973-2d4fhcpzf",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Porsche",
+      "details": "Z3, Projekt",
+      "timestamp": 1772118363973
+    },
+    {
+      "id": "1772179648231-kq7xxmzc2",
+      "userId": "1772179648231-nhx4hfan8",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772179648231
+    },
+    {
+      "id": "1772179650093-fnl8oxk4m",
+      "userId": "1772179650093-amueieeue",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772179650093
+    },
+    {
+      "id": "1772179652086-b9n4vox85",
+      "userId": "1772179652086-8weqlsvio",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772179652086
+    },
+    {
+      "id": "1772179653032-j4wegskar",
+      "userId": "1772179653032-95il995ul",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772179653032
+    },
+    {
+      "id": "1772179653917-rcev4xlky",
+      "userId": "1772179653917-i9zlsv26c",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Mercedes",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772179653917
+    },
+    {
+      "id": "1772179694756-k8lapipom",
+      "userId": "1772179694756-i09htm99l",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Porsche",
+      "details": "Z1, Projekt",
+      "timestamp": 1772179694756
+    },
+    {
+      "id": "1772179695624-mmnuodtyy",
+      "userId": "1772179695624-qg3wg8vpu",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Tesla",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772179695624
+    },
+    {
+      "id": "1772179696589-aj4u95k0u",
+      "userId": "1772179696589-b4vgbf3tx",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772179696589
+    },
+    {
+      "id": "1772179697537-veb1ku7oi",
+      "userId": "1772179697537-x957dm9el",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772179697537
+    },
+    {
+      "id": "1772179698384-s8bqjeloj",
+      "userId": "1772179698384-rhuu8czq2",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772179698384
+    },
+    {
+      "id": "1772182063856-s704kkmeq",
+      "userId": "1772182063856-ur023s1rv",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Porsche",
+      "details": "Z1, Projekt",
+      "timestamp": 1772182063856
+    },
+    {
+      "id": "1772182064573-aefrhddic",
+      "userId": "1772182064573-4nqz13hxx",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Tesla",
+      "details": "Z1, Projekt",
+      "timestamp": 1772182064573
+    },
+    {
+      "id": "1772182067465-8uazs3r0f",
+      "userId": "1772182067465-yke7ec7ii",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772182067465
+    },
+    {
+      "id": "1772182068137-2skd4enmf",
+      "userId": "1772182068137-ujzp1hn7v",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z1, Projekt",
+      "timestamp": 1772182068137
+    },
+    {
+      "id": "1772182068825-6zjmda01m",
+      "userId": "1772182068825-gg6mfn1h6",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772182068825
+    },
+    {
+      "id": "1772192130565-at7gnkapb",
+      "userId": "1772192130565-zj1c4hed4",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Porsche",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192130565
+    },
+    {
+      "id": "1772192133096-tmahlwebs",
+      "userId": "1772192133096-kb7cdnk5u",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← ?",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192133096
+    },
+    {
+      "id": "1772192263424-9mk4sdhq9",
+      "userId": "1772192263424-m0cdprc90",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik",
+      "details": "Mercedes E-Class: Z1 → Z2",
+      "timestamp": 1772192263424
+    },
+    {
+      "id": "1772192280153-c3tw2ewvs",
+      "userId": "1772192280153-9o0smc6h3",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Tesla",
+      "details": "Z1, Projekt",
+      "timestamp": 1772192280153
+    },
+    {
+      "id": "1772192300606-t0cuagahn",
+      "userId": "1772192300606-lxo6g6npr",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192300606
+    },
+    {
+      "id": "1772192324377-ubpbjx9sb",
+      "userId": "1772192324377-f6rm8jk3j",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192324377
+    },
+    {
+      "id": "1772192810121-dcg655jqh",
+      "userId": "1772192810121-ork6mfidz",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192810121
+    },
+    {
+      "id": "1772192813810-vj3nx99tf",
+      "userId": "1772192813810-pcddqieu2",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192813810
+    },
+    {
+      "id": "1772192823555-frdra3bf8",
+      "userId": "1772192823555-b7ly9z6u5",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192823555
+    },
+    {
+      "id": "1772192826252-hp3i1fsaq",
+      "userId": "1772192826252-lsksjuhv4",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Tesla",
+      "details": "Z1, Projekt",
+      "timestamp": 1772192826252
+    },
+    {
+      "id": "1772192835488-84r5jszdu",
+      "userId": "1772192835488-8uiqd5ncc",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192835488
+    },
+    {
+      "id": "1772192839377-adnh7wkbs",
+      "userId": "1772192839377-we8ugfv3t",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192839377
+    },
+    {
+      "id": "1772192842201-ya18vaqlc",
+      "userId": "1772192842201-616dohnra",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192842201
+    },
+    {
+      "id": "1772192845654-3rh1agc78",
+      "userId": "1772192845654-jxfbek0r8",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z1, Projekt",
+      "timestamp": 1772192845654
+    },
+    {
+      "id": "1772192859366-k394ttjp9",
+      "userId": "1772192859366-8zpk4meal",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Mercedes",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772192859366
+    },
+    {
+      "id": "1772192870602-x1agh2xrn",
+      "userId": "1772192870602-euciiqmwd",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← ?",
+      "details": "Z1, Projekt",
+      "timestamp": 1772192870602
+    },
+    {
+      "id": "1772192874971-0grzmk3ph",
+      "userId": "1772192874971-rcorbapaa",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192874971
+    },
+    {
+      "id": "1772192877495-kvpktqjdh",
+      "userId": "1772192877495-3aq1sjjvg",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772192877495
+    },
+    {
+      "id": "1772192879796-xbyk2j16x",
+      "userId": "1772192879796-tb2bm3paa",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z2 → Z1",
+      "timestamp": 1772192879796
+    },
+    {
+      "id": "1772192881761-j7jvtzicd",
+      "userId": "1772192881761-lv2dasfjl",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z1 → Z2",
+      "timestamp": 1772192881761
+    },
+    {
+      "id": "1772192882963-zo7l5jzmh",
+      "userId": "1772192882963-82ufywkqd",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z2 → Z1",
+      "timestamp": 1772192882963
+    },
+    {
+      "id": "1772192949862-rc20475gq",
+      "userId": "1772192949862-c53v9r40z",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Piotr Wiśniewski ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192949862
+    },
+    {
+      "id": "1772192953999-v2ddgzd1k",
+      "userId": "1772192953999-7plmagfoe",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski",
+      "details": "Porsche G3: Z1 → Z2",
+      "timestamp": 1772192953999
+    },
+    {
+      "id": "1772192957766-syujvcyrc",
+      "userId": "1772192957766-2knu57721",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← VW",
+      "details": "Z1, Projekt",
+      "timestamp": 1772192957766
+    },
+    {
+      "id": "1772192960157-inf5dxnth",
+      "userId": "1772192960157-r1b894qtr",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z1 → Z2",
+      "timestamp": 1772192960157
+    },
+    {
+      "id": "1772192961483-4n06u7z0y",
+      "userId": "1772192961483-517sj9qsi",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z2 → Z1",
+      "timestamp": 1772192961483
+    },
+    {
+      "id": "1772192968452-z61oeqo1k",
+      "userId": "1772192968452-d703f338o",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Tesla",
+      "details": "Z1, Projekt",
+      "timestamp": 1772192968452
+    },
+    {
+      "id": "1772192971676-62xfghxo9",
+      "userId": "1772192971676-tmnzt4e0k",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192971676
+    },
+    {
+      "id": "1772192986347-aa64ill72",
+      "userId": "1772192986347-ahb3vys56",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski",
+      "details": "Porsche G3: Z2 → Z1",
+      "timestamp": 1772192986347
+    },
+    {
+      "id": "1772192989499-34v3al4kt",
+      "userId": "1772192989499-m1lptdkgl",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Jan Kowalski ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772192989499
+    },
+    {
+      "id": "1772193320645-t1bwntj7u",
+      "userId": "1772193320645-h5nuh0e25",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z1 → Z2",
+      "timestamp": 1772193320645
+    },
+    {
+      "id": "1772193322041-prs4rv70v",
+      "userId": "1772193322041-epu3i91lq",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z2 → Z1",
+      "timestamp": 1772193322041
+    },
+    {
+      "id": "1772193331801-2nktl178q",
+      "userId": "1772193331801-48ts9pzxr",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z1, Projekt",
+      "timestamp": 1772193331801
+    },
+    {
+      "id": "1772193334895-q3h3tggpz",
+      "userId": "1772193334895-ao4dfzmtr",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1772193334895
+    },
+    {
+      "id": "1772193375279-jtfi8n6xv",
+      "userId": "1772193375279-ehvz059nq",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z1 → Z2",
+      "timestamp": 1772193375279
+    },
+    {
+      "id": "1772193376395-ro66kds38",
+      "userId": "1772193376395-0jcw2e54y",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z2 → Z1",
+      "timestamp": 1772193376395
+    },
+    {
+      "id": "1772193388808-erx0n2xl3",
+      "userId": "1772193388808-u1spjj400",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z1 → Z2",
+      "timestamp": 1772193388808
+    },
+    {
+      "id": "1772193390471-0rixltv08",
+      "userId": "1772193390471-5u1wuywdl",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z2 → Z1",
+      "timestamp": 1772193390471
+    },
+    {
+      "id": "1772193405389-kkfxlcerg",
+      "userId": "1772193405389-4kdahsiya",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1772193405389
+    },
+    {
+      "id": "1772193406545-9z1q19ujq",
+      "userId": "1772193406545-vvgo15msq",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772193406545
+    },
+    {
+      "id": "1772194028193-6bymkggoq",
+      "userId": "1772194028193-a6ioyc6zj",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z2 → Z1",
+      "timestamp": 1772194028193
+    },
+    {
+      "id": "1772194035485-o6rn509ed",
+      "userId": "1772194035485-ysqhvipa6",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772194035485
+    },
+    {
+      "id": "1772194040833-pyc9my6bf",
+      "userId": "1772194040833-8akvxo36d",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Tesla",
+      "details": "Z2, Projekt",
+      "timestamp": 1772194040833
+    },
+    {
+      "id": "1772194043422-qc3fm57nq",
+      "userId": "1772194043422-nefxsjtie",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772194043422
+    },
+    {
+      "id": "1772194059380-by58nwgqm",
+      "userId": "1772194059380-07mretkhh",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Assignment",
+      "entityName": "Test User",
+      "details": "Mercedes E-Class: Z1 → Z2",
+      "timestamp": 1772194059380
+    },
+    {
+      "id": "1772194071197-71qy0803x",
+      "userId": "1772194071197-jbxhq9371",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z2, Projekt",
+      "timestamp": 1772194071197
+    }
+  ],
+  "templates": [],
+  "settings": {
+    "language": "pl",
+    "darkMode": false,
+    "animations": true,
+    "highlightMissing": true,
+    "blinkAlerts": true,
+    "deletePassword": "fb1",
+    "editMode": false,
+    "userName": "",
+    "zoomLevel": 100,
+    "shiftSystem": 2,
+    "backupPath": "gg",
+    "backupFrequency": "session",
+    "lastBackupDate": "2026-02-27T12:45:58.975Z"
+  }
+}
