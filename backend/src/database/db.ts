@@ -151,6 +151,10 @@ async function initDatabase() {
     db.run(`ALTER TABLE employees ADD COLUMN department TEXT`);
     console.log('✅ Added department column to employees table');
   } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN shiftSystem INTEGER DEFAULT 2`);
+    console.log('✅ Added shiftSystem column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS schedule_assignments (
@@ -204,6 +208,20 @@ async function initDatabase() {
       name TEXT NOT NULL,
       data TEXT NOT NULL,
       createdAt INTEGER NOT NULL
+    )
+  `);
+
+  // ==================== EXTRA TASKS (Dodatkowe zadania w grafiku) ====================
+  
+  db.run(`
+    CREATE TABLE IF NOT EXISTS extra_tasks (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      week TEXT NOT NULL,
+      timePerUnit INTEGER DEFAULT 15,
+      units INTEGER DEFAULT 1,
+      comment TEXT,
+      created_at INTEGER NOT NULL
     )
   `);
 
@@ -427,4 +445,16 @@ export function getAll<T>(sql: string, params: any[] = []): T[] {
   return results;
 }
 
-export { db, initDatabase, saveDatabase };
+function getDatabaseBuffer(): Buffer {
+  saveDatabase();
+  return readFileSync(dbPath);
+}
+
+async function replaceDatabase(buffer: Buffer): Promise<void> {
+  const SQL = await initSqlJs();
+  writeFileSync(dbPath, buffer);
+  db = new SQL.Database(buffer);
+  console.log('✅ Database replaced from uploaded file');
+}
+
+export { db, initDatabase, saveDatabase, getDatabaseBuffer, replaceDatabase, dbPath };

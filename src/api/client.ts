@@ -160,11 +160,60 @@ class ApiClient {
     return JSON.stringify(data, null, 2);
   }
 
+  async exportDataRaw(): Promise<any> {
+    return this.request('/data/export');
+  }
+
+  async exportModule(moduleName: string): Promise<any> {
+    return this.request(`/data/export/${moduleName}`);
+  }
+
   async importData(jsonData: string): Promise<void> {
     const data = JSON.parse(jsonData);
     await this.request('/data/import', {
       method: 'POST',
       body: JSON.stringify(data),
+    });
+  }
+
+  async importModule(moduleName: string, data: any): Promise<void> {
+    await this.request(`/data/import/${moduleName}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async createBackup(backupPath?: string): Promise<any> {
+    return this.request('/data/backup', {
+      method: 'POST',
+      body: JSON.stringify({ path: backupPath }),
+    });
+  }
+
+  async getBackups(backupPath?: string): Promise<any> {
+    const query = backupPath ? `?path=${encodeURIComponent(backupPath)}` : '';
+    return this.request(`/data/backups${query}`);
+  }
+
+  async restoreBackup(filename: string, backupPath?: string): Promise<any> {
+    return this.request('/data/backup/restore', {
+      method: 'POST',
+      body: JSON.stringify({ filename, backupPath }),
+    });
+  }
+
+  async downloadDatabase(): Promise<Blob> {
+    const response = await fetch(`${API_BASE_URL}/data/download-db`);
+    if (!response.ok) {
+      throw new Error(`API Error: ${response.statusText}`);
+    }
+    return response.blob();
+  }
+
+  async uploadDatabase(base64Data: string): Promise<any> {
+    return this.request('/data/upload-db', {
+      method: 'POST',
+      body: JSON.stringify({ data: base64Data }),
     });
   }
 
@@ -413,6 +462,30 @@ class ApiClient {
 
   async deleteHoliday(date: string): Promise<void> {
     await this.request(`/holidays/${date}`, { method: 'DELETE' });
+  }
+
+  // Extra Tasks (Dodatkowe zadania)
+  async getExtraTasks(week?: string): Promise<any[]> {
+    const query = week ? `?week=${encodeURIComponent(week)}` : '';
+    return this.request(`/extra-tasks${query}`);
+  }
+
+  async addExtraTask(task: any): Promise<void> {
+    await this.request('/extra-tasks', {
+      method: 'POST',
+      body: JSON.stringify(task),
+    });
+  }
+
+  async updateExtraTask(id: string, task: any): Promise<void> {
+    await this.request(`/extra-tasks/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(task),
+    });
+  }
+
+  async deleteExtraTask(id: string): Promise<void> {
+    await this.request(`/extra-tasks/${id}`, { method: 'DELETE' });
   }
 }
 

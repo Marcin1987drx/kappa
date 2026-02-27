@@ -56,6 +56,7 @@ export interface Employee {
   color: string;
   status?: EmployeeStatus;        // Domyślnie 'available'
   suggestedShift?: 1 | 2 | 3;     // Sugerowana zmiana
+  shiftSystem?: 1 | 2 | 3;        // System zmianowy (1=jednozmianowy, 2=dwuzmianowy, 3=trzyzmianowy)
   note?: string;                  // Notatka o pracowniku
   role?: EmployeeRole;            // Rola: pracownik, lider, kierownik
   email?: string;                 // Adres email
@@ -119,6 +120,10 @@ export interface AppSettings {
   userName: string;   // Nazwa użytkownika dla logów
   zoomLevel: number;  // Poziom zoom siatki (50-150)
   shiftSystem: 1 | 2 | 3;  // System zmianowy (1, 2 lub 3 zmiany)
+  // Backup settings
+  backupPath: string;
+  backupFrequency: 'none' | 'session' | 'daily' | 'weekly';
+  lastBackupDate: string;
 }
 
 // ==================== Absence Management (Zarządzanie nieobecnościami) ====================
@@ -153,7 +158,7 @@ export interface Absence {
   startDate: string;     // YYYY-MM-DD
   endDate: string;       // YYYY-MM-DD
   workDays: number;      // Liczba dni roboczych
-  status: AbsenceStatus;
+  status?: string;       // Legacy field - kept for backward compatibility
   note?: string;
   createdAt: number;
   approvedAt?: number;
@@ -196,6 +201,16 @@ export interface Holiday {
   isMovable: boolean;
 }
 
+export interface ExtraTask {
+  id: string;
+  name: string;
+  week: string;           // np. "2026-KW09"
+  timePerUnit: number;    // Czas na jednostkę w minutach
+  units: number;          // Liczba jednostek
+  comment?: string;       // Komentarz
+  created_at: number;
+}
+
 export interface AppState {
   customers: Customer[];
   types: Type[];
@@ -206,6 +221,7 @@ export interface AppState {
   scheduleEntries: ScheduleEntry[];
   scheduleAssignments: ScheduleAssignment[];
   projectComments: ProjectComment[];
+  extraTasks: ExtraTask[];
   settings: AppSettings;
   currentView: string;
   selectedYear: number;

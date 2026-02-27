@@ -29,27 +29,24 @@ employeesRouter.get('/:id', (req, res) => {
 
 employeesRouter.post('/', (req, res) => {
   try {
-    const { id, firstName, lastName, color, status, suggestedShift, role, email, phone, department } = req.body;
+    const { id, firstName, lastName, color, status, suggestedShift, shiftSystem } = req.body;
     const created_at = Date.now();
     
     // Check if exists (upsert)
     const existing = getOne('SELECT id FROM employees WHERE id = ?', [id]);
     if (existing) {
       runQuery(`
-        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, 
-        role = ?, email = ?, phone = ?, department = ?
+        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?
         WHERE id = ?
-      `, [firstName, lastName, color, status || 'available', suggestedShift || null, 
-          role || 'worker', email || null, phone || null, department || null, id]);
+      `, [firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2, id]);
     } else {
       runQuery(`
-        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, role, email, phone, department, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, 
-          role || 'worker', email || null, phone || null, department || null, created_at]);
+        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, shiftSystem, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2, created_at]);
     }
     
-    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, role, email, phone, department, created_at });
+    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, shiftSystem, created_at });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create employee' });
@@ -58,13 +55,12 @@ employeesRouter.post('/', (req, res) => {
 
 employeesRouter.put('/:id', (req, res) => {
   try {
-    const { firstName, lastName, color, status, suggestedShift, role, email, phone, department } = req.body;
+    const { firstName, lastName, color, status, suggestedShift, shiftSystem } = req.body;
     runQuery(`
-      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?,
-      role = ?, email = ?, phone = ?, department = ?
+      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?
       WHERE id = ?
-    `, [firstName, lastName, color, status, suggestedShift, role || 'worker', email || null, phone || null, department || null, req.params.id]);
-    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift, role, email, phone, department });
+    `, [firstName, lastName, color, status, suggestedShift, shiftSystem || 2, req.params.id]);
+    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift, shiftSystem });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to update employee' });
@@ -177,13 +173,8 @@ export const commentsRouter = Router();
 
 commentsRouter.get('/', (req, res) => {
   try {
-    const items = getAll('SELECT * FROM comments ORDER BY createdAt DESC') as any[];
-    // Mapuj 'text' na 'comment' dla kompatybilności z frontendem
-    const mappedItems = items.map(item => ({
-      ...item,
-      comment: item.text,
-    }));
-    res.json(mappedItems);
+    const items = getAll('SELECT * FROM comments ORDER BY createdAt DESC');
+    res.json(items);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch comments' });
@@ -192,9 +183,7 @@ commentsRouter.get('/', (req, res) => {
 
 commentsRouter.post('/', (req, res) => {
   try {
-    const { id, projectId, week, createdAt, updatedAt } = req.body;
-    // Obsługuj oba pola: 'text' i 'comment' dla kompatybilności
-    const text = req.body.text || req.body.comment || '';
+    const { id, projectId, week, text, createdAt } = req.body;
     
     // Check if exists (upsert)
     const existing = getOne('SELECT id FROM comments WHERE id = ?', [id]);
@@ -207,7 +196,7 @@ commentsRouter.post('/', (req, res) => {
       `, [id, projectId, week, text, createdAt || Date.now()]);
     }
     
-    res.status(201).json({ id, projectId, week, text, comment: text, createdAt, updatedAt });
+    res.status(201).json({ id, projectId, week, text, createdAt });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create comment' });
@@ -741,5 +730,78 @@ holidaysRouter.delete('/:date', (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete holiday' });
+  }
+});
+
+// ==================== EXTRA TASKS ====================
+export const extraTasksRouter = Router();
+
+extraTasksRouter.get('/', (req, res) => {
+  try {
+    const week = req.query.week as string | undefined;
+    let items;
+    if (week) {
+      items = getAll('SELECT * FROM extra_tasks WHERE week = ? ORDER BY created_at', [week]);
+    } else {
+      items = getAll('SELECT * FROM extra_tasks ORDER BY week, created_at');
+    }
+    res.json(items);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch extra tasks' });
+  }
+});
+
+extraTasksRouter.post('/', (req, res) => {
+  try {
+    const { id, name, week, timePerUnit, units, comment } = req.body;
+    const created_at = req.body.created_at || Date.now();
+    
+    const existing = getOne('SELECT id FROM extra_tasks WHERE id = ?', [id]);
+    if (existing) {
+      runQuery(`
+        UPDATE extra_tasks SET name = ?, week = ?, timePerUnit = ?, units = ?, comment = ?
+        WHERE id = ?
+      `, [name, week, timePerUnit || 15, units || 1, comment || null, id]);
+    } else {
+      runQuery(`
+        INSERT INTO extra_tasks (id, name, week, timePerUnit, units, comment, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [id, name, week, timePerUnit || 15, units || 1, comment || null, created_at]);
+    }
+    
+    saveDatabase();
+    res.status(201).json({ id, name, week, timePerUnit, units, comment, created_at });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to create/update extra task' });
+  }
+});
+
+extraTasksRouter.put('/:id', (req, res) => {
+  try {
+    const { name, week, timePerUnit, units, comment } = req.body;
+    runQuery(`
+      UPDATE extra_tasks SET name = ?, week = ?, timePerUnit = ?, units = ?, comment = ?
+      WHERE id = ?
+    `, [name, week, timePerUnit || 15, units || 1, comment || null, req.params.id]);
+    saveDatabase();
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to update extra task' });
+  }
+});
+
+extraTasksRouter.delete('/:id', (req, res) => {
+  try {
+    runQuery('DELETE FROM extra_tasks WHERE id = ?', [req.params.id]);
+    // Also remove assignments for this extra task
+    runQuery('DELETE FROM schedule_assignments WHERE projectId = ?', [`extra-${req.params.id}`]);
+    saveDatabase();
+    res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to delete extra task' });
   }
 });

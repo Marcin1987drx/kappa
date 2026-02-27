@@ -28,12 +28,7 @@
             </svg>
             <span data-i18n="nav.planning">Planning</span>
           </button>
-          <button class="nav-btn" data-view="projects">
-            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-            </svg>
-            <span data-i18n="nav.projects">Projects</span>
-          </button>
+
           <button class="nav-btn" data-view="schedule">
             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
@@ -103,11 +98,17 @@
         <div class="planning-toolbar" id="planningToolbar">
           <div class="toolbar-main">
             <div class="toolbar-left">
-              <button class="btn-primary btn-compact" id="addProject">
+              <button class="btn-primary btn-compact admin-only" id="addProject" style="display:none">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
                 <span data-i18n="planning.addProject">Add Project</span>
+              </button>
+              <button class="btn-secondary btn-compact admin-only" id="openProjectsPanel" style="display:none" title="Manage Customers, Types, Parts, Tests">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span data-i18n="planning.manage">Manage</span>
               </button>
               <div class="toolbar-divider"></div>
               <select id="filterYear" class="filter-select-compact" title="Year">
@@ -173,16 +174,12 @@
                 </div>
               </div>
               <div class="toolbar-divider"></div>
-              <button class="btn-toolbar-compact" id="exportData" title="Export">
+              <button class="btn-toolbar-compact admin-only" id="exportData" title="Export" style="display:none">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
               </button>
-              <button class="btn-toolbar-compact" id="importData" title="Import">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-              </button>
+
             </div>
           </div>
         </div>
@@ -205,7 +202,7 @@
         <!-- Sliding Stats Panel -->
         <div class="stats-slide-panel" id="statsSlidePanel">
           <!-- Tab/Handle -->
-          <button class="stats-panel-tab" id="statsPanelTab" title="Statystyki Kappa">
+          <button class="stats-panel-tab" id="statsPanelTab" title="Kappa Stats">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="20" x2="18" y2="10"/>
               <line x1="12" y1="20" x2="12" y2="4"/>
@@ -218,7 +215,7 @@
           <div class="stats-panel-content" id="statsPanelContent">
             <div class="stats-panel-header">
               <h3>📊 Kappa Stats</h3>
-              <button class="stats-panel-close" id="statsPanelClose" title="Zamknij">
+              <button class="stats-panel-close" id="statsPanelClose" data-i18n-title="common.close" title="Close">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                 </svg>
@@ -232,7 +229,7 @@
                 <line x1="12" y1="20" x2="12" y2="4"/>
                 <line x1="6" y1="20" x2="6" y2="14"/>
               </svg>
-              <span>Pełna analityka</span>
+              <span data-i18n="stats.fullAnalytics">Full Analytics</span>
               <svg class="arrow-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="9 18 15 12 9 6"/>
               </svg>
@@ -241,23 +238,23 @@
             <div class="stats-panel-body">
               <!-- Projects Summary -->
               <div class="stats-section">
-                <div class="stats-section-title">Projekty</div>
+                <div class="stats-section-title" data-i18n="stats.projects">Projects</div>
                 <div class="stats-grid">
                   <div class="stat-mini-card">
                     <span class="stat-mini-value" id="statTotalProjects">0</span>
-                    <span class="stat-mini-label">Wszystkie</span>
+                    <span class="stat-mini-label" data-i18n="stats.all">All</span>
                   </div>
                   <div class="stat-mini-card stat-active">
                     <span class="stat-mini-value" id="statActiveProjects">0</span>
-                    <span class="stat-mini-label">Aktywne</span>
+                    <span class="stat-mini-label" data-i18n="stats.active">Active</span>
                   </div>
                   <div class="stat-mini-card stat-completed">
                     <span class="stat-mini-value" id="statCompletedProjects">0</span>
-                    <span class="stat-mini-label">Ukończone</span>
+                    <span class="stat-mini-label" data-i18n="stats.completed">Completed</span>
                   </div>
                   <div class="stat-mini-card stat-delayed">
                     <span class="stat-mini-value" id="statDelayedProjects">0</span>
-                    <span class="stat-mini-label">Opóźnione</span>
+                    <span class="stat-mini-label" data-i18n="stats.delayed">Delayed</span>
                   </div>
                 </div>
               </div>
@@ -278,7 +275,7 @@
 
               <!-- Top Priority Projects -->
               <div class="stats-section">
-                <div class="stats-section-title">🔥 Priorytety</div>
+                <div class="stats-section-title">🔥 <span data-i18n="stats.priorities">Priorities</span></div>
                 <div class="priority-list" id="priorityList">
                   <!-- Generated dynamically -->
                 </div>
@@ -286,24 +283,24 @@
 
               <!-- Alerts -->
               <div class="stats-section">
-                <div class="stats-section-title">⚠️ Alerty</div>
+                <div class="stats-section-title">⚠️ <span data-i18n="stats.alerts">Alerts</span></div>
                 <div class="alerts-list" id="alertsList">
                   <div class="alert-item alert-warning">
                     <span class="alert-icon">⏰</span>
-                    <span class="alert-text">Ładowanie...</span>
+                    <span class="alert-text" data-i18n="stats.loading">Loading...</span>
                   </div>
                 </div>
               </div>
 
               <!-- Quick Actions -->
-              <div class="stats-section">
-                <div class="stats-section-title">⚡ Szybkie akcje</div>
+              <div class="stats-section admin-only" style="display:none">
+                <div class="stats-section-title">⚡ <span data-i18n="stats.quickActions">Quick Actions</span></div>
                 <div class="quick-actions">
                   <button class="quick-action-btn" id="quickAddProject">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                     </svg>
-                    Nowy projekt
+                    <span data-i18n="planning.addProject">Add Project</span>
                   </button>
                   <button class="quick-action-btn" id="quickExport">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -311,215 +308,122 @@
                       <polyline points="7 10 12 15 17 10"/>
                       <line x1="12" y1="15" x2="12" y2="3"/>
                     </svg>
-                    Eksportuj Excel
+                    <span data-i18n="settings.export">Export</span> Excel
                   </button>
                 </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
 
-      <!-- Projects View -->
-      <div id="projectsView" class="view">
-        <div class="view-header">
-          <div class="view-title">
-            <h2 data-i18n="projects.title">Project Management</h2>
-            <span class="subtitle" data-i18n="projects.subtitle">Manage customers, types, parts and tests</span>
+        <!-- Projects Management Slide Panel (admin-only, inside Planning) -->
+        <div class="projects-slide-panel admin-only" id="projectsSlidePanel" style="display:none">
+          <div class="projects-panel-header">
+            <h3 data-i18n="projects.title">Project Management</h3>
+            <button class="projects-panel-close" id="projectsPanelClose" title="Close">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
           </div>
-          <div class="view-actions projects-toolbar">
-            <div class="toolbar-left">
+          <div class="projects-panel-body">
+            <div class="projects-panel-toolbar">
               <div class="search-box">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
                   <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
                 </svg>
-                <input type="text" id="projectsSearch" placeholder="Szukaj..." class="search-input">
+                <input type="text" id="projectsSearch" data-i18n-placeholder="common.search" placeholder="Search..." class="search-input">
               </div>
-              <select id="projectsFilter" class="filter-select">
-                <option value="all">Wszystkie</option>
-                <option value="used">Używane</option>
-                <option value="unused">Nieużywane</option>
+              <select id="projectsFilter" class="filter-select" style="font-size:12px;padding:4px 8px">
+                <option value="all" data-i18n="common.all">All</option>
+                <option value="used">Used</option>
+                <option value="unused">Unused</option>
               </select>
             </div>
-            <div class="toolbar-right">
-              <button class="btn-secondary" id="bulkDeleteProjects" disabled>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                </svg>
-                <span>Usuń zaznaczone</span>
-              </button>
-              <button class="btn-secondary" id="exportProjectsCSV">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-                <span>Eksport</span>
-              </button>
-              <button class="btn-secondary" id="importProjectsCSV">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                <span>Import</span>
-              </button>
-            </div>
-          </div>
-        </div>
 
-        <!-- Stats Dashboard -->
-        <div class="projects-stats-dashboard">
-          <div class="project-stat-card" data-category="customers">
-            <div class="stat-icon customers-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statCustomers">0</span>
-              <span class="stat-label">Klienci</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statCustomersBar"></div></div>
-              <span class="stat-detail" id="statCustomersDetail">0 używanych</span>
-            </div>
-          </div>
-          <div class="project-stat-card" data-category="types">
-            <div class="stat-icon types-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statTypes">0</span>
-              <span class="stat-label">Typy</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statTypesBar"></div></div>
-              <span class="stat-detail" id="statTypesDetail">0 używanych</span>
-            </div>
-          </div>
-          <div class="project-stat-card" data-category="parts">
-            <div class="stat-icon parts-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statParts">0</span>
-              <span class="stat-label">Części</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statPartsBar"></div></div>
-              <span class="stat-detail" id="statPartsDetail">0 używanych</span>
-            </div>
-          </div>
-          <div class="project-stat-card" data-category="tests">
-            <div class="stat-icon tests-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="24" height="24">
-                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
-              </svg>
-            </div>
-            <div class="stat-content">
-              <span class="stat-value" id="statTests">0</span>
-              <span class="stat-label">Testy</span>
-              <div class="stat-bar"><div class="stat-bar-fill" id="statTestsBar"></div></div>
-              <span class="stat-detail" id="statTestsDetail">0 używanych</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tabs for different views -->
-        <div class="projects-tabs">
-          <button class="projects-tab active" data-tab="list">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>
-            </svg>
-            Lista
-          </button>
-          <button class="projects-tab" data-tab="tree">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <circle cx="12" cy="5" r="3"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="12" x2="6" y2="16"/><line x1="12" y1="12" x2="18" y2="16"/><circle cx="6" cy="19" r="3"/><circle cx="18" cy="19" r="3"/>
-            </svg>
-            Drzewo połączeń
-          </button>
-        </div>
-
-        <!-- List View -->
-        <div id="projectsListView" class="projects-tab-content active">
-          <div class="projects-container">
-            <div class="project-section" data-section="customers">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllCustomers">
-                  <h3 data-i18n="projects.customers">Customers</h3>
-                  <span class="section-count" id="customersCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportCustomersCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addCustomer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+            <!-- Stats mini -->
+            <div class="projects-stats-dashboard projects-stats-mini">
+              <div class="project-stat-card" data-category="customers">
+                <div class="stat-content">
+                  <span class="stat-value" id="statCustomers">0</span>
+                  <span class="stat-label" data-i18n="projects.customers">Customers</span>
                 </div>
               </div>
-              <ul id="customersList" class="items-list" data-sortable="customers"></ul>
-            </div>
-
-            <div class="project-section" data-section="types">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllTypes">
-                  <h3 data-i18n="projects.types">Types</h3>
-                  <span class="section-count" id="typesCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportTypesCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addType"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+              <div class="project-stat-card" data-category="types">
+                <div class="stat-content">
+                  <span class="stat-value" id="statTypes">0</span>
+                  <span class="stat-label" data-i18n="projects.types">Types</span>
                 </div>
               </div>
-              <ul id="typesList" class="items-list" data-sortable="types"></ul>
-            </div>
-
-            <div class="project-section" data-section="parts">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllParts">
-                  <h3 data-i18n="projects.parts">Parts</h3>
-                  <span class="section-count" id="partsCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportPartsCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addPart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+              <div class="project-stat-card" data-category="parts">
+                <div class="stat-content">
+                  <span class="stat-value" id="statParts">0</span>
+                  <span class="stat-label" data-i18n="projects.parts">Parts</span>
                 </div>
               </div>
-              <ul id="partsList" class="items-list" data-sortable="parts"></ul>
-            </div>
-
-            <div class="project-section" data-section="tests">
-              <div class="section-header">
-                <div class="section-header-left">
-                  <input type="checkbox" class="section-checkbox" id="checkAllTests">
-                  <h3 data-i18n="projects.tests">Tests</h3>
-                  <span class="section-count" id="testsCount">0</span>
-                </div>
-                <div class="section-header-right">
-                  <button class="btn-icon-sm" id="exportTestsCSV" title="Eksport CSV">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
-                    </svg>
-                  </button>
-                  <button class="btn-add" id="addTest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+              <div class="project-stat-card" data-category="tests">
+                <div class="stat-content">
+                  <span class="stat-value" id="statTests">0</span>
+                  <span class="stat-label" data-i18n="projects.tests">Tests</span>
                 </div>
               </div>
-              <ul id="testsList" class="items-list" data-sortable="tests"></ul>
+            </div>
+
+            <!-- Sections -->
+            <div class="projects-container">
+              <div class="project-section" data-section="customers">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.customers">Customers</h3>
+                    <span class="section-count" id="customersCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addCustomer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="customersList" class="items-list" data-sortable="customers"></ul>
+              </div>
+
+              <div class="project-section" data-section="types">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.types">Types</h3>
+                    <span class="section-count" id="typesCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addType"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="typesList" class="items-list" data-sortable="types"></ul>
+              </div>
+
+              <div class="project-section" data-section="parts">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.parts">Parts</h3>
+                    <span class="section-count" id="partsCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addPart"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="partsList" class="items-list" data-sortable="parts"></ul>
+              </div>
+
+              <div class="project-section" data-section="tests">
+                <div class="section-header">
+                  <div class="section-header-left">
+                    <h3 data-i18n="projects.tests">Tests</h3>
+                    <span class="section-count" id="testsCount">0</span>
+                  </div>
+                  <div class="section-header-right">
+                    <button class="btn-add" id="addTest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+                  </div>
+                </div>
+                <ul id="testsList" class="items-list" data-sortable="tests"></ul>
+              </div>
             </div>
           </div>
-        </div>
-
-        <!-- Tree View -->
-        <div id="projectsTreeView" class="projects-tab-content">
-          <div class="tree-container" id="projectsTree"></div>
         </div>
       </div>
 
@@ -568,8 +472,8 @@
                     <line x1="16" y1="17" x2="8" y2="17"/>
                   </svg>
                   <div class="option-content">
-                    <span>Eksport do PDF</span>
-                    <small>Raport wizualny z wykresami</small>
+                    <span data-i18n="export.pdfGenerated">Export to PDF</span>
+                    <small></small>
                   </div>
                 </button>
                 <button class="export-option" id="exportToExcel">
@@ -581,8 +485,8 @@
                     <line x1="15" y1="3" x2="15" y2="21"/>
                   </svg>
                   <div class="option-content">
-                    <span>Eksport do Excel</span>
-                    <small>Dane tabelaryczne z 5 arkuszami</small>
+                    <span data-i18n="export.excelGenerated">Export to Excel</span>
+                    <small></small>
                   </div>
                 </button>
               </div>
@@ -738,15 +642,15 @@
             <table class="analytics-table" id="analyticsTable">
               <thead>
                 <tr>
-                  <th class="th-sticky th-sortable" data-sort="customer">Klient</th>
-                  <th class="th-sortable" data-sort="type">Typ</th>
-                  <th class="th-sortable" data-sort="part">Część</th>
-                  <th class="th-sortable" data-sort="test">Badanie</th>
+                  <th class="th-sticky th-sortable" data-sort="customer" data-i18n="planning.kunde">Customer</th>
+                  <th class="th-sortable" data-sort="type" data-i18n="planning.typ">Type</th>
+                  <th class="th-sortable" data-sort="part" data-i18n="planning.teil">Part</th>
+                  <th class="th-sortable" data-sort="test" data-i18n="planning.prufung">Test</th>
                   <th class="th-status">Status</th>
                   <th class="th-sortable" data-sort="ist">IST</th>
                   <th class="th-sortable" data-sort="soll">SOLL</th>
                   <th class="th-sortable" data-sort="percent">%</th>
-                  <th class="th-options analytics-options-col hidden">Opcje</th>
+                  <th class="th-options analytics-options-col hidden">Options</th>
                 </tr>
               </thead>
               <tbody id="analyticsTableBody">
@@ -766,7 +670,7 @@
                   <line x1="12" y1="20" x2="12" y2="4"/>
                   <line x1="6" y1="20" x2="6" y2="14"/>
                 </svg>
-                <span>Postęp Tygodniowy</span>
+                <span data-i18n="analytics.weeklyProgress">Weekly Progress</span>
               </h3>
               <div class="chart-legend">
                 <span class="legend-item legend-ist"><span class="legend-dot"></span> IST</span>
@@ -782,7 +686,7 @@
                   <path d="M21.21 15.89A10 10 0 1 1 8 2.83"/>
                   <path d="M22 12A10 10 0 0 0 12 2v10z"/>
                 </svg>
-                <span>Rozkład Badań</span>
+                <span data-i18n="analytics.testDistribution">Test Distribution</span>
                 <span class="info-tooltip">?<span class="tooltip-content">Rozkład projektów według typu badania. Pokazuje proporcje między różnymi rodzajami testów.</span></span>
               </h3>
             </div>
@@ -1028,11 +932,23 @@
               <button class="sched-week-nav-btn" id="scheduleNextWeek">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
               </button>
-              <button class="sched-today-btn" id="scheduleToday">Dziś</button>
+              <button class="sched-today-btn" id="scheduleToday" data-i18n="schedulePanel.today">Today</button>
             </div>
           </div>
           
           <div class="sched-topbar-right">
+            <!-- Przełącznik widoków -->
+            <div class="sched-view-toggle">
+              <button class="sched-view-btn active" data-view="week" data-i18n-title="schedule.weekViewTooltip" title="Standardowy widok tygodniowy">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <span data-i18n="schedule.weekView">Tydzień</span>
+              </button>
+              <button class="sched-view-btn" data-view="history" data-i18n-title="schedule.historyViewTooltip" title="Pokaż 3 poprzednie tygodnie jako odniesienie">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                <span data-i18n="schedule.historyView">Historia</span>
+              </button>
+            </div>
+
             <!-- Filtr pracownika -->
             <div class="sched-employee-filter">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1040,7 +956,7 @@
                 <circle cx="12" cy="7" r="4"/>
               </svg>
               <select id="scheduleEmployeeFilter" class="sched-filter-select">
-                <option value="">Wszyscy pracownicy</option>
+                <option value="" data-i18n="schedulePanel.allEmployees">All employees</option>
               </select>
             </div>
             
@@ -1052,10 +968,13 @@
             </div>
             
             <!-- Akcje -->
-            <button class="sched-action-btn" id="sendEmailBtn" title="Wyślij grafik mailem">
+            <button class="sched-action-btn sched-action-highlight" id="shiftPlannerBtn" data-i18n-title="schedule.shiftPlannerTooltip" title="Shift Planner – configure shifts & assign workers">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="22"/><line x1="15" y1="4" x2="15" y2="22"/></svg>
+            </button>
+            <button class="sched-action-btn" id="sendEmailBtn" data-i18n-title="schedulePanel.sendByEmail" title="Send schedule by email">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
             </button>
-            <button class="sched-action-btn" id="exportSchedule" title="Eksportuj">
+            <button class="sched-action-btn" id="exportSchedule" data-i18n-title="schedulePanel.exportSchedule" title="Export">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
             </button>
           </div>
@@ -1074,14 +993,14 @@
           <!-- Panel Boczny - Dashboard -->
           <aside class="sched-sidebar" id="schedSidebar">
             <!-- Toggle Button (Tab) -->
-            <button class="sched-sidebar-toggle" id="schedSidebarToggle" title="Otwórz panel">
+            <button class="sched-sidebar-toggle" id="schedSidebarToggle" data-i18n-title="schedulePanel.openPanel" title="Open panel">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                 <circle cx="9" cy="7" r="4"/>
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
-              <span class="toggle-text">Zespół</span>
+              <span class="toggle-text" data-i18n="schedulePanel.team">Team</span>
             </button>
             
             <!-- Header -->
@@ -1093,9 +1012,9 @@
                   <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                   <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                 </svg>
-                Panel Zespołu
+                <span data-i18n="schedulePanel.teamPanel">Team Panel</span>
               </h3>
-              <button class="sched-sidebar-close" id="schedSidebarClose" title="Zamknij panel">
+              <button class="sched-sidebar-close" id="schedSidebarClose" data-i18n-title="schedulePanel.closePanel" title="Close panel">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18"/>
                   <line x1="6" y1="6" x2="18" y2="18"/>
@@ -1108,7 +1027,7 @@
               <div class="sched-panel">
               <div class="sched-panel-header sched-panel-header-green">
                 <span class="sched-panel-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg></span>
-                <h3>Przypisani</h3>
+                <h3 data-i18n="schedulePanel.assigned">Assigned</h3>
                 <span class="sched-panel-count" id="assignedCount">0</span>
               </div>
               <div class="sched-panel-content sched-team-list" id="assignedList"></div>
@@ -1118,7 +1037,7 @@
             <div class="sched-panel">
               <div class="sched-panel-header sched-panel-header-orange">
                 <span class="sched-panel-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
-                <h3>Bez przydziału</h3>
+                <h3 data-i18n="schedulePanel.unassigned">Unassigned</h3>
                 <span class="sched-panel-count" id="unassignedCount">0</span>
               </div>
               <div class="sched-panel-content sched-team-list" id="unassignedList"></div>
@@ -1128,7 +1047,7 @@
             <div class="sched-panel">
               <div class="sched-panel-header sched-panel-header-red">
                 <span class="sched-panel-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
-                <h3>Nieobecni</h3>
+                <h3 data-i18n="schedulePanel.absent">Absent</h3>
                 <span class="sched-panel-count" id="absentCount">0</span>
               </div>
               <div class="sched-panel-content" id="absentList"></div>
@@ -1138,7 +1057,7 @@
             <div class="sched-panel">
               <div class="sched-panel-header sched-panel-header-purple">
                 <span class="sched-panel-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
-                <h3>Projekty bez obsady</h3>
+                <h3 data-i18n="schedulePanel.unstaffedProjects">Unstaffed Projects</h3>
                 <span class="sched-panel-count" id="uncoveredCount">0</span>
               </div>
               <div class="sched-panel-content" id="uncoveredProjectsList"></div>
@@ -1148,8 +1067,8 @@
             <div class="sched-panel sched-panel-clickable" id="statsPanelContainer">
               <div class="sched-panel-header sched-panel-header-blue">
                 <span class="sched-panel-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
-                <h3>Statystyki & Sugestie</h3>
-                <span class="sched-panel-expand-hint">Kliknij aby rozwinąć</span>
+                <h3 data-i18n="schedulePanel.statisticsAndSuggestions">Statistics & Suggestions</h3>
+                <span class="sched-panel-expand-hint" data-i18n="schedulePanel.clickToExpand">Click to expand</span>
               </div>
               <div class="sched-panel-content sched-stats-content" id="scheduleStatsPanel">
                 <!-- Statystyki będą generowane dynamicznie -->
@@ -1160,8 +1079,8 @@
             <div class="sched-panel sched-panel-clickable" id="historyPanelContainer">
               <div class="sched-panel-header sched-panel-header-gray">
                 <span class="sched-panel-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
-                <h3>Historia zmian</h3>
-                <span class="sched-panel-expand-hint">Kliknij aby rozwinąć</span>
+                <h3 data-i18n="schedulePanel.changesHistory">Changes History</h3>
+                <span class="sched-panel-expand-hint" data-i18n="schedulePanel.clickToExpand">Click to expand</span>
               </div>
               <div class="sched-panel-content sched-history-content" id="scheduleHistoryPanel">
                 <!-- Historia będzie generowana dynamicznie -->
@@ -1192,7 +1111,7 @@
             <div class="absence-panel">
               <div class="absence-panel-header">
                 <span class="absence-panel-icon">📊</span>
-                <h3>Statystyki roku</h3>
+                <h3 data-i18n="absence.yearStatistics">Year Statistics</h3>
               </div>
               <div class="absence-panel-content" id="absenceYearStats">
                 <!-- Stats będą generowane dynamicznie -->
@@ -1203,37 +1122,37 @@
             <div class="absence-panel">
               <div class="absence-panel-header">
                 <span class="absence-panel-icon">🔍</span>
-                <h3>Filtry</h3>
+                <h3 data-i18n="absence.filters">Filters</h3>
               </div>
               <div class="absence-panel-content">
                 <div class="absence-filter-group">
-                  <label>Pracownik</label>
+                  <label data-i18n="absence.employeeFilter">Employee</label>
                   <select id="absenceFilterEmployee" class="absence-filter-select">
-                    <option value="">Wszyscy</option>
+                    <option value="" data-i18n="absence.allEmployees">All</option>
                   </select>
                 </div>
                 <div class="absence-filter-group">
-                  <label>Typ nieobecności</label>
+                  <label data-i18n="absence.absenceTypeFilter">Absence type</label>
                   <select id="absenceFilterType" class="absence-filter-select">
-                    <option value="">Wszystkie</option>
+                    <option value="" data-i18n="absence.allTypes">All</option>
                   </select>
                 </div>
                 <div class="absence-filter-group">
-                  <label>Miesiąc</label>
+                  <label data-i18n="absence.monthFilter">Month</label>
                   <select id="absenceFilterMonth" class="absence-filter-select">
-                    <option value="">Cały rok</option>
-                    <option value="1">Styczeń</option>
-                    <option value="2">Luty</option>
-                    <option value="3">Marzec</option>
-                    <option value="4">Kwiecień</option>
-                    <option value="5">Maj</option>
-                    <option value="6">Czerwiec</option>
-                    <option value="7">Lipiec</option>
-                    <option value="8">Sierpień</option>
-                    <option value="9">Wrzesień</option>
-                    <option value="10">Październik</option>
-                    <option value="11">Listopad</option>
-                    <option value="12">Grudzień</option>
+                    <option value="" data-i18n="absence.wholeYear">Whole year</option>
+                    <option value="1" data-i18n="schedule.monthFullJan">January</option>
+                    <option value="2" data-i18n="schedule.monthFullFeb">February</option>
+                    <option value="3" data-i18n="schedule.monthFullMar">March</option>
+                    <option value="4" data-i18n="schedule.monthFullApr">April</option>
+                    <option value="5" data-i18n="schedule.monthFullMay">May</option>
+                    <option value="6" data-i18n="schedule.monthFullJun">June</option>
+                    <option value="7" data-i18n="schedule.monthFullJul">July</option>
+                    <option value="8" data-i18n="schedule.monthFullAug">August</option>
+                    <option value="9" data-i18n="schedule.monthFullSep">September</option>
+                    <option value="10" data-i18n="schedule.monthFullOct">October</option>
+                    <option value="11" data-i18n="schedule.monthFullNov">November</option>
+                    <option value="12" data-i18n="schedule.monthFullDec">December</option>
                   </select>
                 </div>
               </div>
@@ -1243,7 +1162,7 @@
             <div class="absence-panel">
               <div class="absence-panel-header">
                 <span class="absence-panel-icon">📅</span>
-                <h3>Nadchodzące</h3>
+                <h3 data-i18n="absence.upcoming">Upcoming</h3>
               </div>
               <div class="absence-panel-content" id="absenceUpcoming">
                 <!-- Upcoming będą generowane dynamicznie -->
@@ -1256,7 +1175,7 @@
                 <circle cx="12" cy="12" r="3"/>
                 <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
               </svg>
-              Ustawienia urlopów
+              <span data-i18n="absence.leaveSettings">Leave Settings</span>
             </button>
           </aside>
 
@@ -1272,12 +1191,12 @@
                     <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                     <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                   </svg>
-                  Urlopy & Nieobecności
+                  <span data-i18n="absence.title">Leaves & Absences</span>
                 </h2>
               </div>
               <div class="absence-topbar-center">
                 <div class="absence-view-toggle">
-                  <button class="absence-view-btn active" data-view="calendar" title="Widok kalendarza">
+                  <button class="absence-view-btn" data-view="calendar" data-i18n-title="absence.calendarView" title="Calendar view">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                       <line x1="16" y1="2" x2="16" y2="6"/>
@@ -1285,7 +1204,7 @@
                       <line x1="3" y1="10" x2="21" y2="10"/>
                     </svg>
                   </button>
-                  <button class="absence-view-btn" data-view="list" title="Widok listy">
+                  <button class="absence-view-btn" data-view="list" data-i18n-title="absence.listView" title="List view">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <line x1="8" y1="6" x2="21" y2="6"/>
                       <line x1="8" y1="12" x2="21" y2="12"/>
@@ -1295,7 +1214,7 @@
                       <line x1="3" y1="18" x2="3.01" y2="18"/>
                     </svg>
                   </button>
-                  <button class="absence-view-btn" data-view="heatmap" title="Mapa ciepła">
+                  <button class="absence-view-btn" data-view="heatmap" data-i18n-title="absence.heatmapView" title="Heatmap">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <rect x="3" y="3" width="7" height="7"/>
                       <rect x="14" y="3" width="7" height="7"/>
@@ -1303,12 +1222,24 @@
                       <rect x="3" y="14" width="7" height="7"/>
                     </svg>
                   </button>
-                  <button class="absence-view-btn" data-view="employees" title="Widok pracowników">
+                  <button class="absence-view-btn" data-view="employees" data-i18n-title="absence.employeesView" title="Employees view">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                       <circle cx="9" cy="7" r="4"/>
                       <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                       <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                  </button>
+                  <button class="absence-view-btn active" data-view="timeline" data-i18n-title="absence.timelineView" title="Year report (timeline)">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <line x1="4" y1="6" x2="20" y2="6"/>
+                      <line x1="4" y1="10" x2="20" y2="10"/>
+                      <line x1="4" y1="14" x2="20" y2="14"/>
+                      <line x1="4" y1="18" x2="20" y2="18"/>
+                      <rect x="6" y="4" width="5" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+                      <rect x="13" y="8" width="4" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+                      <rect x="8" y="12" width="6" height="4" rx="1" fill="currentColor" opacity="0.3"/>
+                      <rect x="4" y="16" width="3" height="4" rx="1" fill="currentColor" opacity="0.3"/>
                     </svg>
                   </button>
                 </div>
@@ -1320,14 +1251,14 @@
                     <polyline points="7 10 12 15 17 10"/>
                     <line x1="12" y1="15" x2="12" y2="3"/>
                   </svg>
-                  Eksport
+                  <span data-i18n="absence.exportBtn">Export</span>
                 </button>
                 <button class="absence-action-btn primary" id="addAbsenceBtn">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="12" y1="5" x2="12" y2="19"/>
                     <line x1="5" y1="12" x2="19" y2="12"/>
                   </svg>
-                  Dodaj nieobecność
+                  <span data-i18n="absence.addAbsenceBtn">+ Add Absence</span>
                 </button>
               </div>
             </div>
@@ -1341,14 +1272,14 @@
           <!-- Right Sidebar - Employee Cards (Sliding Panel) -->
           <aside class="absence-employees-sidebar open" id="absenceEmployeesSidebar">
             <!-- Toggle Button (Tab) -->
-            <button class="absence-sidebar-toggle" id="absenceEmployeesToggle" title="Otwórz panel">
+            <button class="absence-sidebar-toggle" id="absenceEmployeesToggle" data-i18n-title="schedulePanel.openPanel" title="Open panel">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                 <circle cx="9" cy="7" r="4"/>
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                 <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
               </svg>
-              <span class="toggle-text">Pracownicy</span>
+              <span class="toggle-text" data-i18n="schedule.employees">Employees</span>
             </button>
             
             <!-- Header -->
@@ -1360,9 +1291,9 @@
                   <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
                   <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
                 </svg>
-                Pracownicy
+                <span data-i18n="schedule.employees">Employees</span>
               </h3>
-              <button class="absence-sidebar-close" id="absenceEmployeesClose" title="Zamknij panel">
+              <button class="absence-sidebar-close" id="absenceEmployeesClose" data-i18n-title="schedulePanel.closePanel" title="Close panel">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <line x1="18" y1="6" x2="6" y2="18"/>
                   <line x1="6" y1="6" x2="18" y2="18"/>
@@ -1415,6 +1346,20 @@
 
           <div class="setting-group">
             <h3 data-i18n="settings.security">Security</h3>
+            <!-- Admin Unlock -->
+            <div class="setting-item admin-unlock-section">
+              <div>
+                <label data-i18n="settings.unlockApp">Unlock Application</label>
+                <p class="setting-hint" data-i18n="settings.unlockAppHint">Enter password to unlock admin features (add, delete, import, export)</p>
+              </div>
+              <button class="btn-primary" id="toggleAdminUnlock">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                <span id="adminUnlockBtnText" data-i18n="settings.unlock">Unlock</span>
+              </button>
+            </div>
             <div class="setting-item">
               <div>
                 <label data-i18n="settings.deletePassword">Delete Password</label>
@@ -1431,7 +1376,253 @@
             </div>
           </div>
 
-          <div class="setting-group">
+          <!-- Backup & Restore (admin-only) -->
+          <div class="setting-group backup-group admin-only" style="display:none">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+              </svg>
+              <span data-i18n="settings.backup">Backup & Restore</span>
+            </h3>
+
+            <!-- Backup path -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.backupPath">Backup Path</label>
+                <p class="setting-hint" data-i18n="settings.backupPathHint">Where to store automatic backups</p>
+              </div>
+              <div class="backup-path-input">
+                <input type="text" id="backupPathInput" class="setting-input" placeholder="/path/to/backups" style="width: 280px;">
+              </div>
+            </div>
+
+            <!-- Auto backup frequency -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.backupFrequency">Backup Frequency</label>
+                <p class="setting-hint" data-i18n="settings.backupFrequencyHint">How often to automatically create backups</p>
+              </div>
+              <select id="backupFrequency" class="setting-select">
+                <option value="none" data-i18n="settings.backupNone">Disabled</option>
+                <option value="session" data-i18n="settings.backupSession">Once per session</option>
+                <option value="daily" data-i18n="settings.backupDaily">Daily</option>
+                <option value="weekly" data-i18n="settings.backupWeekly">Weekly</option>
+              </select>
+            </div>
+
+            <!-- Manual backup -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.createBackup">Create Backup Now</label>
+                <p class="setting-hint" data-i18n="settings.createBackupHint">Manually create a full database backup</p>
+              </div>
+              <button class="btn-secondary" id="createBackupBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
+                </svg>
+                <span data-i18n="settings.backupNow">Backup Now</span>
+              </button>
+            </div>
+
+            <!-- Backup list -->
+            <div class="setting-item backup-list-container">
+              <div style="width:100%">
+                <label data-i18n="settings.existingBackups">Existing Backups</label>
+                <div id="backupListContainer" class="backup-list">
+                  <p class="setting-hint">Loading...</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Last backup info -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.lastBackup">Last Backup</label>
+                <p class="setting-hint" id="lastBackupInfo">-</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Import Wizard (admin-only) -->
+          <div class="setting-group import-group admin-only" style="display:none">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+              </svg>
+              <span data-i18n="settings.importExportWizard">Import / Export</span>
+            </h3>
+
+            <!-- Full database import/export -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.fullDatabase">Full Database</label>
+                <p class="setting-hint" data-i18n="settings.fullDatabaseHint">Import or export the entire database as a JSON file</p>
+              </div>
+              <div class="module-actions-row">
+                <button class="btn-secondary btn-module-action btn-import" id="importFullBackupBtn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  <span data-i18n="settings.import">Import</span>
+                </button>
+                <button class="btn-secondary btn-module-action btn-export" id="exportFullDatabaseBtn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  <span data-i18n="settings.export">Export</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Combined modules import/export -->
+            <div class="setting-item import-modules-container">
+              <div style="width:100%">
+                <label data-i18n="settings.moduleGroups">Module Groups</label>
+                <p class="setting-hint" data-i18n="settings.moduleGroupsHint">Import or export grouped modules</p>
+                <div class="import-modules-grid">
+                  <div class="module-card-wrapper" data-module="planning">
+                    <div class="module-card-header">
+                      <div class="module-icon">📊</div>
+                      <div class="module-name" data-i18n="settings.modulePlanning">Planning</div>
+                      <div class="module-desc" data-i18n="settings.modulePlanningDesc">Customers, types, parts, tests, projects</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModulePlanning" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModulePlanning" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper" data-module="employees">
+                    <div class="module-card-header">
+                      <div class="module-icon">👥</div>
+                      <div class="module-name" data-i18n="settings.moduleEmployees">Employees</div>
+                      <div class="module-desc" data-i18n="settings.moduleEmployeesDesc">Workers, details, qualifications</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleEmployees" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModuleEmployees" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper" data-module="schedule">
+                    <div class="module-card-header">
+                      <div class="module-icon">📅</div>
+                      <div class="module-name" data-i18n="settings.moduleSchedule">Schedule</div>
+                      <div class="module-desc" data-i18n="settings.moduleScheduleDesc">Shift assignments, templates</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleSchedule" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModuleSchedule" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper" data-module="absences">
+                    <div class="module-card-header">
+                      <div class="module-icon">🏖️</div>
+                      <div class="module-name" data-i18n="settings.moduleAbsences">Absences</div>
+                      <div class="module-desc" data-i18n="settings.moduleAbsencesDesc">Absence types, vacations, holidays</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleAbsences" title="Import">⬆ Import</button>
+                      <button class="btn-sm btn-export" id="exportModuleAbsences" title="Export">⬇ Export</button>
+                    </div>
+                  </div>
+                </div>
+
+                <label style="margin-top: 16px; display: block;" data-i18n="settings.individualTables">Individual Tables</label>
+                <p class="setting-hint" data-i18n="settings.individualTablesHint">Import or export a single table</p>
+                <div class="import-modules-grid import-modules-individual">
+                  <div class="module-card-wrapper module-card-small" data-module="customers">
+                    <div class="module-card-header">
+                      <div class="module-icon">👤</div>
+                      <div class="module-name" data-i18n="settings.moduleCustomers">Customers</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleCustomers" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleCustomers" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="types">
+                    <div class="module-card-header">
+                      <div class="module-icon">🏷️</div>
+                      <div class="module-name" data-i18n="settings.moduleTypes">Types</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleTypes" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleTypes" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="parts">
+                    <div class="module-card-header">
+                      <div class="module-icon">🔧</div>
+                      <div class="module-name" data-i18n="settings.moduleParts">Parts</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleParts" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleParts" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="tests">
+                    <div class="module-card-header">
+                      <div class="module-icon">🧪</div>
+                      <div class="module-name" data-i18n="settings.moduleTests">Tests</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleTests" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleTests" title="Export">⬇</button>
+                    </div>
+                  </div>
+                  <div class="module-card-wrapper module-card-small" data-module="projects">
+                    <div class="module-card-header">
+                      <div class="module-icon">📋</div>
+                      <div class="module-name" data-i18n="settings.moduleProjects">Projects</div>
+                    </div>
+                    <div class="module-card-actions">
+                      <button class="btn-sm btn-import" id="importModuleProjects" title="Import">⬆</button>
+                      <button class="btn-sm btn-export" id="exportModuleProjects" title="Export">⬇</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Local Database File (SQLite) (admin-only) -->
+          <div class="setting-group local-db-group admin-only" style="display:none">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                <line x1="12" y1="22.08" x2="12" y2="12"/>
+              </svg>
+              <span data-i18n="settings.localDatabase">Local Database File</span>
+            </h3>
+            <p class="setting-hint" style="margin: -8px 0 12px 0;" data-i18n="settings.localDatabaseHint">Save the SQLite database file to your computer for safekeeping. If someone accidentally deletes the application, your data is safe.</p>
+
+            <!-- Download DB file -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.downloadDb">Download Database File</label>
+                <p class="setting-hint" data-i18n="settings.downloadDbHint">Save the .db file locally on your computer</p>
+              </div>
+              <button class="btn-secondary" id="downloadDbBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span data-i18n="settings.downloadDbBtn">Download .db File</span>
+              </button>
+            </div>
+
+            <!-- Upload DB file -->
+            <div class="setting-item">
+              <div>
+                <label data-i18n="settings.uploadDb">Upload Database File</label>
+                <p class="setting-hint" data-i18n="settings.uploadDbHint">Restore from a previously saved .db file. This will replace all current data!</p>
+              </div>
+              <button class="btn-secondary btn-warning-outline" id="uploadDbBtn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <span data-i18n="settings.uploadDbBtn">Upload .db File</span>
+              </button>
+            </div>
+            <input type="file" id="uploadDbFileInput" accept=".db,.sqlite,.sqlite3" style="display:none" />
+          </div>
+
+          <div class="setting-group admin-only" style="display:none">
             <h3 data-i18n="settings.data">Data Management</h3>
             <div class="setting-item">
               <div>
@@ -1477,6 +1668,9 @@
             </div>
           </div>
         </div>
+        <!-- Hidden file inputs for import -->
+        <input type="file" id="settingsImportFileInput" accept=".json" hidden>
+        <input type="file" id="settingsModuleImportFileInput" accept=".json" hidden>
       </div>
 
       <!-- Logs View -->

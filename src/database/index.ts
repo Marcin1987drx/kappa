@@ -254,6 +254,9 @@ class Database {
         zoomLevel: 100,
         editMode: false,
         shiftSystem: 2,
+        backupPath: '',
+        backupFrequency: 'none',
+        lastBackupDate: '',
       };
     }
   }
@@ -341,9 +344,42 @@ class Database {
     return api.exportData();
   }
 
+  async exportDataRaw(): Promise<any> {
+    return api.exportDataRaw();
+  }
+
+  async exportModule(moduleName: string): Promise<any> {
+    return api.exportModule(moduleName);
+  }
+
   // Import data
   async importData(jsonData: string): Promise<void> {
     await api.importData(jsonData);
+  }
+
+  async importModule(moduleName: string, data: any): Promise<void> {
+    await api.importModule(moduleName, data);
+  }
+
+  // Backup management
+  async createBackup(backupPath?: string): Promise<any> {
+    return api.createBackup(backupPath);
+  }
+
+  async getBackups(backupPath?: string): Promise<any> {
+    return api.getBackups(backupPath);
+  }
+
+  async restoreBackup(filename: string, backupPath?: string): Promise<any> {
+    return api.restoreBackup(filename, backupPath);
+  }
+
+  async downloadDatabase(): Promise<Blob> {
+    return api.downloadDatabase();
+  }
+
+  async uploadDatabase(base64Data: string): Promise<any> {
+    return api.uploadDatabase(base64Data);
   }
 
   // User Preferences (replaces localStorage)

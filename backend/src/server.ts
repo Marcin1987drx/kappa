@@ -14,7 +14,8 @@ import {
   absencesRouter,
   employeeDetailsRouter,
   qualificationsRouter,
-  holidaysRouter
+  holidaysRouter,
+  extraTasksRouter
 } from './routes/schedule.js';
 import { initDatabase } from './database/db.js';
 
@@ -28,7 +29,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -55,6 +56,7 @@ app.use('/api/absences', absencesRouter);
 app.use('/api/employee-details', employeeDetailsRouter);
 app.use('/api/qualifications', qualificationsRouter);
 app.use('/api/holidays', holidaysRouter);
+app.use('/api/extra-tasks', extraTasksRouter);
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {

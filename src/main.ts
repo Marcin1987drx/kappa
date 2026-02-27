@@ -1,7 +1,7 @@
 import { i18n } from './i18n';
 import { api } from './api/client';
 import { db } from './database';
-import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus } from './types';
+import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus, ExtraTask } from './types';
 import { Chart, registerables } from 'chart.js';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -56,6 +56,7 @@ class KappaApp {
     scheduleEntries: [],
     scheduleAssignments: [],
     projectComments: [],
+    extraTasks: [],
     settings: {
       language: 'en',
       darkMode: false,
@@ -67,6 +68,9 @@ class KappaApp {
       userName: '',
       zoomLevel: 100,
       shiftSystem: 2,
+      backupPath: '',
+      backupFrequency: 'none',
+      lastBackupDate: '',
     },
     currentView: 'planning',
     selectedYear: new Date().getFullYear(),
@@ -93,7 +97,7 @@ class KappaApp {
 
   // Absence module state
   private absenceYear: number = new Date().getFullYear();
-  private absenceViewMode: 'calendar' | 'list' | 'heatmap' | 'employees' = 'calendar';
+  private absenceViewMode: 'calendar' | 'list' | 'heatmap' | 'employees' | 'timeline' = 'timeline';
   private absenceCalendarMonth: number = new Date().getMonth();
   private absenceFilterEmployee: string = '';
   private absenceFilterType: string = '';
@@ -103,6 +107,9 @@ class KappaApp {
   private absenceLimits: any[] = [];
   private holidays: any[] = [];
   private absenceEventsInitialized: boolean = false;
+
+  // Admin mode - unlocked by password in settings
+  private adminUnlocked: boolean = false;
 
   async init(): Promise<void> {
     try {
@@ -123,8 +130,13 @@ class KappaApp {
       this.setupEventListeners();
       this.applyTheme();
       this.applyZoom();
+      this.updateAdminUI(); // Hide admin elements initially
       this.renderCurrentView();
       this.startAnimations();
+      
+      // Auto-backup check
+      await this.checkAutoBackup();
+      
       console.log('✅ Kappaplannung initialized successfully');
     } catch (error) {
       console.error('Failed to initialize:', error);
@@ -233,6 +245,16 @@ class KappaApp {
     this.state.scheduleAssignments = await db.getAll<ScheduleAssignment>('scheduleAssignments');
     this.state.projectComments = await db.getAll<ProjectComment>('projectComments');
     
+    // Load extra tasks
+    try {
+      this.state.extraTasks = await api.getExtraTasks();
+    } catch (e) {
+      this.state.extraTasks = [];
+    }
+    
+    // Cleanup: usuń duplikaty i osierocone przypisania (po załadowaniu projektów i extra tasks)
+    await this.cleanupDuplicateAssignments();
+    
     // Sort logs by timestamp descending
     this.logs.sort((a, b) => b.timestamp - a.timestamp);
     
@@ -245,6 +267,56 @@ class KappaApp {
     }
     
     i18n.setLanguage(this.state.settings.language);
+  }
+
+  private async cleanupDuplicateAssignments(): Promise<void> {
+    const seen = new Map<string, ScheduleAssignment>();
+    const toRemove: string[] = [];
+    
+    // Zbierz prawidłowe project IDs
+    const validProjectIds = new Set<string>();
+    this.state.projects.forEach(p => {
+      validProjectIds.add(p.id);
+      validProjectIds.add(`${p.customer_id}-${p.type_id}`);
+    });
+    // Extra task project IDs
+    this.state.extraTasks.forEach(t => {
+      validProjectIds.add(`extra-${t.id}`);
+    });
+    
+    for (const a of this.state.scheduleAssignments) {
+      // Usuń przypisania do nieistniejących projektów (osierocone)
+      if (!validProjectIds.has(a.projectId)) {
+        toRemove.push(a.id);
+        continue;
+      }
+      
+      // Klucz unikalności: pracownik + projekt + tydzień + zmiana + scope + test + part
+      const key = `${a.employeeId}|${a.projectId}|${a.week}|${a.shift}|${a.scope || ''}|${a.testId || ''}|${a.partId || ''}`;
+      if (seen.has(key)) {
+        // Duplikat - zachowaj nowsze (wyższe updatedAt/createdAt)
+        const existing = seen.get(key)!;
+        const existingTime = existing.updatedAt || existing.createdAt || 0;
+        const currentTime = a.updatedAt || a.createdAt || 0;
+        if (currentTime > existingTime) {
+          toRemove.push(existing.id);
+          seen.set(key, a);
+        } else {
+          toRemove.push(a.id);
+        }
+      } else {
+        seen.set(key, a);
+      }
+    }
+    
+    if (toRemove.length > 0) {
+      console.log(`[Kappa] Cleaning up ${toRemove.length} orphan/duplicate assignment(s)`);
+      for (const id of toRemove) {
+        const idx = this.state.scheduleAssignments.findIndex((a: ScheduleAssignment) => a.id === id);
+        if (idx !== -1) this.state.scheduleAssignments.splice(idx, 1);
+        await db.delete('scheduleAssignments', id);
+      }
+    }
   }
 
   // Migrate week keys from old format (KW01) to new format (2026-KW01)
@@ -389,7 +461,6 @@ class KappaApp {
     // Planning view buttons
     document.getElementById('addProject')?.addEventListener('click', () => this.showAddProjectModal());
     document.getElementById('exportData')?.addEventListener('click', () => this.exportData());
-    document.getElementById('importData')?.addEventListener('click', () => this.importData());
 
     // Toolbar collapse toggle
     document.getElementById('toggleToolbarExpand')?.addEventListener('click', async () => {
@@ -445,6 +516,22 @@ class KappaApp {
       this.showAnalyticsModal();
     });
 
+    // Projects slide panel (inside Planning)
+    document.getElementById('openProjectsPanel')?.addEventListener('click', () => {
+      const panel = document.getElementById('projectsSlidePanel');
+      if (panel) {
+        panel.classList.add('open');
+        this.renderProjectsView();
+      }
+    });
+    document.getElementById('projectsPanelClose')?.addEventListener('click', () => {
+      const panel = document.getElementById('projectsSlidePanel');
+      panel?.classList.remove('open');
+    });
+
+    // Admin unlock toggle
+    document.getElementById('toggleAdminUnlock')?.addEventListener('click', () => this.toggleAdminUnlock());
+
     // Projects view buttons
     document.getElementById('addCustomer')?.addEventListener('click', () => this.showAddModal('customer'));
     document.getElementById('addType')?.addEventListener('click', () => this.showAddModal('type'));
@@ -477,6 +564,72 @@ class KappaApp {
 
     document.getElementById('clearAllData')?.addEventListener('click', () => this.clearAllData());
     
+    // ==================== Backup & Import Settings ====================
+    document.getElementById('createBackupBtn')?.addEventListener('click', () => this.createManualBackup());
+    document.getElementById('importFullBackupBtn')?.addEventListener('click', () => this.importFullBackup());
+    document.getElementById('exportFullDatabaseBtn')?.addEventListener('click', () => this.exportFullDatabase());
+
+    // Module import buttons
+    document.getElementById('importModulePlanning')?.addEventListener('click', () => this.importModuleFromFile('planning'));
+    document.getElementById('importModuleEmployees')?.addEventListener('click', () => this.importModuleFromFile('employees'));
+    document.getElementById('importModuleSchedule')?.addEventListener('click', () => this.importModuleFromFile('schedule'));
+    document.getElementById('importModuleAbsences')?.addEventListener('click', () => this.importModuleFromFile('absences'));
+    // Individual table import buttons
+    document.getElementById('importModuleCustomers')?.addEventListener('click', () => this.importModuleFromFile('customers'));
+    document.getElementById('importModuleTypes')?.addEventListener('click', () => this.importModuleFromFile('types'));
+    document.getElementById('importModuleParts')?.addEventListener('click', () => this.importModuleFromFile('parts'));
+    document.getElementById('importModuleTests')?.addEventListener('click', () => this.importModuleFromFile('tests'));
+    document.getElementById('importModuleProjects')?.addEventListener('click', () => this.importModuleFromFile('projects'));
+
+    // Module export buttons
+    document.getElementById('exportModulePlanning')?.addEventListener('click', () => this.exportModuleToFile('planning'));
+    document.getElementById('exportModuleEmployees')?.addEventListener('click', () => this.exportModuleToFile('employees'));
+    document.getElementById('exportModuleSchedule')?.addEventListener('click', () => this.exportModuleToFile('schedule'));
+    document.getElementById('exportModuleAbsences')?.addEventListener('click', () => this.exportModuleToFile('absences'));
+    // Individual table export buttons
+    document.getElementById('exportModuleCustomers')?.addEventListener('click', () => this.exportModuleToFile('customers'));
+    document.getElementById('exportModuleTypes')?.addEventListener('click', () => this.exportModuleToFile('types'));
+    document.getElementById('exportModuleParts')?.addEventListener('click', () => this.exportModuleToFile('parts'));
+    document.getElementById('exportModuleTests')?.addEventListener('click', () => this.exportModuleToFile('tests'));
+    document.getElementById('exportModuleProjects')?.addEventListener('click', () => this.exportModuleToFile('projects'));
+
+    // Local database file download/upload
+    document.getElementById('downloadDbBtn')?.addEventListener('click', () => this.downloadDatabaseFile());
+    document.getElementById('uploadDbBtn')?.addEventListener('click', () => {
+      const fileInput = document.getElementById('uploadDbFileInput') as HTMLInputElement;
+      if (fileInput) fileInput.click();
+    });
+    document.getElementById('uploadDbFileInput')?.addEventListener('change', (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) this.uploadDatabaseFile(file);
+      (e.target as HTMLInputElement).value = '';
+    });
+
+    // Backup path input
+    document.getElementById('backupPathInput')?.addEventListener('change', async (e) => {
+      this.state.settings.backupPath = (e.target as HTMLInputElement).value;
+      await this.saveSettings();
+      this.loadBackupList();
+    });
+
+    // Backup frequency
+    document.getElementById('backupFrequency')?.addEventListener('change', async (e) => {
+      this.state.settings.backupFrequency = (e.target as HTMLSelectElement).value as any;
+      await this.saveSettings();
+    });
+
+    // File inputs for import
+    document.getElementById('settingsImportFileInput')?.addEventListener('change', (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) this.handleFullImportFile(file);
+      (e.target as HTMLInputElement).value = '';
+    });
+    document.getElementById('settingsModuleImportFileInput')?.addEventListener('change', (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (file) this.handleModuleImportFile(file);
+      (e.target as HTMLInputElement).value = '';
+    });
+
     // Load example data
     document.getElementById('loadExampleData')?.addEventListener('click', async () => {
       if (this.state.projects.length > 0) {
@@ -838,9 +991,15 @@ class KappaApp {
     switch (this.state.currentView) {
       case 'planning':
         this.renderPlanningGrid();
+        if (this.adminUnlocked) {
+          this.renderProjectsView();
+        }
         break;
       case 'projects':
-        this.renderProjectsView();
+        this.renderPlanningGrid();
+        if (this.adminUnlocked) {
+          this.renderProjectsView();
+        }
         break;
       case 'analytics':
         this.renderAnalyticsView();
@@ -862,10 +1021,16 @@ class KappaApp {
 
   private getCurrentWeek(): number {
     const now = new Date();
-    const start = new Date(now.getFullYear(), 0, 1);
-    const diff = now.getTime() - start.getTime();
-    const oneWeek = 1000 * 60 * 60 * 24 * 7;
-    return Math.floor(diff / oneWeek) + 1;
+    // ISO 8601 week calculation
+    const target = new Date(now.valueOf());
+    // Set to nearest Thursday: current date + 4 - current day number (Monday=1, Sunday=7)
+    const dayNum = target.getDay() || 7; // Convert Sunday from 0 to 7
+    target.setDate(target.getDate() + 4 - dayNum);
+    // Get first day of year
+    const yearStart = new Date(target.getFullYear(), 0, 1);
+    // Calculate full weeks to nearest Thursday
+    const weekNo = Math.ceil((((target.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+    return weekNo;
   }
 
   // ==================== Focus/Advanced Mode ====================
@@ -955,7 +1120,7 @@ class KappaApp {
       if (delayedProjects > 0) {
         alertsHtml += `<div class="alert-item alert-danger">
           <span class="alert-icon">🔴</span>
-          <span class="alert-text">${delayedProjects} projekt${delayedProjects > 1 ? 'ów' : ''} < 50% realizacji</span>
+          <span class="alert-text">${i18n.t('planning.belowRealization').replace('{0}', String(delayedProjects))}</span>
         </div>`;
       }
       const noSollProjects = this.state.projects.filter(p => {
@@ -971,7 +1136,7 @@ class KappaApp {
       if (!alertsHtml) {
         alertsHtml = `<div class="alert-item alert-success">
           <span class="alert-icon">✅</span>
-          <span class="alert-text">Wszystko w porządku!</span>
+          <span class="alert-text">${i18n.t('schedule.allOk')}</span>
         </div>`;
       }
       alertsList.innerHTML = alertsHtml;
@@ -1005,7 +1170,7 @@ class KappaApp {
           });
         });
       } else {
-        priorityList.innerHTML = '<div class="priority-empty">Brak projektów do pokazania</div>';
+        priorityList.innerHTML = `<div class="priority-empty">${i18n.t('planning.noProjectsToShow')}</div>`;
       }
     }
   }
@@ -1163,7 +1328,7 @@ class KappaApp {
           
           const pinBtn = document.createElement('button');
           pinBtn.className = `btn-pin ${isPinned ? 'pinned' : ''}`;
-          pinBtn.title = isPinned ? 'Odepnij' : 'Przypnij na górze';
+          pinBtn.title = isPinned ? i18n.t('schedule.unpin') : i18n.t('schedule.pinToTop');
           pinBtn.innerHTML = isPinned 
             ? '<svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>'
             : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>';
@@ -1189,7 +1354,7 @@ class KappaApp {
           // Progress bar
           const progressBar = document.createElement('div');
           progressBar.className = 'row-progress';
-          progressBar.title = `Postęp: ${progressPercent}% (${totalIst}/${totalSoll})`;
+          progressBar.title = i18n.t('planning.progressTooltip').replace('{0}', String(progressPercent)).replace('{1}', String(totalIst)).replace('{2}', String(totalSoll));
           const progressFill = document.createElement('div');
           progressFill.className = 'row-progress-fill';
           progressFill.style.width = `${Math.min(progressPercent, 100)}%`;
@@ -1246,7 +1411,7 @@ class KappaApp {
       const timeCell = document.createElement('div');
       timeCell.className = 'grid-cell fixed-cell col-time time-cell';
       timeCell.innerHTML = `<span class="time-value">${project.timePerUnit || 0}</span><span class="time-unit">min</span>`;
-      timeCell.title = 'Kliknij aby ustawić czas na 1 test';
+      timeCell.title = i18n.t('planning.clickToSetTime');
       timeCell.style.cursor = 'pointer';
       timeCell.addEventListener('click', () => this.showTimeEditPopup(project, timeCell));
       container.appendChild(timeCell);
@@ -1298,6 +1463,9 @@ class KappaApp {
       }
     });
 
+    // ==================== EXTRA TASKS IN PLANNER ====================
+    this.renderExtraTasksInPlanner(container, headerContainer, currentWeek, currentYear);
+
     this.updateFilterOptions();
     
     // Add row hover effect
@@ -1325,6 +1493,184 @@ class KappaApp {
     }
     // Reset skip flag
     this.skipNextScroll = false;
+  }
+
+  // ==================== EXTRA TASKS IN PLANNER ====================
+  private renderExtraTasksInPlanner(
+    container: HTMLElement, 
+    headerContainer: HTMLElement,
+    currentWeek: number, 
+    currentYear: number
+  ): void {
+    // Pobierz dodatkowe zadania dla wybranego roku
+    const yearTasks = this.state.extraTasks.filter(t => {
+      const match = t.week.match(/^(\d{4})-KW/);
+      return match && parseInt(match[1]) === this.state.selectedYear;
+    });
+    
+    // Zbierz unikalne nazwy zadań
+    const taskNames = new Map<string, ExtraTask[]>();
+    yearTasks.forEach(t => {
+      if (!taskNames.has(t.name)) taskNames.set(t.name, []);
+      taskNames.get(t.name)!.push(t);
+    });
+    
+    // Separator row
+    const sepCells = 6 + 52 * 2; // fixed cols + week cols
+    const sepCell = document.createElement('div');
+    sepCell.className = 'grid-cell planner-extra-separator';
+    sepCell.style.gridColumn = `1 / -1`;
+    sepCell.innerHTML = `
+      <div class="planner-extra-sep-content">
+        <span class="planner-extra-sep-icon">📌</span>
+        <span class="planner-extra-sep-label">${i18n.t('schedule.extraTasks')}</span>
+        <button class="planner-extra-add-btn" id="plannerAddExtraTask">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          ${i18n.t('schedule.addExtraTask')}
+        </button>
+      </div>
+    `;
+    container.appendChild(sepCell);
+    
+    sepCell.querySelector('#plannerAddExtraTask')?.addEventListener('click', () => {
+      const weekKey = `${this.state.selectedYear}-KW${currentWeek.toString().padStart(2, '0')}`;
+      this.showExtraTaskModal(weekKey);
+    });
+    
+    // Render row per unique task name
+    taskNames.forEach((tasks, name) => {
+      // Znajdź pierwszy task dla metadanych
+      const firstTask = tasks[0];
+      const totalTime = firstTask.timePerUnit * firstTask.units;
+      const hours = Math.floor(totalTime / 60);
+      const mins = totalTime % 60;
+      const timeStr = hours > 0 ? `${hours}h${mins > 0 ? mins + 'm' : ''}` : `${totalTime}m`;
+      
+      // Name cell (klient kolumna)
+      const nameCell = document.createElement('div');
+      nameCell.className = 'grid-cell fixed-cell col-customer planner-extra-row-cell';
+      nameCell.innerHTML = `
+        <div class="cell-with-badge">
+          <span class="planner-extra-pin">📌</span>
+          <span class="cell-text">${name}</span>
+        </div>
+      `;
+      nameCell.title = name;
+      container.appendChild(nameCell);
+      
+      // Empty cell (typ kolumna)
+      const typeCell = document.createElement('div');
+      typeCell.className = 'grid-cell fixed-cell col-type planner-extra-row-cell';
+      container.appendChild(typeCell);
+      
+      // Comment cell (część kolumna) - editable
+      const commentCell = document.createElement('div');
+      commentCell.className = 'grid-cell fixed-cell col-part planner-extra-row-cell planner-extra-comment-cell';
+      commentCell.innerHTML = firstTask.comment 
+        ? `<span class="cell-text planner-extra-comment-text">${firstTask.comment}</span>` 
+        : `<span class="cell-text planner-extra-comment-placeholder">${i18n.t('schedule.addComment')}</span>`;
+      commentCell.title = firstTask.comment || i18n.t('schedule.addComment');
+      commentCell.style.cursor = 'pointer';
+      commentCell.addEventListener('click', () => {
+        const currentComment = firstTask.comment || '';
+        const newComment = prompt(i18n.t('schedule.addComment'), currentComment);
+        if (newComment !== null) {
+          tasks.forEach(t => t.comment = newComment);
+          this.updateExtraTaskComment(firstTask.id, newComment);
+          this.renderPlanningGrid();
+        }
+      });
+      container.appendChild(commentCell);
+      
+      // Empty cell (test kolumna)
+      const testCell = document.createElement('div');
+      testCell.className = 'grid-cell fixed-cell col-test planner-extra-row-cell';
+      container.appendChild(testCell);
+      
+      // Time per unit cell (czas kolumna)
+      const tpuCell = document.createElement('div');
+      tpuCell.className = 'grid-cell fixed-cell col-time time-cell planner-extra-row-cell';
+      tpuCell.innerHTML = `<span class="time-value">${firstTask.timePerUnit}</span><span class="time-unit">min</span>`;
+      container.appendChild(tpuCell);
+      
+      // Actions cell
+      const actionsCell = document.createElement('div');
+      actionsCell.className = 'grid-cell actions-cell col-actions planner-extra-row-cell';
+      actionsCell.innerHTML = `
+        <button class="btn-icon planner-extra-del" title="${i18n.t('common.delete')}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+        </button>
+      `;
+      actionsCell.querySelector('.planner-extra-del')?.addEventListener('click', async () => {
+        // Usuń wszystkie zadania o tej nazwie
+        for (const t of tasks) {
+          await this.deleteExtraTask(t.id);
+        }
+        this.renderPlanningGrid();
+      });
+      container.appendChild(actionsCell);
+      
+      // Week cells - pokaż info o extra task per tydzień
+      for (let week = 1; week <= 52; week++) {
+        const kwNum = `KW${week.toString().padStart(2, '0')}`;
+        const yearWeekKey = `${this.state.selectedYear}-${kwNum}`;
+        const isCurrentWeek = week === currentWeek && this.state.selectedYear === currentYear;
+        
+        const weekTask = tasks.find(t => t.week === yearWeekKey);
+        
+        // IST cell - pokaż liczbę przypisanych pracowników
+        const istCell = document.createElement('div');
+        istCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
+        if (weekTask) {
+          const extraProjectId = `extra-${weekTask.id}`;
+          const assignments = this.state.scheduleAssignments.filter(
+            (a: ScheduleAssignment) => a.projectId === extraProjectId && a.week === yearWeekKey
+          );
+          istCell.innerHTML = assignments.length > 0 
+            ? `<span class="cell-value planner-extra-ist">${assignments.length}</span>` 
+            : '';
+          istCell.classList.add('planner-extra-active-cell');
+          istCell.title = `${name} - ${yearWeekKey}: ${assignments.length} ${i18n.t('schedule.employeesAssigned')}`;
+        }
+        container.appendChild(istCell);
+        
+        // SOLL cell - pokaż jednostki zadania
+        const sollCell = document.createElement('div');
+        sollCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
+        if (weekTask) {
+          sollCell.innerHTML = `<span class="cell-value planner-extra-soll">${weekTask.units}</span>`;
+          sollCell.classList.add('planner-extra-active-cell');
+          sollCell.title = `${weekTask.units} × ${weekTask.timePerUnit}min`;
+          
+          // Kliknięcie na cell otwiera modal edycji
+          sollCell.style.cursor = 'pointer';
+          sollCell.addEventListener('click', () => {
+            this.showExtraTaskModal(yearWeekKey, weekTask);
+          });
+        } else {
+          // Empty cell - kliknięcie dodaje task na ten tydzień
+          sollCell.style.cursor = 'pointer';
+          sollCell.addEventListener('click', () => {
+            const newTask: ExtraTask = {
+              id: crypto.randomUUID(),
+              name: name,
+              week: yearWeekKey,
+              timePerUnit: firstTask.timePerUnit,
+              units: firstTask.units,
+              comment: firstTask.comment,
+              created_at: Date.now()
+            };
+            this.showExtraTaskModal(yearWeekKey, undefined);
+          });
+        }
+        container.appendChild(sollCell);
+      }
+    });
   }
 
   private initYearSelector(): void {
@@ -1524,9 +1870,9 @@ class KappaApp {
     this.skipNextScroll = true;
     this.renderPlanningGrid();
     
-    const statusName = statusType === 'stoppage' ? 'Postój projektu' : 'Brak części';
+    const statusName = statusType === 'stoppage' ? i18n.t('planning.stoppageLabel') : i18n.t('planning.partsMissing');
     const isActive = project.weeks[week][statusType];
-    this.showToast(`${statusName}: ${isActive ? 'włączony' : 'wyłączony'}`, 'success');
+    this.showToast(`${statusName}: ${isActive ? i18n.t('planning.enabled') : i18n.t('planning.disabled')}`, 'success');
   }
 
   private showCellActionPopup(
@@ -1554,7 +1900,7 @@ class KappaApp {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
-            <span>Komentarz</span>
+            <span>${i18n.t('planning.comment')}</span>
           </div>
           <p>${this.escapeHtml(comment.text)}</p>
         </div>
@@ -1564,18 +1910,18 @@ class KappaApp {
     // Action buttons
     html += `
       <div class="cell-action-buttons">
-        <button class="cell-action-btn action-comment ${comment ? 'active' : ''}" data-action="comment" title="Komentarz">
+        <button class="cell-action-btn action-comment ${comment ? 'active' : ''}" data-action="comment" title="${i18n.t('planning.comment')}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
         </button>
-        <button class="cell-action-btn action-stoppage ${weekData?.stoppage ? 'active' : ''}" data-action="stoppage" title="Postój projektu">
+        <button class="cell-action-btn action-stoppage ${weekData?.stoppage ? 'active' : ''}" data-action="stoppage" title="${i18n.t('planning.stoppageLabel')}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
             <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
           </svg>
         </button>
-        <button class="cell-action-btn action-lack ${weekData?.productionLack ? 'active' : ''}" data-action="lack" title="Brak części">
+        <button class="cell-action-btn action-lack ${weekData?.productionLack ? 'active' : ''}" data-action="lack" title="${i18n.t('planning.partsMissing')}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
             <line x1="7.5" y1="4.21" x2="16.5" y2="19.79"/>
@@ -1683,7 +2029,7 @@ class KappaApp {
     popup.style.top = `${top}px`;
 
     const percentage = soll > 0 ? Math.round((ist / soll) * 100) : 0;
-    const statusText = percentage >= 100 ? 'Zakończone' : percentage > 0 ? 'W trakcie' : 'Nie rozpoczęte';
+    const statusText = percentage >= 100 ? i18n.t('planning.statusCompleted') : percentage > 0 ? i18n.t('planning.statusInProgress') : i18n.t('planning.statusNotStarted');
     const statusClass = percentage >= 100 ? 'pct-100' : percentage > 0 ? 'pct-partial' : 'pct-zero';
 
     popup.innerHTML = `
@@ -1708,7 +2054,7 @@ class KappaApp {
             <circle cx="12" cy="12" r="10"/>
             <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
           </svg>
-          Postój projektu
+          ${i18n.t('planning.stoppageLabel')}
         </button>
         <button class="stoppage-option ${hasProductionLack ? 'active' : ''}" data-action="production-lack">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1717,7 +2063,7 @@ class KappaApp {
             <circle cx="5.5" cy="18.5" r="2.5"/>
             <circle cx="18.5" cy="18.5" r="2.5"/>
           </svg>
-          Brak produkcji (brak części)
+          ${i18n.t('planning.productionLack')}
         </button>
       </div>
     `;
@@ -1753,7 +2099,7 @@ class KappaApp {
         popup.remove();
         this.skipNextScroll = true;
         this.renderPlanningGrid();
-        this.showToast('Status zaktualizowany', 'success');
+        this.showToast(i18n.t('planning.statusUpdated'), 'success');
       });
     });
 
@@ -1782,10 +2128,10 @@ class KappaApp {
     
     modalBody.innerHTML = `
       <div class="form-group">
-        <label>Wartość:</label>
+        <label>${i18n.t('schedule.valueLabel')}</label>
         <input type="number" id="cellValue" class="form-control" value="${currentValue}" min="0" autofocus />
       </div>
-      <p class="hint"><svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" width="14" height="14" style="display:inline;vertical-align:middle;margin-right:4px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> Tip: Lewy klik = +1, Prawy klik = -1</p>
+      <p class="hint"><svg viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2" width="14" height="14" style="display:inline;vertical-align:middle;margin-right:4px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg> ${i18n.t('schedule.tipClickInfo')}</p>
     `;
 
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
@@ -1806,14 +2152,14 @@ class KappaApp {
 
     const existingComment = this.comments.find(c => c.projectId === projectId && c.week === week);
 
-    modalTitle.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> Komentarz - ${week}`;
+    modalTitle.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg> ${i18n.t('planning.comment')} - ${week}`;
     
     modalBody.innerHTML = `
       <div class="form-group">
-        <label>Komentarz:</label>
-        <textarea id="commentText" class="form-control" rows="4" placeholder="Dodaj komentarz...">${existingComment?.text || ''}</textarea>
+        <label>${i18n.t('planning.comment')}:</label>
+        <textarea id="commentText" class="form-control" rows="4" placeholder="${i18n.t('planning.addCommentPlaceholder')}">${existingComment?.text || ''}</textarea>
       </div>
-      ${existingComment ? `<button id="deleteComment" class="btn btn-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="display:inline;vertical-align:middle;margin-right:4px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Usuń komentarz</button>` : ''}
+      ${existingComment ? `<button id="deleteComment" class="btn btn-danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="display:inline;vertical-align:middle;margin-right:4px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> ${i18n.t('planning.deleteComment')}</button>` : ''}
     `;
 
     document.getElementById('deleteComment')?.addEventListener('click', async () => {
@@ -1822,7 +2168,7 @@ class KappaApp {
         this.comments = this.comments.filter(c => c.id !== existingComment.id);
         this.hideModal();
         this.renderPlanningGrid();
-        this.showToast('Komentarz usunięty', 'success');
+        this.showToast(i18n.t('planning.commentDeleted'), 'success');
       }
     });
 
@@ -1847,7 +2193,7 @@ class KappaApp {
           const idx = this.comments.findIndex(c => c.id === comment.id);
           if (idx >= 0) this.comments[idx] = comment;
         }
-        this.showToast('Komentarz zapisany', 'success');
+        this.showToast(i18n.t('planning.commentSaved'), 'success');
       }
       
       this.hideModal();
@@ -1858,6 +2204,11 @@ class KappaApp {
   }
 
   private showTimeEditPopup(project: Project, cell: HTMLElement): void {
+    // Admin guard: only allow time editing when unlocked
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     // Remove existing popup
     document.querySelector('.time-edit-popup')?.remove();
     
@@ -1954,6 +2305,11 @@ class KappaApp {
   }
 
   private showFillDownModal(sourceProject: Project): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -1991,7 +2347,7 @@ class KappaApp {
       <div class="form-group">
         <label>
           <input type="checkbox" id="fillDownCopyComments" />
-          Kopiuj komentarze
+          ${i18n.t('planning.copyComments')}
         </label>
       </div>
     `;
@@ -2301,19 +2657,19 @@ class KappaApp {
     this.renderPlanningGrid();
     
     if (this.sortColumn) {
-      this.showToast(`Sortowanie: ${this.getSortColumnName(column)} (${this.sortDirection === 'asc' ? '↑' : '↓'})`, 'success');
+      this.showToast(i18n.t('planning.sortApplied').replace('{0}', this.getSortColumnName(column)).replace('{1}', this.sortDirection === 'asc' ? '↑' : '↓'), 'success');
     } else {
-      this.showToast('Sortowanie wyłączone', 'success');
+      this.showToast(i18n.t('planning.sortDisabled'), 'success');
     }
   }
 
   private getSortColumnName(column: string): string {
     const names: { [key: string]: string } = {
-      'customer': 'Klient',
-      'type': 'Typ',
-      'part': 'Część',
-      'test': 'Test',
-      'time': 'Czas'
+      'customer': i18n.t('planning.kunde'),
+      'type': i18n.t('planning.typ'),
+      'part': i18n.t('planning.teil'),
+      'test': i18n.t('planning.prufung'),
+      'time': i18n.t('planning.timeLabel')
     };
     return names[column] || column;
   }
@@ -2421,20 +2777,14 @@ class KappaApp {
     // Update stats dashboard
     this.updateProjectsStats();
     
-    // Setup tabs
-    this.setupProjectsTabs();
-    
     // Render lists with extended info
     this.renderItemsListExtended('customers', this.state.customers);
     this.renderItemsListExtended('types', this.state.types);
     this.renderItemsListExtended('parts', this.state.parts);
     this.renderItemsListExtended('tests', this.state.tests);
     
-    // Setup event listeners for new features
+    // Setup event listeners for search/filter
     this.setupProjectsEventListeners();
-    
-    // Render tree view
-    this.renderProjectsTree();
   }
   
   private projectsSearchQuery: string = '';
@@ -2472,7 +2822,7 @@ class KappaApp {
       
       if (valueEl) valueEl.textContent = stat.total.toString();
       if (barEl) barEl.style.width = stat.total > 0 ? `${(stat.used / stat.total) * 100}%` : '0%';
-      if (detailEl) detailEl.textContent = `${stat.used} używanych`;
+      if (detailEl) detailEl.textContent = i18n.t('schedule.usedCount').replace('{0}', String(stat.used));
     });
     
     // Update counts
@@ -2528,7 +2878,7 @@ class KappaApp {
     });
 
     if (filteredItems.length === 0) {
-      list.innerHTML = '<li class="empty-state">Brak elementów spełniających kryteria.</li>';
+      list.innerHTML = `<li class="empty-state">${i18n.t('settings.noMatchingItems')}</li>`;
       return;
     }
 
@@ -2567,7 +2917,7 @@ class KappaApp {
               <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
             </svg>
           </button>
-          <button class="btn-delete" title="Usuń">
+          <button class="btn-delete" title="${i18n.t('schedule.deleteBtn')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -2637,7 +2987,7 @@ class KappaApp {
     
     // Re-render
     this.renderItemsListExtended(type, items);
-    this.showToast('Kolejność zmieniona', 'success');
+    this.showToast(i18n.t('settings.orderChanged'), 'success');
   }
   
   private showTagPicker(target: HTMLElement, itemId: string, type: string): void {
@@ -2654,7 +3004,7 @@ class KappaApp {
     const noTag = document.createElement('div');
     noTag.className = 'tag-option no-tag';
     noTag.innerHTML = '✕';
-    noTag.title = 'Usuń tag';
+    noTag.title = i18n.t('settings.removeTag');
     noTag.addEventListener('click', () => {
       this.itemTags.delete(itemId);
       this.saveItemTags();
@@ -2711,7 +3061,7 @@ class KappaApp {
     const btn = document.getElementById('bulkDeleteProjects') as HTMLButtonElement;
     if (btn) {
       btn.disabled = totalSelected === 0;
-      btn.querySelector('span')!.textContent = totalSelected > 0 ? `Usuń zaznaczone (${totalSelected})` : 'Usuń zaznaczone';
+      btn.querySelector('span')!.textContent = totalSelected > 0 ? i18n.t('settings.deleteSelectedN').replace('{0}', totalSelected.toString()) : i18n.t('settings.deleteSelected');
     }
   }
   
@@ -2731,9 +3081,8 @@ class KappaApp {
     // Bulk delete
     document.getElementById('bulkDeleteProjects')?.addEventListener('click', () => this.bulkDeleteItems());
     
-    // Export/Import CSV
+    // Export CSV
     document.getElementById('exportProjectsCSV')?.addEventListener('click', () => this.exportAllProjectsCSV());
-    document.getElementById('importProjectsCSV')?.addEventListener('click', () => this.importProjectsCSV());
     
     // Individual category exports
     ['customers', 'types', 'parts', 'tests'].forEach(type => {
@@ -2766,7 +3115,7 @@ class KappaApp {
     
     if (totalSelected === 0) return;
     
-    if (!confirm(`Czy na pewno chcesz usunąć ${totalSelected} zaznaczonych elementów?`)) return;
+    if (!confirm(i18n.t('schedule.confirmBulkDelete').replace('{0}', String(totalSelected)))) return;
     
     for (const [type, ids] of this.selectedItems) {
       for (const id of ids) {
@@ -2777,16 +3126,16 @@ class KappaApp {
     
     await this.loadData();
     this.renderProjectsView();
-    this.showToast(`Usunięto ${totalSelected} elementów`, 'success');
+    this.showToast(i18n.t('settings.deletedNItems').replace('{0}', totalSelected.toString()), 'success');
   }
   
   private exportCategoryCSV(type: string): void {
     const items = (this.state as any)[type] as any[];
-    let csv = 'Nazwa,Data utworzenia,Liczba projektów\n';
+    let csv = `${i18n.t('settings.csvHeaderName')},${i18n.t('settings.csvHeaderCreated')},${i18n.t('settings.csvHeaderProjectCount')}\n`;
     
     items.forEach(item => {
       const usage = this.getItemUsageCount(type, item.id);
-      const date = item.createdAt ? new Date(item.createdAt).toLocaleDateString('pl-PL') : '-';
+      const date = item.createdAt ? new Date(item.createdAt).toLocaleDateString(i18n.getDateLocale()) : '-';
       csv += `"${item.name}","${date}",${usage}\n`;
     });
     
@@ -2798,17 +3147,17 @@ class KappaApp {
     a.click();
     URL.revokeObjectURL(url);
     
-    this.showToast(`Eksportowano ${type}`, 'success');
+    this.showToast(i18n.t('messages.exportedType').replace('{0}', type), 'success');
   }
   
   private exportAllProjectsCSV(): void {
-    let csv = 'Kategoria,Nazwa,Data utworzenia,Liczba projektów\n';
+    let csv = `${i18n.t('settings.csvHeaderCategory')},${i18n.t('settings.csvHeaderName')},${i18n.t('settings.csvHeaderCreated')},${i18n.t('settings.csvHeaderProjectCount')}\n`;
     
     ['customers', 'types', 'parts', 'tests'].forEach(type => {
       const items = (this.state as any)[type] as any[];
       items.forEach(item => {
         const usage = this.getItemUsageCount(type, item.id);
-        const date = item.createdAt ? new Date(item.createdAt).toLocaleDateString('pl-PL') : '-';
+        const date = item.createdAt ? new Date(item.createdAt).toLocaleDateString(i18n.getDateLocale()) : '-';
         csv += `"${type}","${item.name}","${date}",${usage}\n`;
       });
     });
@@ -2821,7 +3170,7 @@ class KappaApp {
     a.click();
     URL.revokeObjectURL(url);
     
-    this.showToast('Eksportowano wszystkie kategorie', 'success');
+    this.showToast(i18n.t('messages.exportedAll'), 'success');
   }
   
   private importProjectsCSV(): void {
@@ -2868,9 +3217,9 @@ class KappaApp {
       if (imported > 0) {
         await this.loadData();
         this.renderProjectsView();
-        this.showToast(`Zaimportowano ${imported} elementów`, 'success');
+        this.showToast(i18n.t('settings.importedNItems').replace('{0}', imported.toString()), 'success');
       } else {
-        this.showToast('Brak nowych elementów do zaimportowania', 'warning');
+        this.showToast(i18n.t('settings.noNewItems'), 'warning');
       }
     };
     input.click();
@@ -2930,8 +3279,8 @@ class KappaApp {
             <line x1="12" y1="12" x2="6" y2="16"/><line x1="12" y1="12" x2="18" y2="16"/>
             <circle cx="6" cy="19" r="3"/><circle cx="18" cy="19" r="3"/>
           </svg>
-          <p>Brak projektów do wyświetlenia w drzewie.</p>
-          <p style="font-size: 0.85rem; margin-top: 8px;">Dodaj projekty w widoku <strong>Planning</strong></p>
+          <p>${i18n.t('schedule.noProjectsTree')}</p>
+          <p style="font-size: 0.85rem; margin-top: 8px;">${i18n.t('stats.addProjectsHint')}</p>
         </div>`;
       return;
     }
@@ -3079,9 +3428,9 @@ class KappaApp {
     // Unlock options button
     document.getElementById('unlockAnalyticsOptions')?.addEventListener('click', async () => {
       if (this.state.settings.deletePassword) {
-        const password = prompt('Wprowadź hasło aby odblokować opcje:');
+        const password = prompt(i18n.t('planning.enterPassword'));
         if (password !== this.state.settings.deletePassword) {
-          this.showToast('Nieprawidłowe hasło', 'error');
+          this.showToast(i18n.t('planning.invalidPassword'), 'error');
           return;
         }
       }
@@ -3171,7 +3520,7 @@ class KappaApp {
     // Update year info display
     if (yearInfo) {
       const currentWeek = this.getCurrentWeek();
-      yearInfo.textContent = `Rok ${this.state.selectedYear} | Aktualny tydzień: KW${currentWeek.toString().padStart(2, '0')}`;
+      yearInfo.textContent = i18n.t('planning.yearInfoDisplay').replace('{0}', this.state.selectedYear.toString()).replace('{1}', currentWeek.toString().padStart(2, '0'));
     }
     
     // Clear existing options (except first "All" option if present)
@@ -3246,7 +3595,7 @@ class KappaApp {
     // Update year info
     const yearInfo = document.getElementById('analyticsYearInfo');
     if (yearInfo) {
-      yearInfo.textContent = `Rok ${this.state.selectedYear} | Aktualny tydzień: KW${currentWeek.toString().padStart(2, '0')}`;
+      yearInfo.textContent = i18n.t('planning.yearInfoDisplay').replace('{0}', this.state.selectedYear.toString()).replace('{1}', currentWeek.toString().padStart(2, '0'));
     }
   }
 
@@ -3260,7 +3609,7 @@ class KappaApp {
     const toWeek = parseInt(toSelect.value) || 52;
     
     if (fromWeek > toWeek) {
-      this.showToast('Data "Od" nie może być późniejsza niż "Do"', 'error');
+      this.showToast(i18n.t('planning.dateRangeError'), 'error');
       return;
     }
     
@@ -3450,13 +3799,13 @@ class KappaApp {
         </td>
         <td class="analytics-options-col ${this.analyticsOptionsUnlocked ? '' : 'hidden'}">
           <div class="options-cell">
-            <button class="btn-option btn-stoppage ${d.hasStoppage ? 'active' : ''}" title="Oznacz postój" data-project-id="${d.project.id}">
+            <button class="btn-option btn-stoppage ${d.hasStoppage ? 'active' : ''}" title="${i18n.t('planning.markStoppage')}" data-project-id="${d.project.id}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
               </svg>
             </button>
-            <button class="btn-option btn-details" title="Szczegóły" data-project-id="${d.project.id}">
+            <button class="btn-option btn-details" title="${i18n.t('schedule.wizardStepDetails')}" data-project-id="${d.project.id}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="10"/>
                 <line x1="12" y1="16" x2="12" y2="12"/>
@@ -3539,7 +3888,7 @@ class KappaApp {
 
     popup.innerHTML = `
       <div class="stoppage-popup-header">
-        <h4>🚫 Postój projektu</h4>
+        <h4>🚫 ${i18n.t('planning.stoppageLabel')}</h4>
         <button class="stoppage-popup-close">✕</button>
       </div>
       <div class="stoppage-options">
@@ -3548,7 +3897,7 @@ class KappaApp {
             <circle cx="12" cy="12" r="10"/>
             <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>
           </svg>
-          Brak produkcji w bieżącym tygodniu (KW${currentWeek.toString().padStart(2, '0')})
+          ${i18n.t('planning.noProductionThisWeek').replace('{0}', currentWeek.toString().padStart(2, '0'))}
         </button>
         <button class="stoppage-option ${stoppages.size > 0 ? 'active' : ''}" data-action="toggle-all">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -3556,7 +3905,7 @@ class KappaApp {
             <line x1="9" y1="9" x2="15" y2="15"/>
             <line x1="15" y1="9" x2="9" y2="15"/>
           </svg>
-          ${stoppages.size > 0 ? 'Usuń oznaczenie postoju' : 'Oznacz projekt jako wstrzymany'}
+          ${stoppages.size > 0 ? i18n.t('planning.removeStoppage') : i18n.t('planning.markAsStopped')}
         </button>
       </div>
     `;
@@ -3846,13 +4195,13 @@ class KappaApp {
     // Overall realization
     const overallRate = totalSoll > 0 ? Math.round((totalIst / totalSoll) * 100) : 0;
     if (overallRate >= 90) {
-      insights.push({ type: 'positive', text: `Świetna realizacja! Ogólny wskaźnik wynosi ${overallRate}%.`, meta: 'Bazując na danych IST/SOLL' });
+      insights.push({ type: 'positive', text: i18n.t('analytics.greatRealization').replace('{0}', String(overallRate)), meta: i18n.t('analytics.basedOnIstSoll') });
     } else if (overallRate >= 70) {
-      insights.push({ type: 'info', text: `Realizacja na poziomie ${overallRate}%. Jeszcze ${totalSoll - totalIst} testów do wykonania.`, meta: 'Możliwe do nadrobienia' });
+      insights.push({ type: 'info', text: i18n.t('analytics.realizationAtLevel').replace('{0}', String(overallRate)).replace('{1}', String(totalSoll - totalIst)), meta: i18n.t('analytics.possibleToCatchUp') });
     } else if (overallRate >= 50) {
-      insights.push({ type: 'warning', text: `Uwaga! Realizacja tylko ${overallRate}%. Rozważ zwiększenie zasobów.`, meta: 'Wymaga uwagi' });
+      insights.push({ type: 'warning', text: i18n.t('analytics.attentionRealization').replace('{0}', String(overallRate)), meta: i18n.t('analytics.requiresAttention') });
     } else {
-      insights.push({ type: 'negative', text: `Krytycznie niska realizacja: ${overallRate}%. Pilne działania wymagane!`, meta: 'Priorytet wysoki' });
+      insights.push({ type: 'negative', text: i18n.t('analytics.criticalRealization').replace('{0}', String(overallRate)), meta: i18n.t('analytics.highPriority') });
     }
 
     // Week over week comparison
@@ -3861,9 +4210,9 @@ class KappaApp {
     const weekChange = currentWeekRate - prevWeekRate;
 
     if (weekChange > 10) {
-      insights.push({ type: 'positive', text: `Wzrost o ${weekChange}pp vs poprzedni tydzień!`, meta: `KW${currentWeek}: ${currentWeekRate}% vs KW${currentWeek-1}: ${prevWeekRate}%` });
+      insights.push({ type: 'positive', text: i18n.t('analytics.increaseVsPrev').replace('{0}', String(weekChange)), meta: `KW${currentWeek}: ${currentWeekRate}% vs KW${currentWeek-1}: ${prevWeekRate}%` });
     } else if (weekChange < -10) {
-      insights.push({ type: 'negative', text: `Spadek o ${Math.abs(weekChange)}pp vs poprzedni tydzień.`, meta: `KW${currentWeek}: ${currentWeekRate}% vs KW${currentWeek-1}: ${prevWeekRate}%` });
+      insights.push({ type: 'negative', text: i18n.t('analytics.decreaseVsPrev').replace('{0}', String(Math.abs(weekChange))), meta: `KW${currentWeek}: ${currentWeekRate}% vs KW${currentWeek-1}: ${prevWeekRate}%` });
     }
 
     // Best/worst customer
@@ -3876,10 +4225,10 @@ class KappaApp {
       const best = customerRates[0];
       const worst = customerRates[customerRates.length - 1];
       if (best.rate >= 90) {
-        insights.push({ type: 'positive', text: `Najlepszy klient: ${best.name} (${best.rate}%)`, meta: 'Wzorowa współpraca' });
+        insights.push({ type: 'positive', text: i18n.t('analytics.bestClient').replace('{0}', best.name).replace('{1}', String(best.rate)), meta: i18n.t('analytics.exemplaryCooperation') });
       }
       if (worst.rate < 50 && customerRates.length > 1) {
-        insights.push({ type: 'warning', text: `Wymaga uwagi: ${worst.name} (tylko ${worst.rate}%)`, meta: 'Rozważ kontakt z klientem' });
+        insights.push({ type: 'warning', text: i18n.t('analytics.needsAttention').replace('{0}', worst.name).replace('{1}', String(worst.rate)), meta: i18n.t('analytics.considerContact') });
       }
     }
 
@@ -3893,13 +4242,13 @@ class KappaApp {
       const best = testRates[0];
       const worst = testRates[testRates.length - 1];
       if (best.rate - worst.rate > 30) {
-        insights.push({ type: 'info', text: `Duża różnica między testami: ${best.name} (${best.rate}%) vs ${worst.name} (${worst.rate}%)`, meta: 'Rozważ przesunięcie zasobów' });
+        insights.push({ type: 'info', text: i18n.t('analytics.bigTestDifference').replace('{0}', best.name).replace('{1}', String(best.rate)).replace('{2}', worst.name).replace('{3}', String(worst.rate)), meta: i18n.t('analytics.considerReallocation') });
       }
     }
 
     // Stoppage alert
     if (stoppageCount > 0) {
-      insights.push({ type: 'negative', text: `Wykryto ${stoppageCount} tygodni ze STOPPAGE.`, meta: 'Wpływa na realizację celów' });
+      insights.push({ type: 'negative', text: i18n.t('analytics.stoppageWeeksDetected').replace('{0}', String(stoppageCount)), meta: i18n.t('analytics.affectsGoalAchievement') });
     }
 
     // Backlog insight
@@ -3907,7 +4256,7 @@ class KappaApp {
     if (backlog > 0) {
       const weeksLeft = 52 - currentWeek;
       const avgPerWeek = weeksLeft > 0 ? Math.ceil(backlog / weeksLeft) : backlog;
-      insights.push({ type: 'info', text: `Zaległości: ${backlog} testów. Wymagane ~${avgPerWeek}/tydzień do końca roku.`, meta: `${weeksLeft} tygodni pozostało` });
+      insights.push({ type: 'info', text: i18n.t('analytics.backlogInsight').replace('{0}', String(backlog)).replace('{1}', String(avgPerWeek)), meta: i18n.t('analytics.weeksRemaining').replace('{0}', String(weeksLeft)) });
     }
 
     // Render insights
@@ -3970,7 +4319,7 @@ class KappaApp {
         datasets: [
           {
             type: 'bar',
-            label: 'Wykonane (IST)',
+            label: i18n.t('analytics.chartCompletedIst'),
             data: velocityData,
             backgroundColor: 'rgba(0, 151, 172, 0.6)',
             borderColor: '#0097AC',
@@ -3979,7 +4328,7 @@ class KappaApp {
           },
           {
             type: 'line',
-            label: 'Średnia krocząca',
+            label: i18n.t('analytics.chartMovingAverage'),
             data: avgLine,
             borderColor: '#10B981',
             borderWidth: 2,
@@ -4036,7 +4385,7 @@ class KappaApp {
       data: {
         labels: testData.map(d => d.name),
         datasets: [{
-          label: 'Realizacja %',
+          label: i18n.t('analytics.chartRealizationPercent'),
           data: testData.map(d => d.rate),
           backgroundColor: 'rgba(0, 151, 172, 0.2)',
           borderColor: '#0097AC',
@@ -4295,6 +4644,133 @@ class KappaApp {
         ? i18n.t('settings.changePassword') 
         : i18n.t('settings.setPassword');
     }
+
+    // Update backup settings
+    const backupPathInput = document.getElementById('backupPathInput') as HTMLInputElement;
+    if (backupPathInput) {
+      backupPathInput.value = this.state.settings.backupPath || '';
+    }
+
+    const backupFrequency = document.getElementById('backupFrequency') as HTMLSelectElement;
+    if (backupFrequency) {
+      backupFrequency.value = this.state.settings.backupFrequency || 'none';
+    }
+
+    // Update last backup info
+    const lastBackupInfo = document.getElementById('lastBackupInfo');
+    if (lastBackupInfo) {
+      if (this.state.settings.lastBackupDate) {
+        const date = new Date(this.state.settings.lastBackupDate);
+        lastBackupInfo.textContent = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+      } else {
+        lastBackupInfo.textContent = '-';
+      }
+    }
+
+    // Load backup list
+    this.loadBackupList();
+    
+    // Update admin unlock button state
+    this.updateAdminUnlockButton();
+  }
+
+  private toggleAdminUnlock(): void {
+    if (this.adminUnlocked) {
+      // Lock the app
+      this.adminUnlocked = false;
+      this.updateAdminUI();
+      this.updateAdminUnlockButton();
+      // Close projects panel if open
+      document.getElementById('projectsSlidePanel')?.classList.remove('open');
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
+
+    // Need to unlock - check if password is set
+    if (!this.state.settings.deletePassword) {
+      this.showToast(i18n.t('settings.noPasswordSet'), 'warning');
+      return;
+    }
+
+    // Prompt for password
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+
+    modalTitle.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> ${i18n.t('settings.unlockApp')}`;
+    modalBody.innerHTML = `
+      <div class="form-group">
+        <label>${i18n.t('settings.enterPasswordToUnlock')}</label>
+        <div class="password-input-group">
+          <input type="password" id="adminUnlockPassword" class="form-control" autofocus />
+        </div>
+      </div>
+    `;
+
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
+
+    const cleanup = () => {
+      confirmBtn.onclick = null;
+      cancelBtn.onclick = null;
+    };
+
+    confirmBtn.onclick = () => {
+      const password = (document.getElementById('adminUnlockPassword') as HTMLInputElement).value;
+      if (password === this.state.settings.deletePassword) {
+        cleanup();
+        this.hideModal();
+        this.adminUnlocked = true;
+        this.updateAdminUI();
+        this.updateAdminUnlockButton();
+        this.showToast(i18n.t('settings.appUnlocked'), 'success');
+      } else {
+        this.showToast(i18n.t('settings.wrongPassword'), 'error');
+      }
+    };
+
+    cancelBtn.onclick = () => {
+      cleanup();
+      this.hideModal();
+    };
+
+    modal.classList.add('active');
+    setTimeout(() => (document.getElementById('adminUnlockPassword') as HTMLInputElement)?.focus(), 100);
+  }
+
+  private updateAdminUnlockButton(): void {
+    const btn = document.getElementById('toggleAdminUnlock');
+    const btnText = document.getElementById('adminUnlockBtnText');
+    if (btn && btnText) {
+      if (this.adminUnlocked) {
+        btnText.textContent = i18n.t('settings.lock');
+        btn.className = 'btn-danger';
+        btn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+          </svg>
+          <span id="adminUnlockBtnText">${i18n.t('settings.lock')}</span>
+        `;
+      } else {
+        btnText.textContent = i18n.t('settings.unlock');
+        btn.className = 'btn-primary';
+        btn.innerHTML = `
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <span id="adminUnlockBtnText">${i18n.t('settings.unlock')}</span>
+        `;
+      }
+    }
+  }
+
+  private updateAdminUI(): void {
+    const adminElements = document.querySelectorAll('.admin-only');
+    adminElements.forEach(el => {
+      (el as HTMLElement).style.display = this.adminUnlocked ? '' : 'none';
+    });
   }
 
   private renderLogsView(): void {
@@ -4481,6 +4957,11 @@ class KappaApp {
   }
 
   private showAddModal(type: string): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -4556,6 +5037,11 @@ class KappaApp {
   }
 
   private showEditModal(type: string, item: any): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const modal = document.getElementById('modal')!;
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
@@ -4637,6 +5123,11 @@ class KappaApp {
   }
 
   private showAddProjectModal(): void {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     if (this.state.customers.length === 0 || this.state.types.length === 0 || 
         this.state.parts.length === 0 || this.state.tests.length === 0) {
       this.showToast(i18n.t('messages.errorOccurred') + ' - ' + i18n.t('messages.noItems'), 'warning');
@@ -4706,6 +5197,11 @@ class KappaApp {
   }
 
   private async deleteItem(type: string, id: string, showConfirm: boolean = true): Promise<void> {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     if (showConfirm) {
       const confirmed = await this.confirmDeletion();
       if (!confirmed) return;
@@ -4724,6 +5220,11 @@ class KappaApp {
   }
 
   private async deleteProject(id: string): Promise<void> {
+    // Admin guard
+    if (!this.adminUnlocked) {
+      this.showToast(i18n.t('settings.appLocked'), 'warning');
+      return;
+    }
     const confirmed = await this.confirmDeletion();
     if (!confirmed) return;
 
@@ -5557,7 +6058,7 @@ class KappaApp {
     const year = this.state.selectedYear;
     
     const rangeText = weekFrom === 1 && weekTo === 52 
-      ? `Cały rok ${year}` 
+      ? i18n.t('analytics.fullYear').replace('{0}', String(year)) 
       : `KW${weekFrom.toString().padStart(2, '0')} - KW${weekTo.toString().padStart(2, '0')} ${year}`;
     
     return { year, weekFrom, weekTo, rangeText };
@@ -5627,7 +6128,7 @@ class KappaApp {
       
       this.showExportProgress(true, 20, t('export.copyingContent'));
       
-      // Calculate test type statistics
+      // Calculate test type statistics - using getWeekData for year-aware lookup
       const testTypeStats = new Map<string, { name: string; count: number; ist: number; soll: number }>();
       const filterInfo2 = this.getFilterInfo();
       projects.forEach(project => {
@@ -5642,11 +6143,10 @@ class KappaApp {
         ts.count++;
         
         for (let week = filterInfo2.weekFrom; week <= filterInfo2.weekTo; week++) {
-          const wd = project.weeks?.[week.toString()];
-          if (wd) {
-            ts.ist += wd.ist || 0;
-            ts.soll += wd.soll || 0;
-          }
+          const weekKey = `KW${week.toString().padStart(2, '0')}`;
+          const wd = this.getWeekData(project, weekKey);
+          ts.ist += wd.ist || 0;
+          ts.soll += wd.soll || 0;
         }
       });
       
@@ -5654,13 +6154,15 @@ class KappaApp {
         .map(ts => ({ ...ts, percent: ts.soll > 0 ? (ts.ist / ts.soll * 100) : 0 }))
         .sort((a, b) => b.count - a.count);
       
-      // Calculate status distribution
+      // Calculate status distribution - using getWeekData for year-aware lookup
       let completedCount = 0, inProgressCount = 0, delayedCount = 0, notStartedCount = 0;
       projects.forEach(project => {
         let istTotal = 0, sollTotal = 0;
         for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
-          const wd = project.weeks?.[w.toString()];
-          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          const wd = this.getWeekData(project, weekKey);
+          istTotal += wd.ist || 0;
+          sollTotal += wd.soll || 0;
         }
         const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
         if (sollTotal === 0) notStartedCount++;
@@ -5669,13 +6171,15 @@ class KappaApp {
         else delayedCount++;
       });
       
-      // Calculate weekly data
+      // Calculate weekly data - using getWeekData for year-aware lookup
       const weeklyData: { week: number; ist: number; soll: number }[] = [];
       for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
         let weekIst = 0, weekSoll = 0;
+        const weekKey = `KW${w.toString().padStart(2, '0')}`;
         projects.forEach(project => {
-          const wd = project.weeks?.[w.toString()];
-          if (wd) { weekIst += wd.ist || 0; weekSoll += wd.soll || 0; }
+          const wd = this.getWeekData(project, weekKey);
+          weekIst += wd.ist || 0;
+          weekSoll += wd.soll || 0;
         });
         weeklyData.push({ week: w, ist: weekIst, soll: weekSoll });
       }
@@ -5683,67 +6187,67 @@ class KappaApp {
       // PAGE 1: KPI + Customer Statistics + Test Type Stats + Status + Projects
       const kpiContent = `
         <div style="margin-bottom: 12px;">
-          <h2 style="margin: 0 0 8px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📊 ${t('export.kpiTitle')}</h2>
+          <h2 style="margin: 0 0 8px 0; font-size: 16px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📊 ${t('export.kpiTitle')}</h2>
           <div style="display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px;">
             <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: #0097AC;">${analyticsData.totalProjects}</div>
-              <div style="font-size: 9px; color: #64748b;">${t('export.projects')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: #0097AC;">${analyticsData.totalProjects}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.projects')}</div>
             </div>
             <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: #10b981;">${analyticsData.totalIst.toLocaleString(dateLocale)}</div>
-              <div style="font-size: 9px; color: #64748b;">${t('export.testsIst')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: #10b981;">${analyticsData.totalIst.toLocaleString(dateLocale)}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.testsIst')}</div>
             </div>
             <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: #6366f1;">${analyticsData.totalSoll.toLocaleString(dateLocale)}</div>
-              <div style="font-size: 9px; color: #64748b;">${t('export.testsSoll')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: #6366f1;">${analyticsData.totalSoll.toLocaleString(dateLocale)}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.testsSoll')}</div>
             </div>
             <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: ${analyticsData.totalPercent >= 100 ? '#10b981' : analyticsData.totalPercent >= 50 ? '#f59e0b' : '#ef4444'};">${analyticsData.totalPercent.toFixed(1)}%</div>
-              <div style="font-size: 9px; color: #64748b;">${t('export.realization')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: ${analyticsData.totalPercent >= 100 ? '#10b981' : analyticsData.totalPercent >= 50 ? '#f59e0b' : '#ef4444'};">${analyticsData.totalPercent.toFixed(1)}%</div>
+              <div style="font-size: 11px; color: #64748b;">${t('export.realization')}</div>
             </div>
             <div style="background: #dcfce7; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: #166534;">${completedCount}</div>
-              <div style="font-size: 9px; color: #166534;">${t('export.completedProjects')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: #166534;">${completedCount}</div>
+              <div style="font-size: 11px; color: #166534;">${t('export.completedProjects')}</div>
             </div>
             <div style="background: #fef3c7; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: #92400e;">${inProgressCount}</div>
-              <div style="font-size: 9px; color: #92400e;">${t('export.inProgressProjects')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: #92400e;">${inProgressCount}</div>
+              <div style="font-size: 11px; color: #92400e;">${t('export.inProgressProjects')}</div>
             </div>
             <div style="background: #fee2e2; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: #991b1b;">${delayedCount}</div>
-              <div style="font-size: 9px; color: #991b1b;">${t('export.delayedProjects')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: #991b1b;">${delayedCount}</div>
+              <div style="font-size: 11px; color: #991b1b;">${t('export.delayedProjects')}</div>
             </div>
             <div style="background: #f1f5f9; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <div style="font-size: 22px; font-weight: 700; color: #64748b;">${notStartedCount}</div>
-              <div style="font-size: 9px; color: #64748b;">${t('analytics.pending')}</div>
+              <div style="font-size: 24px; font-weight: 700; color: #64748b;">${notStartedCount}</div>
+              <div style="font-size: 11px; color: #64748b;">${t('analytics.pending')}</div>
             </div>
           </div>
         </div>
         
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
           <div>
-            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">👥 ${t('export.customerStats')}</h2>
+            <h2 style="margin: 0 0 6px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">👥 ${t('export.customerStats')}</h2>
             <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
               <thead>
                 <tr style="background: #1e293b; color: #fff;">
-                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.customer')}</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">#</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 11px;">${t('export.customer')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">#</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">%</th>
                 </tr>
               </thead>
               <tbody>
                 ${analyticsData.customerStats.slice(0, 10).map((cs, idx) => `
-                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">${cs.name}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.count}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.ist}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${cs.soll}</td>
-                    <td style="padding: 4px 6px; text-align: center;">
-                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
-                        background: ${cs.percent >= 100 ? '#dcfce7' : cs.percent >= 50 ? '#fef3c7' : '#fee2e2'};
-                        color: ${cs.percent >= 100 ? '#166534' : cs.percent >= 50 ? '#92400e' : '#991b1b'};">
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f1f5f9'};">
+                    <td style="padding: 5px 6px; font-weight: 600; font-size: 11px; color: #0f172a;">${cs.name}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #1e293b; font-weight: 500;">${cs.count}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #059669; font-weight: 600;">${cs.ist}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #4f46e5; font-weight: 600;">${cs.soll}</td>
+                    <td style="padding: 5px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 3px 8px; border-radius: 8px; font-weight: 700; font-size: 11px;
+                        background: ${cs.percent >= 100 ? '#bbf7d0' : cs.percent >= 50 ? '#fde68a' : '#fecaca'};
+                        color: ${cs.percent >= 100 ? '#14532d' : cs.percent >= 50 ? '#78350f' : '#7f1d1d'};">
                         ${cs.percent.toFixed(0)}%
                       </span>
                     </td>
@@ -5754,28 +6258,28 @@ class KappaApp {
           </div>
           
           <div>
-            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🔬 ${t('export.testTypeStats')}</h2>
+            <h2 style="margin: 0 0 6px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🔬 ${t('export.testTypeStats')}</h2>
             <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
               <thead>
                 <tr style="background: #1e293b; color: #fff;">
-                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.test')}</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">#</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 11px;">${t('export.test')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">#</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">%</th>
                 </tr>
               </thead>
               <tbody>
                 ${testStats.slice(0, 10).map((ts, idx) => `
-                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">${ts.name.substring(0, 18)}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.count}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.ist}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${ts.soll}</td>
-                    <td style="padding: 4px 6px; text-align: center;">
-                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
-                        background: ${ts.percent >= 100 ? '#dcfce7' : ts.percent >= 50 ? '#fef3c7' : '#fee2e2'};
-                        color: ${ts.percent >= 100 ? '#166534' : ts.percent >= 50 ? '#92400e' : '#991b1b'};">
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f1f5f9'};">
+                    <td style="padding: 5px 6px; font-weight: 600; font-size: 11px; color: #0f172a;">${ts.name.substring(0, 18)}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #1e293b; font-weight: 500;">${ts.count}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #059669; font-weight: 600;">${ts.ist}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #4f46e5; font-weight: 600;">${ts.soll}</td>
+                    <td style="padding: 5px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 3px 8px; border-radius: 8px; font-weight: 700; font-size: 11px;
+                        background: ${ts.percent >= 100 ? '#bbf7d0' : ts.percent >= 50 ? '#fde68a' : '#fecaca'};
+                        color: ${ts.percent >= 100 ? '#14532d' : ts.percent >= 50 ? '#78350f' : '#7f1d1d'};">
                         ${ts.percent.toFixed(0)}%
                       </span>
                     </td>
@@ -5786,28 +6290,28 @@ class KappaApp {
           </div>
           
           <div>
-            <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📅 ${t('export.weeklyData')}</h2>
+            <h2 style="margin: 0 0 6px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📅 ${t('export.weeklyData')}</h2>
             <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
               <thead>
                 <tr style="background: #1e293b; color: #fff;">
-                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 9px;">${t('export.week')}</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">IST</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">SOLL</th>
-                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 9px;">%</th>
+                  <th style="padding: 5px 6px; text-align: left; font-weight: 600; font-size: 11px;">${t('export.week')}</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">IST</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">SOLL</th>
+                  <th style="padding: 5px 6px; text-align: center; font-weight: 600; font-size: 11px;">%</th>
                 </tr>
               </thead>
               <tbody>
                 ${weeklyData.slice(0, 10).map((wd, idx) => {
                   const pct = wd.soll > 0 ? (wd.ist / wd.soll * 100) : 0;
                   return `
-                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-                    <td style="padding: 4px 6px; font-weight: 500; font-size: 9px;">KW ${wd.week}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${wd.ist}</td>
-                    <td style="padding: 4px 6px; text-align: center; font-size: 9px;">${wd.soll}</td>
-                    <td style="padding: 4px 6px; text-align: center;">
-                      <span style="display: inline-block; padding: 1px 5px; border-radius: 8px; font-weight: 600; font-size: 8px;
-                        background: ${pct >= 100 ? '#dcfce7' : pct >= 50 ? '#fef3c7' : '#fee2e2'};
-                        color: ${pct >= 100 ? '#166534' : pct >= 50 ? '#92400e' : '#991b1b'};">
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f1f5f9'};">
+                    <td style="padding: 5px 6px; font-weight: 600; font-size: 11px; color: #0f172a;">KW ${wd.week}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #059669; font-weight: 600;">${wd.ist}</td>
+                    <td style="padding: 5px 6px; text-align: center; font-size: 11px; color: #4f46e5; font-weight: 600;">${wd.soll}</td>
+                    <td style="padding: 5px 6px; text-align: center;">
+                      <span style="display: inline-block; padding: 3px 8px; border-radius: 8px; font-weight: 700; font-size: 11px;
+                        background: ${pct >= 100 ? '#bbf7d0' : pct >= 50 ? '#fde68a' : '#fecaca'};
+                        color: ${pct >= 100 ? '#14532d' : pct >= 50 ? '#78350f' : '#7f1d1d'};">
                         ${pct.toFixed(0)}%
                       </span>
                     </td>
@@ -5819,8 +6323,8 @@ class KappaApp {
         </div>
         
         <div>
-          <h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📋 ${t('export.projectList')}</h2>
-          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 8px;">
+          <h2 style="margin: 0 0 6px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📋 ${t('export.projectList')}</h2>
+          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 10px;">
             <thead>
               <tr style="background: #1e293b; color: #fff;">
                 <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
@@ -5841,23 +6345,24 @@ class KappaApp {
                 
                 let istTotal = 0, sollTotal = 0;
                 for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
-                  const wd = project.weeks?.[w.toString()];
-                  if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+                  const weekKey = `KW${w.toString().padStart(2, '0')}`;
+                  const wd = this.getWeekData(project, weekKey);
+                  istTotal += wd.ist || 0; sollTotal += wd.soll || 0;
                 }
                 const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
                 
                 return `
-                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-                    <td style="padding: 4px 6px;">${customer?.name || '-'}</td>
-                    <td style="padding: 4px 6px;">${type?.name || '-'}</td>
-                    <td style="padding: 4px 6px;">${(part?.name || '-').substring(0, 18)}</td>
-                    <td style="padding: 4px 6px;">${(test?.name || '-').substring(0, 18)}</td>
-                    <td style="padding: 4px 6px; text-align: center;">${istTotal}</td>
-                    <td style="padding: 4px 6px; text-align: center;">${sollTotal}</td>
-                    <td style="padding: 4px 6px; text-align: center;">
-                      <span style="padding: 1px 4px; border-radius: 6px; font-weight: 600;
-                        background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
-                        color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
+                  <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f1f5f9'};">
+                    <td style="padding: 5px 6px; color: #0f172a; font-weight: 600;">${customer?.name || '-'}</td>
+                    <td style="padding: 5px 6px; color: #334155;">${type?.name || '-'}</td>
+                    <td style="padding: 5px 6px; color: #334155;">${(part?.name || '-').substring(0, 18)}</td>
+                    <td style="padding: 5px 6px; color: #334155;">${(test?.name || '-').substring(0, 18)}</td>
+                    <td style="padding: 5px 6px; text-align: center; color: #059669; font-weight: 600;">${istTotal}</td>
+                    <td style="padding: 5px 6px; text-align: center; color: #4f46e5; font-weight: 600;">${sollTotal}</td>
+                    <td style="padding: 5px 6px; text-align: center;">
+                      <span style="padding: 3px 6px; border-radius: 6px; font-weight: 700; font-size: 10px;
+                        background: ${percent >= 100 ? '#bbf7d0' : percent >= 50 ? '#fde68a' : '#fecaca'};
+                        color: ${percent >= 100 ? '#14532d' : percent >= 50 ? '#78350f' : '#7f1d1d'};">
                         ${percent.toFixed(0)}%
                       </span>
                     </td>
@@ -5881,36 +6386,74 @@ class KappaApp {
         'trendChart': t('export.chartTrend')
       };
       
+      // Always force light mode for PDF and ensure all charts are rendered
+      const wasDarkMode = this.state.settings.darkMode;
+      this.state.settings.darkMode = false;
+      
+      // Disable Chart.js animations for instant rendering for PDF capture
+      const origAnimation = (Chart as any).defaults.animation;
+      (Chart as any).defaults.animation = false;
+      
+      // Force re-render ALL charts to ensure they exist and have light mode colors (no animation)
+      this.renderWeeklyChart();
+      this.renderTestChart();
+      this.renderCustomerBarChart();
+      this.renderVelocityChart();
+      this.renderRadarChart();
+      this.renderTrendChart();
+      
+      // Small wait for synchronous Chart.js render to flush to canvas
+      await new Promise(r => setTimeout(r, 200));
+      
       const chartIds = ['weeklyChart', 'testChart', 'customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
       const chartImages: { [key: string]: string } = {};
+      
+      // Capture charts using direct canvas.toDataURL() - most reliable method
       for (const chartId of chartIds) {
         const chartCanvas = document.getElementById(chartId) as HTMLCanvasElement;
-        if (chartCanvas) {
+        if (chartCanvas && chartCanvas.width > 0 && chartCanvas.height > 0) {
           try {
-            chartImages[chartId] = chartCanvas.toDataURL('image/png');
+            chartImages[chartId] = chartCanvas.toDataURL('image/png', 1.0);
+            console.log(`Captured ${chartId}: ${chartCanvas.width}x${chartCanvas.height}`);
           } catch (e) {
             console.error(`Error capturing chart ${chartId}:`, e);
           }
+        } else {
+          console.warn(`Chart ${chartId} not found or has zero dimensions`);
         }
       }
       
-      // Add 2 charts to page 1 content
+      // Restore Chart.js animation defaults
+      (Chart as any).defaults.animation = origAnimation;
+      
+      // Restore dark mode if it was enabled
+      if (wasDarkMode) {
+        this.state.settings.darkMode = true;
+        this.renderWeeklyChart();
+        this.renderTestChart();
+        this.renderCustomerBarChart();
+        this.renderVelocityChart();
+        this.renderRadarChart();
+        this.renderTrendChart();
+      }
+      
+      // Add 2 charts to page 1 content with titles
       let page1ChartsHtml = `
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px;">
       `;
       if (chartImages['weeklyChart']) {
         page1ChartsHtml += `
-          <div style="background: #fff; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-            <h4 style="margin: 0 0 4px 0; font-size: 10px; color: #1e293b;">📊 ${chartNames['weeklyChart']}</h4>
-            <img src="${chartImages['weeklyChart']}" style="width: 100%; height: auto; max-height: 100px; object-fit: contain;" />
+          <div style="background: #fff; padding: 8px; border-radius: 10px; box-shadow: 0 3px 6px rgba(0,0,0,0.12); border: 2px solid #0097AC;">
+            <div style="font-size: 11px; font-weight: 700; color: #1e293b; padding: 4px 4px 6px 4px; border-bottom: 1px solid #e2e8f0;">📈 ${chartNames['weeklyChart']}</div>
+            <img src="${chartImages['weeklyChart']}" style="max-width: 100%; height: auto; border-radius: 6px;" />
           </div>
         `;
       }
       if (chartImages['testChart']) {
         page1ChartsHtml += `
-          <div style="background: #fff; padding: 8px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-            <h4 style="margin: 0 0 4px 0; font-size: 10px; color: #1e293b;">📊 ${chartNames['testChart']}</h4>
-            <img src="${chartImages['testChart']}" style="width: 100%; height: auto; max-height: 100px; object-fit: contain;" />
+          <div style="background: #fff; padding: 8px; border-radius: 10px; box-shadow: 0 3px 6px rgba(0,0,0,0.12); border: 2px solid #0097AC;">
+            <div style="font-size: 11px; font-weight: 700; color: #1e293b; padding: 4px 4px 6px 4px; border-bottom: 1px solid #e2e8f0;">🍩 ${chartNames['testChart']}</div>
+            <img src="${chartImages['testChart']}" style="max-width: 100%; height: auto; border-radius: 6px;" />
           </div>
         `;
       }
@@ -5921,103 +6464,340 @@ class KappaApp {
       
       this.showExportProgress(true, 35, t('export.addingCharts'));
       
-      // PAGE 2: Remaining 4 Charts + Projects combined
-      // PAGE 2: Remaining 4 Charts + Projects combined
-      let chartsHtml = `<h2 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📈 ${t('export.charts')}</h2>`;
-      chartsHtml += `<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 12px;">`;
+      // PAGE 2: All 6 Charts in 3x2 grid
+      let chartsHtml = `<h2 style="margin: 0 0 10px 0; font-size: 16px; color: #0f172a; font-weight: 700; border-bottom: 3px solid #0097AC; padding-bottom: 6px;">📈 ${t('export.charts')}</h2>`;
+      chartsHtml += `<div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 14px;">`;
       
-      // Show remaining 4 charts on page 2
-      const page2ChartIds = ['customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
+      // Show all 6 charts on page 2 with chart titles
+      const chartEmojis: { [key: string]: string } = {
+        'weeklyChart': '📈', 'testChart': '🍩', 'customerBarChart': '📊',
+        'velocityChart': '🚀', 'radarChart': '🎯', 'trendChart': '📉'
+      };
+      const page2ChartIds = ['weeklyChart', 'testChart', 'customerBarChart', 'velocityChart', 'radarChart', 'trendChart'];
       for (const chartId of page2ChartIds) {
         if (chartImages[chartId]) {
           chartsHtml += `
-            <div style="background: #fff; padding: 10px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">
-              <h4 style="margin: 0 0 6px 0; font-size: 10px; color: #1e293b;">${chartNames[chartId] || chartId}</h4>
-              <img src="${chartImages[chartId]}" style="width: 100%; height: auto; max-height: 140px; object-fit: contain;" />
+            <div style="background: #fff; padding: 8px; border-radius: 10px; box-shadow: 0 3px 6px rgba(0,0,0,0.12); border: 2px solid #0097AC;">
+              <div style="font-size: 11px; font-weight: 700; color: #1e293b; padding: 4px 4px 6px 4px; border-bottom: 1px solid #e2e8f0;">${chartEmojis[chartId] || '📊'} ${chartNames[chartId]}</div>
+              <img src="${chartImages[chartId]}" style="max-width: 100%; height: auto; border-radius: 6px;" />
             </div>
           `;
         }
       }
       chartsHtml += `</div>`;
       
-      // Add projects list below charts on the same page
-      chartsHtml += `
-        <h2 style="margin: 0 0 8px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 4px;">📋 ${t('export.projectList')} (${Math.min(projects.length, 20)} / ${projects.length})</h2>
-        <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 8px;">
-          <thead>
-            <tr style="background: #1e293b; color: #fff;">
-              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
-              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.type')}</th>
-              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.part')}</th>
-              <th style="padding: 5px 6px; text-align: left; font-weight: 600;">${t('export.test')}</th>
-              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">IST</th>
-              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">SOLL</th>
-              <th style="padding: 5px 6px; text-align: center; font-weight: 600;">%</th>
-            </tr>
-          </thead>
-          <tbody>
-      `;
+      const page2 = createPageSection(chartsHtml, true);
       
-      projects.slice(0, 20).forEach((project, idx) => {
-        const customer = this.state.customers.find(c => c.id === project.customer_id);
-        const type = this.state.types.find(t => t.id === project.type_id);
-        const part = this.state.parts.find(p => p.id === project.part_id);
-        const test = this.state.tests.find(t => t.id === project.test_id);
-        
-        let istTotal = 0, sollTotal = 0;
-        for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
-          const wd = project.weeks?.[w.toString()];
-          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
-        }
-        const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
-        
-        chartsHtml += `
-          <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-            <td style="padding: 4px 6px;">${customer?.name || '-'}</td>
-            <td style="padding: 4px 6px;">${type?.name || '-'}</td>
-            <td style="padding: 4px 6px;">${(part?.name || '-').substring(0, 20)}</td>
-            <td style="padding: 4px 6px;">${(test?.name || '-').substring(0, 20)}</td>
-            <td style="padding: 4px 6px; text-align: center;">${istTotal}</td>
-            <td style="padding: 4px 6px; text-align: center;">${sollTotal}</td>
-            <td style="padding: 4px 6px; text-align: center;">
-              <span style="padding: 1px 4px; border-radius: 6px; font-weight: 600;
-                background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
-                color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
-                ${percent.toFixed(0)}%
-              </span>
-            </td>
-          </tr>
-        `;
+      this.showExportProgress(true, 40, t('export.addingCharts'));
+      
+      // PAGE 3: Advanced Analytics - Weekly Comparison, Quarterly & Monthly Summary, Stoppage
+      let analyticsHtml = '';
+      
+      // Weekly Comparison grid
+      analyticsHtml += `<h2 style="margin: 0 0 8px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📅 ${t('export.weeklyComparison')}</h2>`;
+      analyticsHtml += `<div style="display: grid; grid-template-columns: repeat(13, 1fr); gap: 3px; margin-bottom: 14px;">`;
+      for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+        const weekKey = `KW${w.toString().padStart(2, '0')}`;
+        let wIst = 0, wSoll = 0;
+        projects.forEach(p => { const d = this.getWeekData(p, weekKey); wIst += d.ist || 0; wSoll += d.soll || 0; });
+        const pct = wSoll > 0 ? (wIst / wSoll * 100) : (wIst > 0 ? 100 : 0);
+        const bg = wSoll === 0 && wIst === 0 ? '#f1f5f9' : pct >= 100 ? '#bbf7d0' : pct >= 50 ? '#fde68a' : pct > 0 ? '#fed7aa' : '#fecaca';
+        const fg = wSoll === 0 && wIst === 0 ? '#94a3b8' : pct >= 100 ? '#14532d' : pct >= 50 ? '#78350f' : '#7f1d1d';
+        analyticsHtml += `<div style="background: ${bg}; border-radius: 4px; padding: 4px 2px; text-align: center; font-size: 8px;">
+          <div style="font-weight: 700; color: ${fg};">${weekKey.replace('KW', '')}</div>
+          <div style="color: ${fg}; font-size: 7px;">${wIst}/${wSoll}</div>
+          <div style="color: ${fg}; font-weight: 600; font-size: 7px;">${wSoll > 0 ? pct.toFixed(0) + '%' : '-'}</div>
+        </div>`;
+      }
+      analyticsHtml += `</div>`;
+      
+      // Workload Heatmap
+      analyticsHtml += `<h2 style="margin: 0 0 8px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🗺️ ${t('export.workloadHeatmap')}</h2>`;
+      const heatmapWeeks: number[] = [];
+      for (let w = filterInfo2.weekFrom; w <= Math.min(filterInfo2.weekTo, filterInfo2.weekFrom + 25); w++) heatmapWeeks.push(w);
+      analyticsHtml += `<table style="width: 100%; border-collapse: collapse; font-size: 8px; margin-bottom: 14px;">`;
+      analyticsHtml += `<tr style="background: #1e293b; color: #fff;"><th style="padding: 3px 4px; text-align: left; font-size: 8px;">${t('export.test')}</th>`;
+      heatmapWeeks.forEach(w => { analyticsHtml += `<th style="padding: 3px; text-align: center; font-size: 7px;">KW${w.toString().padStart(2, '0')}</th>`; });
+      analyticsHtml += `</tr>`;
+      this.state.tests.forEach((test, tIdx) => {
+        analyticsHtml += `<tr style="background: ${tIdx % 2 === 0 ? '#fff' : '#f8fafc'};"><td style="padding: 3px 4px; font-weight: 600; font-size: 8px; white-space: nowrap; max-width: 80px; overflow: hidden; text-overflow: ellipsis;">${test.name.substring(0, 12)}</td>`;
+        heatmapWeeks.forEach(w => {
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          let ist = 0, soll = 0;
+          this.state.projects.filter(p => p.test_id === test.id).forEach(p => { const d = this.getWeekData(p, weekKey); ist += d.ist || 0; soll += d.soll || 0; });
+          const remaining = Math.max(0, soll - ist);
+          const isComplete = soll > 0 && ist >= soll;
+          const cellBg = soll === 0 ? '#f8fafc' : isComplete ? '#bbf7d0' : remaining <= 2 ? '#fef3c7' : remaining <= 5 ? '#fed7aa' : '#fecaca';
+          analyticsHtml += `<td style="padding: 2px; text-align: center; background: ${cellBg}; font-size: 7px; font-weight: 600;">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</td>`;
+        });
+        analyticsHtml += `</tr>`;
       });
+      analyticsHtml += `</table>`;
       
-      chartsHtml += `</tbody></table>`;
-      if (projects.length > 20) {
-        chartsHtml += `<p style="margin: 6px 0 0 0; font-size: 9px; color: #64748b; text-align: center;">${t('export.moreProjectsOnNextPages')} (+${projects.length - 20})</p>`;
+      // Quarterly + Monthly in 2-column layout
+      analyticsHtml += `<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 12px; margin-bottom: 14px;">`;
+      
+      // Quarterly Summary
+      analyticsHtml += `<div>`;
+      analyticsHtml += `<h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📊 ${t('export.quarterlySummary')}</h2>`;
+      const qData: { [q: string]: { ist: number; soll: number } } = { Q1: {ist:0,soll:0}, Q2: {ist:0,soll:0}, Q3: {ist:0,soll:0}, Q4: {ist:0,soll:0} };
+      projects.forEach(p => {
+        for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          const d = this.getWeekData(p, weekKey);
+          const q = w <= 13 ? 'Q1' : w <= 26 ? 'Q2' : w <= 39 ? 'Q3' : 'Q4';
+          qData[q].ist += d.ist || 0;
+          qData[q].soll += d.soll || 0;
+        }
+      });
+      analyticsHtml += `<table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 6px; overflow: hidden; font-size: 10px;">
+        <thead><tr style="background: #1e293b; color: #fff;"><th style="padding: 5px;">Q</th><th style="padding: 5px;">IST</th><th style="padding: 5px;">SOLL</th><th style="padding: 5px;">${t('export.rate')}</th></tr></thead><tbody>`;
+      ['Q1','Q2','Q3','Q4'].forEach((q, i) => {
+        const rate = qData[q].soll > 0 ? (qData[q].ist / qData[q].soll * 100) : 0;
+        analyticsHtml += `<tr style="background: ${i % 2 === 0 ? '#fff' : '#f1f5f9'};"><td style="padding: 5px; font-weight: 600;">${q}</td><td style="padding: 5px; text-align: center; color: #059669; font-weight: 600;">${qData[q].ist}</td><td style="padding: 5px; text-align: center; color: #4f46e5; font-weight: 600;">${qData[q].soll}</td><td style="padding: 5px; text-align: center;"><span style="padding: 2px 6px; border-radius: 6px; font-weight: 700; font-size: 10px; background: ${rate >= 100 ? '#bbf7d0' : rate >= 50 ? '#fde68a' : '#fecaca'}; color: ${rate >= 100 ? '#14532d' : rate >= 50 ? '#78350f' : '#7f1d1d'};">${rate.toFixed(0)}%</span></td></tr>`;
+      });
+      analyticsHtml += `</tbody></table></div>`;
+      
+      // Monthly Summary
+      analyticsHtml += `<div>`;
+      analyticsHtml += `<h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">📅 ${t('export.monthlySummary')}</h2>`;
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const monthWeeks = [[1,4], [5,8], [9,13], [14,17], [18,22], [23,26], [27,30], [31,35], [36,39], [40,44], [45,48], [49,52]];
+      analyticsHtml += `<div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;">`;
+      months.forEach((name, idx) => {
+        let mIst = 0, mSoll = 0;
+        const [start, end] = monthWeeks[idx];
+        for (let w = start; w <= end; w++) {
+          if (w < filterInfo2.weekFrom || w > filterInfo2.weekTo) continue;
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          projects.forEach(p => { const d = this.getWeekData(p, weekKey); mIst += d.ist || 0; mSoll += d.soll || 0; });
+        }
+        const rate = mSoll > 0 ? (mIst / mSoll * 100) : 0;
+        const rColor = rate >= 90 ? '#10B981' : rate >= 70 ? '#3B82F6' : rate >= 50 ? '#F59E0B' : '#EF4444';
+        analyticsHtml += `<div style="background: #fff; border-radius: 6px; padding: 6px; text-align: center; border: 1px solid #e2e8f0;">
+          <div style="font-size: 8px; font-weight: 600; color: #64748b; text-transform: uppercase;">${name}</div>
+          <div style="font-size: 14px; font-weight: 700;">${mIst}</div>
+          <div style="font-size: 7px; color: #64748b;">/${mSoll}</div>
+          ${mSoll > 0 ? `<div style="font-size: 8px; font-weight: 700; color: ${rColor}; margin-top: 2px;">${rate.toFixed(0)}%</div>` : ''}
+        </div>`;
+      });
+      analyticsHtml += `</div></div></div>`;
+      
+      // Stoppage Report
+      let stoppage = 0, prodLack = 0, normalWeeks = 0;
+      projects.forEach(p => {
+        for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          const d = this.getWeekData(p, weekKey);
+          if (d.stoppage) stoppage++;
+          else if (d.productionLack) prodLack++;
+          else if (d.soll > 0) normalWeeks++;
+        }
+      });
+      const stoppageTotal = stoppage + prodLack + normalWeeks;
+      analyticsHtml += `<h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🚫 ${t('export.stoppageIssues')}</h2>`;
+      analyticsHtml += `<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+        <div style="background: #fee2e2; border-radius: 8px; padding: 10px; text-align: center;">
+          <div style="font-size: 22px; font-weight: 700; color: #991b1b;">${stoppage}</div>
+          <div style="font-size: 9px; color: #991b1b;">${t('export.stoppageLabel')} (${stoppageTotal > 0 ? Math.round((stoppage/stoppageTotal)*100) : 0}%)</div>
+        </div>
+        <div style="background: #fef3c7; border-radius: 8px; padding: 10px; text-align: center;">
+          <div style="font-size: 22px; font-weight: 700; color: #92400e;">${prodLack}</div>
+          <div style="font-size: 9px; color: #92400e;">${t('export.prodLackLabel')} (${stoppageTotal > 0 ? Math.round((prodLack/stoppageTotal)*100) : 0}%)</div>
+        </div>
+        <div style="background: #dcfce7; border-radius: 8px; padding: 10px; text-align: center;">
+          <div style="font-size: 22px; font-weight: 700; color: #166534;">${normalWeeks}</div>
+          <div style="font-size: 9px; color: #166534;">${t('export.normalLabel')}</div>
+        </div>
+      </div>`;
+      
+      const page3 = createPageSection(analyticsHtml, true);
+      
+      this.showExportProgress(true, 50, t('export.addingProjects'));
+      
+      // PAGE 4: Customer Analysis, Test Performance, Top/Bottom Performers, AI Insights
+      let page4Html = '';
+      
+      // Customer Analysis
+      page4Html += `<h2 style="margin: 0 0 8px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">👥 ${t('export.customerAnalysis')}</h2>`;
+      const custAnalysis: { [key: string]: { count: number; ist: number; soll: number } } = {};
+      projects.forEach(p => {
+        const cust = this.state.customers.find(c => c.id === p.customer_id);
+        const name = cust?.name || 'Unknown';
+        if (!custAnalysis[name]) custAnalysis[name] = { count: 0, ist: 0, soll: 0 };
+        custAnalysis[name].count++;
+        for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          const d = this.getWeekData(p, weekKey);
+          custAnalysis[name].ist += d.ist || 0;
+          custAnalysis[name].soll += d.soll || 0;
+        }
+      });
+      page4Html += `<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px;">`;
+      Object.entries(custAnalysis).forEach(([name, data]) => {
+        const rate = data.soll > 0 ? (data.ist / data.soll * 100) : 0;
+        const color = rate >= 90 ? '#10B981' : rate >= 70 ? '#3B82F6' : rate >= 50 ? '#F59E0B' : '#EF4444';
+        page4Html += `<div style="background: #fff; border-radius: 8px; padding: 8px; border: 1px solid #e2e8f0;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <strong style="font-size: 10px;">${name}</strong>
+            <span style="font-size: 8px; padding: 1px 5px; background: #e0f2fe; border-radius: 8px;">${data.count} ${t('export.proj')}</span>
+          </div>
+          <div style="display: flex; gap: 6px; margin-bottom: 6px;">
+            <div style="flex: 1; text-align: center; padding: 4px; background: #f8fafc; border-radius: 4px;">
+              <div style="font-size: 12px; font-weight: 700; color: #059669;">${data.ist}</div>
+              <div style="font-size: 7px; color: #64748b;">IST</div>
+            </div>
+            <div style="flex: 1; text-align: center; padding: 4px; background: #f8fafc; border-radius: 4px;">
+              <div style="font-size: 12px; font-weight: 700; color: #4f46e5;">${data.soll}</div>
+              <div style="font-size: 7px; color: #64748b;">SOLL</div>
+            </div>
+            <div style="flex: 1; text-align: center; padding: 4px; background: ${color}15; border-radius: 4px;">
+              <div style="font-size: 12px; font-weight: 700; color: ${color};">${rate.toFixed(0)}%</div>
+              <div style="font-size: 7px; color: #64748b;">${t('export.rate')}</div>
+            </div>
+          </div>
+          <div style="height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+            <div style="height: 100%; width: ${Math.min(rate, 100)}%; background: ${color}; border-radius: 2px;"></div>
+          </div>
+        </div>`;
+      });
+      page4Html += `</div>`;
+      
+      // Test Performance bars
+      const testColors = ['#0097AC', '#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EC4899'];
+      const testPerfData = this.state.tests.map((test, idx) => {
+        let tIst = 0, tSoll = 0;
+        this.state.projects.filter(p => p.test_id === test.id).forEach(p => {
+          for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+            const weekKey = `KW${w.toString().padStart(2, '0')}`;
+            const d = this.getWeekData(p, weekKey);
+            tIst += d.ist || 0; tSoll += d.soll || 0;
+          }
+        });
+        return { name: test.name, ist: tIst, soll: tSoll, color: testColors[idx % testColors.length] };
+      });
+      const maxTestIst = Math.max(1, ...testPerfData.map(d => d.ist));
+      
+      page4Html += `<h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🔬 ${t('export.testPerformance')}</h2>`;
+      page4Html += `<div style="margin-bottom: 14px;">`;
+      testPerfData.forEach(d => {
+        const rate = d.soll > 0 ? (d.ist / d.soll * 100) : 0;
+        const width = (d.ist / maxTestIst) * 100;
+        page4Html += `<div style="display: grid; grid-template-columns: 90px 1fr auto; align-items: center; gap: 8px; margin-bottom: 4px;">
+          <div style="font-weight: 600; font-size: 9px;">${d.name.substring(0, 18)}</div>
+          <div style="height: 16px; background: #f1f5f9; border-radius: 8px; overflow: hidden;">
+            <div style="height: 100%; width: ${width}%; background: ${d.color}; border-radius: 8px; display: flex; align-items: center; justify-content: flex-end; padding-right: 4px; min-width: 28px;">
+              <span style="font-size: 7px; font-weight: 700; color: white;">${rate.toFixed(0)}%</span>
+            </div>
+          </div>
+          <div style="font-weight: 600; font-size: 9px; min-width: 50px; text-align: right;">${d.ist}/${d.soll}</div>
+        </div>`;
+      });
+      page4Html += `</div>`;
+      
+      // Top & Bottom Performers
+      const projectRates = projects.map(p => {
+        const cust = this.state.customers.find(c => c.id === p.customer_id);
+        const typ = this.state.types.find(t => t.id === p.type_id);
+        let pIst = 0, pSoll = 0;
+        for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          const d = this.getWeekData(p, weekKey);
+          pIst += d.ist || 0; pSoll += d.soll || 0;
+        }
+        return { name: `${cust?.name || '?'} / ${typ?.name || '?'}`, ist: pIst, soll: pSoll, rate: pSoll > 0 ? (pIst / pSoll * 100) : 0 };
+      }).filter(r => r.soll > 0).sort((a, b) => b.rate - a.rate);
+      
+      page4Html += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px;">`;
+      // Top 5
+      page4Html += `<div><h2 style="margin: 0 0 6px 0; font-size: 13px; color: #10B981; border-bottom: 2px solid #10B981; padding-bottom: 3px;">⬆ ${t('export.topPerformers')}</h2>`;
+      projectRates.slice(0, 5).forEach((p, i) => {
+        page4Html += `<div style="display: flex; align-items: center; gap: 6px; padding: 5px; background: ${i % 2 === 0 ? '#f0fdf4' : '#fff'}; border-radius: 4px; margin-bottom: 3px; border-left: 2px solid #10B981;">
+          <div style="width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; background: rgba(16,185,129,0.1); color: #10B981;">${i + 1}</div>
+          <div style="flex: 1; font-size: 9px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">${p.name}</div>
+          <div style="font-weight: 700; font-size: 10px; color: #10B981;">${p.rate.toFixed(0)}%</div>
+        </div>`;
+      });
+      page4Html += `</div>`;
+      // Bottom 5
+      page4Html += `<div><h2 style="margin: 0 0 6px 0; font-size: 13px; color: #EF4444; border-bottom: 2px solid #EF4444; padding-bottom: 3px;">⬇ ${t('export.bottomPerformers')}</h2>`;
+      projectRates.slice(-5).reverse().forEach((p, i) => {
+        page4Html += `<div style="display: flex; align-items: center; gap: 6px; padding: 5px; background: ${i % 2 === 0 ? '#fef2f2' : '#fff'}; border-radius: 4px; margin-bottom: 3px; border-left: 2px solid #EF4444;">
+          <div style="width: 16px; height: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; background: rgba(239,68,68,0.1); color: #EF4444;">${i + 1}</div>
+          <div style="flex: 1; font-size: 9px; font-weight: 500; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;">${p.name}</div>
+          <div style="font-weight: 700; font-size: 10px; color: #EF4444;">${p.rate.toFixed(0)}%</div>
+        </div>`;
+      });
+      page4Html += `</div></div>`;
+      
+      // AI Insights (simplified for PDF)
+      const currentWeek = this.getCurrentWeek();
+      let aiTotalIst = 0, aiTotalSoll = 0;
+      projects.forEach(p => {
+        for (let w = filterInfo2.weekFrom; w <= filterInfo2.weekTo; w++) {
+          const weekKey = `KW${w.toString().padStart(2, '0')}`;
+          const d = this.getWeekData(p, weekKey);
+          aiTotalIst += d.ist || 0; aiTotalSoll += d.soll || 0;
+        }
+      });
+      const overallRate = aiTotalSoll > 0 ? Math.round((aiTotalIst / aiTotalSoll) * 100) : 0;
+      const aiBacklog = aiTotalSoll - aiTotalIst;
+      const weeksLeft = 52 - currentWeek;
+      const avgPerWeek = weeksLeft > 0 ? Math.ceil(aiBacklog / weeksLeft) : aiBacklog;
+      
+      page4Html += `<h2 style="margin: 0 0 6px 0; font-size: 13px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 3px;">🤖 ${t('export.aiInsights')}</h2>`;
+      page4Html += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">`;
+      
+      const insightColor = overallRate >= 90 ? '#10B981' : overallRate >= 70 ? '#3B82F6' : overallRate >= 50 ? '#F59E0B' : '#EF4444';
+      page4Html += `<div style="background: ${insightColor}10; border-left: 3px solid ${insightColor}; border-radius: 6px; padding: 8px;">
+        <div style="font-size: 10px; font-weight: 600; color: ${insightColor};">${t('export.overallRealization')}: ${overallRate}%</div>
+        <div style="font-size: 8px; color: #64748b; margin-top: 2px;">IST: ${aiTotalIst} / SOLL: ${aiTotalSoll}</div>
+      </div>`;
+      
+      if (aiBacklog > 0) {
+        page4Html += `<div style="background: #eff6ff; border-left: 3px solid #3B82F6; border-radius: 6px; padding: 8px;">
+          <div style="font-size: 10px; font-weight: 600; color: #1e40af;">${t('export.backlogTests').replace('{0}', String(aiBacklog))}</div>
+          <div style="font-size: 8px; color: #64748b; margin-top: 2px;">${t('export.requiredPerWeek').replace('{0}', String(avgPerWeek)).replace('{1}', String(weeksLeft))}</div>
+        </div>`;
       }
       
-      const page2 = createPageSection(chartsHtml, true);
+      if (stoppage > 0) {
+        page4Html += `<div style="background: #fef2f2; border-left: 3px solid #EF4444; border-radius: 6px; padding: 8px;">
+          <div style="font-size: 10px; font-weight: 600; color: #991b1b;">${t('export.stoppageDetected').replace('{0}', String(stoppage))}</div>
+          <div style="font-size: 8px; color: #64748b; margin-top: 2px;">${t('export.affectsGoals')}</div>
+        </div>`;
+      }
+      
+      // Best/worst customer insight
+      const custRates = Object.entries(custAnalysis).filter(([_, d]) => d.soll > 0).map(([name, d]) => ({name, rate: (d.ist / d.soll * 100)})).sort((a, b) => b.rate - a.rate);
+      if (custRates.length > 0) {
+        const bestCust = custRates[0];
+        page4Html += `<div style="background: #f0fdf4; border-left: 3px solid #10B981; border-radius: 6px; padding: 8px;">
+          <div style="font-size: 10px; font-weight: 600; color: #166534;">${t('export.bestCustomer')}: ${bestCust.name}</div>
+          <div style="font-size: 8px; color: #64748b; margin-top: 2px;">${t('export.realization')}: ${bestCust.rate.toFixed(0)}%</div>
+        </div>`;
+      }
+      page4Html += `</div>`;
+      
+      const page4 = createPageSection(page4Html, true);
       
       this.showExportProgress(true, 55, t('export.addingProjects'));
       
-      // PAGE 3+: Remaining Projects (if more than 20)
-      const projectsOnPage2 = 20;
-      const remainingProjects = projects.slice(projectsOnPage2);
+      // PAGE 5+: Project list pages (all projects)
       const projectsPerPage = 35;
-      const totalProjectPages = Math.ceil(remainingProjects.length / projectsPerPage);
+      const totalProjectPages = Math.ceil(projects.length / projectsPerPage);
       const projectPages: HTMLDivElement[] = [];
       
       for (let pageNum = 0; pageNum < totalProjectPages; pageNum++) {
         const startIdx = pageNum * projectsPerPage;
-        const endIdx = Math.min(startIdx + projectsPerPage, remainingProjects.length);
-        const pageProjects = remainingProjects.slice(startIdx, endIdx);
-        const globalStartIdx = projectsOnPage2 + startIdx;
-        const globalEndIdx = projectsOnPage2 + endIdx;
+        const endIdx = Math.min(startIdx + projectsPerPage, projects.length);
+        const pageProjects = projects.slice(startIdx, endIdx);
         
         let projectsHtml = `
-          <h2 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 5px;">
-            📋 ${t('export.projectList')} (${globalStartIdx + 1}-${globalEndIdx} / ${projects.length})
+          <h2 style="margin: 0 0 10px 0; font-size: 16px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 5px;">
+            📋 ${t('export.projectList')} (${startIdx + 1}-${endIdx} / ${projects.length})
           </h2>
-          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.06); font-size: 9px;">
+          <table style="width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.06); font-size: 11px;">
             <thead>
               <tr style="background: #1e293b; color: #fff;">
                 <th style="padding: 6px 8px; text-align: left; font-weight: 600;">${t('export.customer')}</th>
@@ -6040,23 +6820,24 @@ class KappaApp {
           
           let istTotal = 0, sollTotal = 0;
           for (let w = filterInfo.weekFrom; w <= filterInfo.weekTo; w++) {
-            const wd = project.weeks?.[w.toString()];
-            if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+            const weekKey = `KW${w.toString().padStart(2, '0')}`;
+            const wd = this.getWeekData(project, weekKey);
+            istTotal += wd.ist || 0; sollTotal += wd.soll || 0;
           }
           const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
           
           projectsHtml += `
-            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8fafc'};">
-              <td style="padding: 5px 8px;">${customer?.name || '-'}</td>
-              <td style="padding: 5px 8px;">${type?.name || '-'}</td>
-              <td style="padding: 5px 8px;">${(part?.name || '-').substring(0, 22)}</td>
-              <td style="padding: 5px 8px;">${(test?.name || '-').substring(0, 22)}</td>
-              <td style="padding: 5px 8px; text-align: center;">${istTotal}</td>
-              <td style="padding: 5px 8px; text-align: center;">${sollTotal}</td>
+            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f1f5f9'};">
+              <td style="padding: 5px 8px; color: #0f172a; font-weight: 600;">${customer?.name || '-'}</td>
+              <td style="padding: 5px 8px; color: #334155;">${type?.name || '-'}</td>
+              <td style="padding: 5px 8px; color: #334155;">${(part?.name || '-').substring(0, 22)}</td>
+              <td style="padding: 5px 8px; color: #334155;">${(test?.name || '-').substring(0, 22)}</td>
+              <td style="padding: 5px 8px; text-align: center; color: #059669; font-weight: 600;">${istTotal}</td>
+              <td style="padding: 5px 8px; text-align: center; color: #4f46e5; font-weight: 600;">${sollTotal}</td>
               <td style="padding: 5px 8px; text-align: center;">
-                <span style="padding: 1px 5px; border-radius: 6px; font-weight: 600;
-                  background: ${percent >= 100 ? '#dcfce7' : percent >= 50 ? '#fef3c7' : '#fee2e2'};
-                  color: ${percent >= 100 ? '#166534' : percent >= 50 ? '#92400e' : '#991b1b'};">
+                <span style="padding: 3px 6px; border-radius: 6px; font-weight: 700; font-size: 11px;
+                  background: ${percent >= 100 ? '#bbf7d0' : percent >= 50 ? '#fde68a' : '#fecaca'};
+                  color: ${percent >= 100 ? '#14532d' : percent >= 50 ? '#78350f' : '#7f1d1d'};">
                   ${percent.toFixed(0)}%
                 </span>
               </td>
@@ -6080,7 +6861,7 @@ class KappaApp {
       const pdfPageWidth = 210;
       const pdfPageHeight = 297;
       
-      const allPages = [page1, page2, ...projectPages];
+      const allPages = [page1, page2, page3, page4, ...projectPages];
       
       for (let i = 0; i < allPages.length; i++) {
         this.showExportProgress(true, 70 + Math.round((i / allPages.length) * 25), t('export.creatingPdf'));
@@ -6091,7 +6872,7 @@ class KappaApp {
         await new Promise(resolve => setTimeout(resolve, 100));
         
         const canvas = await html2canvas(allPages[i], {
-          scale: 2,
+          scale: 3,
           useCORS: true,
           logging: false,
           backgroundColor: '#ffffff',
@@ -6300,8 +7081,9 @@ class KappaApp {
         
         let istTotal = 0, sollTotal = 0;
         for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
-          const wd = project.weeks?.[week.toString()];
-          if (wd) { istTotal += wd.ist || 0; sollTotal += wd.soll || 0; }
+          const weekKey = `KW${week.toString().padStart(2, '0')}`;
+          const wd = this.getWeekData(project, weekKey);
+          istTotal += wd.ist || 0; sollTotal += wd.soll || 0;
         }
         const percent = sollTotal > 0 ? (istTotal / sollTotal * 100) : 0;
         
@@ -6613,16 +7395,14 @@ class KappaApp {
       const cs = customerMap.get(project.customer_id)!;
       cs.count++;
       
-      // Use weeks property (not weekData)
+      // Use getWeekData for year-aware lookup
       for (let week = filterInfo.weekFrom; week <= filterInfo.weekTo; week++) {
-        const weekKey = week.toString();
-        const wd = project.weeks?.[weekKey];
-        if (wd) {
-          totalIst += wd.ist || 0;
-          totalSoll += wd.soll || 0;
-          cs.ist += wd.ist || 0;
-          cs.soll += wd.soll || 0;
-        }
+        const weekKey = `KW${week.toString().padStart(2, '0')}`;
+        const wd = this.getWeekData(project, weekKey);
+        totalIst += wd.ist || 0;
+        totalSoll += wd.soll || 0;
+        cs.ist += wd.ist || 0;
+        cs.soll += wd.soll || 0;
       }
     });
     
@@ -6641,7 +7421,356 @@ class KappaApp {
   }
 
   private importData(): void {
-    this.showImportWizard();
+    // Redirect to settings view for import
+    this.switchView('settings');
+    this.showToast(i18n.t('settings.selectFileToImport'), 'warning');
+  }
+
+  // ==================== Backup & Import System ====================
+  
+  private pendingModuleImport: string = '';
+
+  private async checkAutoBackup(): Promise<void> {
+    const freq = this.state.settings.backupFrequency;
+    if (freq === 'none') return;
+
+    const lastBackup = this.state.settings.lastBackupDate;
+    const now = new Date();
+    let shouldBackup = false;
+
+    if (!lastBackup) {
+      shouldBackup = true;
+    } else {
+      const lastDate = new Date(lastBackup);
+      const diffMs = now.getTime() - lastDate.getTime();
+      const diffHours = diffMs / (1000 * 60 * 60);
+      const diffDays = diffHours / 24;
+
+      switch (freq) {
+        case 'session':
+          // Check if a different session (more than 30 min since last backup)
+          shouldBackup = diffHours > 0.5;
+          break;
+        case 'daily':
+          shouldBackup = diffDays >= 1;
+          break;
+        case 'weekly':
+          shouldBackup = diffDays >= 7;
+          break;
+      }
+    }
+
+    if (shouldBackup) {
+      try {
+        const backupPath = this.state.settings.backupPath || undefined;
+        const result = await db.createBackup(backupPath);
+        if (result.success) {
+          this.state.settings.lastBackupDate = new Date().toISOString();
+          await this.saveSettings();
+          console.log('✅ Auto-backup created:', result.filename);
+        }
+      } catch (error) {
+        console.error('Auto-backup failed:', error);
+      }
+    }
+  }
+
+  private async createManualBackup(): Promise<void> {
+    try {
+      const backupPath = this.state.settings.backupPath || undefined;
+      const result = await db.createBackup(backupPath);
+      if (result.success) {
+        this.state.settings.lastBackupDate = new Date().toISOString();
+        await this.saveSettings();
+        this.renderSettingsView();
+        this.showToast(`${i18n.t('settings.backupCreated')} (${this.formatFileSize(result.size)})`, 'success');
+      }
+    } catch (error) {
+      console.error('Backup error:', error);
+      this.showToast(i18n.t('settings.backupFailed'), 'error');
+    }
+  }
+
+  private async loadBackupList(): Promise<void> {
+    const container = document.getElementById('backupListContainer');
+    if (!container) return;
+
+    try {
+      const backupPath = this.state.settings.backupPath || undefined;
+      const result = await db.getBackups(backupPath);
+      
+      if (!result.backups || result.backups.length === 0) {
+        container.innerHTML = `<p class="setting-hint">${i18n.t('settings.noBackups')}</p>`;
+        return;
+      }
+
+      container.innerHTML = result.backups.slice(0, 10).map((b: any) => {
+        const date = new Date(b.created);
+        const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+        const size = this.formatFileSize(b.size);
+        return `
+          <div class="backup-item">
+            <div class="backup-info">
+              <span class="backup-filename">${b.filename}</span>
+              <span class="backup-meta">${dateStr} • ${size}</span>
+            </div>
+            <div class="backup-actions">
+              <button class="btn-small btn-restore" data-filename="${b.filename}" title="${i18n.t('settings.restoreBackup')}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Attach restore handlers
+      container.querySelectorAll('.btn-restore').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+          const filename = (e.currentTarget as HTMLElement).dataset.filename!;
+          if (confirm(i18n.t('settings.confirmRestore'))) {
+            await this.restoreFromBackup(filename);
+          }
+        });
+      });
+
+    } catch (error) {
+      console.error('Error loading backups:', error);
+      container.innerHTML = `<p class="setting-hint" style="color:var(--color-danger);">Error loading backups</p>`;
+    }
+  }
+
+  private async restoreFromBackup(filename: string): Promise<void> {
+    try {
+      const backupPath = this.state.settings.backupPath || undefined;
+      const result = await db.restoreBackup(filename, backupPath);
+      if (result.success && result.data) {
+        // Import the data
+        await db.importData(JSON.stringify(result.data));
+        await this.loadData();
+        this.renderCurrentView();
+        this.showToast(i18n.t('settings.backupRestored'), 'success');
+      }
+    } catch (error) {
+      console.error('Restore error:', error);
+      this.showToast(i18n.t('settings.backupFailed'), 'error');
+    }
+  }
+
+  private importFullBackup(): void {
+    const fileInput = document.getElementById('settingsImportFileInput') as HTMLInputElement;
+    if (fileInput) fileInput.click();
+  }
+
+  private async handleFullImportFile(file: File): Promise<void> {
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      
+      // Validate it looks like a backup
+      if (!data.customers && !data.projects && !data.employees && !data.settings) {
+        this.showToast(i18n.t('settings.invalidFileFormat'), 'error');
+        return;
+      }
+
+      if (!confirm(i18n.t('settings.confirmRestore'))) return;
+
+      await db.importData(JSON.stringify(data));
+      await this.loadData();
+      
+      // If settings were imported, apply them
+      if (data.settings) {
+        this.state.settings = { ...this.state.settings, ...data.settings };
+        await this.saveSettings();
+        this.applyTheme();
+      }
+
+      this.renderCurrentView();
+      this.showToast(i18n.t('settings.importSuccess'), 'success');
+    } catch (error) {
+      console.error('Import error:', error);
+      this.showToast(i18n.t('settings.invalidFileFormat'), 'error');
+    }
+  }
+
+  private importModuleFromFile(moduleName: string): void {
+    this.pendingModuleImport = moduleName;
+    const fileInput = document.getElementById('settingsModuleImportFileInput') as HTMLInputElement;
+    if (fileInput) fileInput.click();
+  }
+
+  private async handleModuleImportFile(file: File): Promise<void> {
+    const moduleName = this.pendingModuleImport;
+    if (!moduleName) return;
+
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+
+      // Can accept a full backup or a module-specific export
+      // If it's a full backup, extract only the relevant module data
+      let moduleData = data;
+      
+      if (data.version && !data.module) {
+        // Full backup - extract module-specific data
+        switch (moduleName) {
+          case 'planning':
+            moduleData = { customers: data.customers, types: data.types, parts: data.parts, tests: data.tests, projects: data.projects, comments: data.comments };
+            break;
+          case 'employees':
+            moduleData = { employees: data.employees, employeeDetails: data.employeeDetails, qualifications: data.qualifications };
+            break;
+          case 'schedule':
+            moduleData = { scheduleAssignments: data.scheduleAssignments, templates: data.templates };
+            break;
+          case 'absences':
+            moduleData = { absenceTypes: data.absenceTypes, absences: data.absences, absenceLimits: data.absenceLimits, holidays: data.holidays };
+            break;
+          // Individual table modules - extract from full backup
+          case 'customers':
+            moduleData = { customers: data.customers };
+            break;
+          case 'types':
+            moduleData = { types: data.types };
+            break;
+          case 'parts':
+            moduleData = { parts: data.parts };
+            break;
+          case 'tests':
+            moduleData = { tests: data.tests };
+            break;
+          case 'projects':
+            moduleData = { projects: data.projects, comments: data.comments };
+            break;
+        }
+      }
+
+      const moduleLabels: Record<string, string> = {
+        planning: i18n.t('settings.modulePlanning'),
+        employees: i18n.t('settings.moduleEmployees'),
+        schedule: i18n.t('settings.moduleSchedule'),
+        absences: i18n.t('settings.moduleAbsences'),
+        customers: i18n.t('settings.moduleCustomers'),
+        types: i18n.t('settings.moduleTypes'),
+        parts: i18n.t('settings.moduleParts'),
+        tests: i18n.t('settings.moduleTests'),
+        projects: i18n.t('settings.moduleProjects'),
+      };
+
+      if (!confirm(`${i18n.t('settings.confirmRestore')}\n\nModule: ${moduleLabels[moduleName] || moduleName}`)) return;
+
+      await db.importModule(moduleName, moduleData);
+      await this.loadData();
+      this.renderCurrentView();
+      this.showToast(`${i18n.t('settings.importModuleSuccess')}: ${moduleLabels[moduleName] || moduleName}`, 'success');
+    } catch (error) {
+      console.error('Module import error:', error);
+      this.showToast(i18n.t('settings.invalidFileFormat'), 'error');
+    }
+  }
+
+  private async exportFullDatabase(): Promise<void> {
+    try {
+      const jsonData = await db.exportData();
+      const blob = new Blob([jsonData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      a.href = url;
+      a.download = `kappa-export-${timestamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+    } catch (error) {
+      console.error('Export error:', error);
+      this.showToast(i18n.t('common.error'), 'error');
+    }
+  }
+
+  private async exportModuleToFile(moduleName: string): Promise<void> {
+    try {
+      const moduleLabels: Record<string, string> = {
+        planning: i18n.t('settings.modulePlanning'),
+        employees: i18n.t('settings.moduleEmployees'),
+        schedule: i18n.t('settings.moduleSchedule'),
+        absences: i18n.t('settings.moduleAbsences'),
+        customers: i18n.t('settings.moduleCustomers'),
+        types: i18n.t('settings.moduleTypes'),
+        parts: i18n.t('settings.moduleParts'),
+        tests: i18n.t('settings.moduleTests'),
+        projects: i18n.t('settings.moduleProjects'),
+      };
+
+      const data = await db.exportModule(moduleName);
+      const jsonData = JSON.stringify(data, null, 2);
+      const blob = new Blob([jsonData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      a.href = url;
+      a.download = `kappa-${moduleName}-${timestamp}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this.showToast(`${i18n.t('settings.exportModuleSuccess')}: ${moduleLabels[moduleName] || moduleName}`, 'success');
+    } catch (error) {
+      console.error('Module export error:', error);
+      this.showToast(i18n.t('common.error'), 'error');
+    }
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  private async downloadDatabaseFile(): Promise<void> {
+    try {
+      const blob = await db.downloadDatabase();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
+      a.href = url;
+      a.download = `kappa-database-${timestamp}.db`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this.showToast(i18n.t('settings.downloadDbSuccess'), 'success');
+    } catch (error) {
+      console.error('Download DB error:', error);
+      this.showToast(i18n.t('common.error'), 'error');
+    }
+  }
+
+  private async uploadDatabaseFile(file: File): Promise<void> {
+    try {
+      // Validate file extension
+      if (!file.name.match(/\.(db|sqlite|sqlite3)$/i)) {
+        this.showToast(i18n.t('settings.invalidDbFile'), 'error');
+        return;
+      }
+
+      if (!confirm(i18n.t('settings.uploadDbConfirm'))) return;
+
+      // Read file as ArrayBuffer then convert to base64
+      const arrayBuffer = await file.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < uint8Array.length; i++) {
+        binary += String.fromCharCode(uint8Array[i]);
+      }
+      const base64Data = btoa(binary);
+
+      await db.uploadDatabase(base64Data);
+      
+      // Reload everything from the new database
+      await this.loadData();
+      this.renderCurrentView();
+      this.showToast(i18n.t('settings.uploadDbSuccess'), 'success');
+    } catch (error) {
+      console.error('Upload DB error:', error);
+      this.showToast(i18n.t('settings.invalidDbFile'), 'error');
+    }
   }
 
   // ==================== Smart Import Wizard ====================
@@ -7317,8 +8446,8 @@ class KappaApp {
   }
 
   private async clearAllData(): Promise<void> {
-    if (!confirm('Usunąć WSZYSTKIE dane?')) return;
-    if (!confirm('NA PEWNO? Nie da się tego cofnąć!')) return;
+    if (!confirm(i18n.t('settings.confirmDeleteAll'))) return;
+    if (!confirm(i18n.t('settings.confirmDeleteAllFinal'))) return;
 
     for (const store of ['customers', 'types', 'parts', 'tests', 'projects', 'comments']) {
       await db.clear(store);
@@ -7326,7 +8455,7 @@ class KappaApp {
 
     await this.loadData();
     this.renderCurrentView();
-    this.showToast('Dane usunięte!', 'success');
+    this.showToast(i18n.t('settings.dataDeleted'), 'success');
   }
 
   private escapeHtml(text: string): string {
@@ -7374,7 +8503,7 @@ class KappaApp {
   private scheduleCurrentWeek: number = this.getCurrentWeek();
   private scheduleCurrentYear: number = new Date().getFullYear();
   private scheduleShiftSystem: 1 | 2 | 3 = 2;
-  private scheduleViewMode: 'week' | 'multi' | 'year' | 'compact' = 'week';
+  private scheduleViewMode: 'week' | 'multi' | 'year' | 'compact' | 'history' = 'week';
   private scheduleFilterEmployee: string = '';
   private scheduleFilterProject: string = '';
   private scheduleFilterTest: string = '';
@@ -7382,6 +8511,7 @@ class KappaApp {
   private pinnedScheduleProjects: Set<string> = new Set();
   private draggedEmployeeId: string | null = null;
   private draggedEmployeeScope: 'project' | 'audit' | 'adhesion' | 'specific' = 'project';
+  private scheduleListenersInitialized: boolean = false;
   
   private async loadPinnedScheduleProjects(): Promise<void> {
     try {
@@ -7401,7 +8531,7 @@ class KappaApp {
       this.pinnedScheduleProjects.add(groupKey);
     }
     await db.setPreference('pinnedScheduleProjects', [...this.pinnedScheduleProjects]);
-    this.renderScheduleProjectsPanel();
+    this.renderScheduleContent();
   }
   
   private async renderScheduleView(): Promise<void> {
@@ -7439,7 +8569,7 @@ class KappaApp {
           uniqueCustomers.set(customer.id, customer.name);
         }
       });
-      filterProject.innerHTML = '<option value="">Wszystkie projekty</option>' + 
+      filterProject.innerHTML = `<option value="">${i18n.t('schedule.allProjects')}</option>` + 
         Array.from(uniqueCustomers.entries())
           .sort((a, b) => a[1].localeCompare(b[1]))
           .map(([id, name]) => `<option value="${id}" ${id === currentValue ? 'selected' : ''}>${name}</option>`)
@@ -7459,7 +8589,7 @@ class KappaApp {
       });
       
       const testsToShow = this.state.tests.filter(t => testsInUse.has(t.id) || this.state.tests.length <= 10);
-      filterTest.innerHTML = '<option value="">Wszystkie badania</option>' + 
+      filterTest.innerHTML = `<option value="">${i18n.t('schedulePanel.allTests')}</option>` + 
         (testsToShow.length > 0 
           ? testsToShow.map(t => `<option value="${t.id}" ${t.id === currentValue ? 'selected' : ''}>${t.name}</option>`).join('')
           : this.state.tests.map(t => `<option value="${t.id}" ${t.id === currentValue ? 'selected' : ''}>${t.name}</option>`).join(''));
@@ -7477,17 +8607,46 @@ class KappaApp {
       case 'compact':
         this.renderCompactView();
         break;
+      case 'history':
+        this.renderHistoryView();
+        break;
       default:
         this.renderScheduleProjectsPanel();
     }
   }
   
+  private refreshScheduleTopbarFilter(): void {
+    const employeeFilterTopbar = document.getElementById('scheduleEmployeeFilter') as HTMLSelectElement;
+    if (employeeFilterTopbar) {
+      employeeFilterTopbar.innerHTML = `<option value="">${i18n.t('schedulePanel.allEmployees')}</option>` + 
+        this.state.employees
+          .filter(e => !e.status || e.status === 'available')
+          .sort((a, b) => a.firstName.localeCompare(b.firstName))
+          .map(e => `<option value="${e.id}" ${e.id === this.scheduleFilterEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`)
+          .join('');
+    }
+  }
+  
   private setupScheduleEventListeners(): void {
-    // View toggle (1T/3T)
+    // Prevent duplicate event listeners from stacking
+    if (this.scheduleListenersInitialized) {
+      // Only refresh dynamic content (filter options)
+      this.refreshScheduleTopbarFilter();
+      return;
+    }
+    this.scheduleListenersInitialized = true;
+
+    // View toggle (week/history)
     document.querySelectorAll('.sched-view-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const view = (btn as HTMLElement).dataset.view;
-        this.scheduleViewMode = view === '3week' ? 'multi' : 'week';
+        if (view === 'history') {
+          this.scheduleViewMode = 'history';
+        } else if (view === '3week') {
+          this.scheduleViewMode = 'multi';
+        } else {
+          this.scheduleViewMode = 'week';
+        }
         document.querySelectorAll('.sched-view-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         this.renderScheduleContent();
@@ -7541,17 +8700,10 @@ class KappaApp {
     
     document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
     
-    // Filtr pracownika w topbar
+    // Filtr pracownika w topbar - setup listener
+    this.refreshScheduleTopbarFilter();
     const employeeFilterTopbar = document.getElementById('scheduleEmployeeFilter') as HTMLSelectElement;
     if (employeeFilterTopbar) {
-      // Uzupełnij opcje
-      employeeFilterTopbar.innerHTML = '<option value="">Wszyscy pracownicy</option>' + 
-        this.state.employees
-          .filter(e => !e.status || e.status === 'available')
-          .sort((a, b) => a.firstName.localeCompare(b.firstName))
-          .map(e => `<option value="${e.id}" ${e.id === this.scheduleFilterEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`)
-          .join('');
-      
       employeeFilterTopbar.addEventListener('change', (e) => {
         this.scheduleFilterEmployee = (e.target as HTMLSelectElement).value;
         this.renderScheduleContent();
@@ -7597,6 +8749,9 @@ class KappaApp {
     
     // Wyślij email
     document.getElementById('sendEmailBtn')?.addEventListener('click', () => this.showSendEmailModal());
+    
+    // Shift Planner
+    document.getElementById('shiftPlannerBtn')?.addEventListener('click', () => this.showShiftPlannerModal());
     
     // Szablony
     document.getElementById('templatesBtn')?.addEventListener('click', () => this.showTemplatesModal());
@@ -7673,9 +8828,22 @@ class KappaApp {
     const monthLabel = document.getElementById('miniCalendarMonth');
     if (!dropdown) return;
     
-    const months = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
-    const monthsFull = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
-    const weekdays = ['Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'So', 'Nd'];
+    const months = [
+      i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
+      i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
+      i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
+      i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+    ];
+    const monthsFull = [
+      i18n.t('schedule.monthFullJan'), i18n.t('schedule.monthFullFeb'), i18n.t('schedule.monthFullMar'),
+      i18n.t('schedule.monthFullApr'), i18n.t('schedule.monthFullMay'), i18n.t('schedule.monthFullJun'),
+      i18n.t('schedule.monthFullJul'), i18n.t('schedule.monthFullAug'), i18n.t('schedule.monthFullSep'),
+      i18n.t('schedule.monthFullOct'), i18n.t('schedule.monthFullNov'), i18n.t('schedule.monthFullDec')
+    ];
+    const weekdays = [
+      i18n.t('schedule.weekdayMon'), i18n.t('schedule.weekdayTue'), i18n.t('schedule.weekdayWed'),
+      i18n.t('schedule.weekdayThu'), i18n.t('schedule.weekdayFri'), i18n.t('schedule.weekdaySat'), i18n.t('schedule.weekdaySun')
+    ];
     
     // Określ miesiąc na podstawie obecnego tygodnia
     const weekDates = this.getWeekDateRange(this.scheduleCurrentYear, this.scheduleCurrentWeek);
@@ -7801,7 +8969,7 @@ class KappaApp {
     // Grupuj po datach
     const groupedLogs = new Map<string, typeof logs>();
     logs.forEach(log => {
-      const date = new Date(log.timestamp).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: '2-digit' });
+      const date = new Date(log.timestamp).toLocaleDateString(i18n.getDateLocale(), { weekday: 'short', day: '2-digit', month: '2-digit' });
       if (!groupedLogs.has(date)) {
         groupedLogs.set(date, []);
       }
@@ -7836,7 +9004,7 @@ class KappaApp {
                     ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
                     : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
                   
-                  const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
+                  const time = new Date(log.timestamp).toLocaleString(i18n.getDateLocale(), { 
                     hour: '2-digit', minute: '2-digit' 
                   });
                   
@@ -8449,7 +9617,7 @@ class KappaApp {
       alerts.push({
         type: 'warning',
         icon: '👤',
-        message: `${unassignedEmployees.length} pracownik${unassignedEmployees.length > 1 ? 'ów' : ''} bez przydziału: ${unassignedEmployees.map(e => e.firstName).join(', ')}`,
+        message: i18n.t('schedule.unassignedEmployeesWarn').replace('{0}', String(unassignedEmployees.length)).replace('{1}', unassignedEmployees.map(e => e.firstName).join(', ')),
         action: 'assign'
       });
     }
@@ -8483,7 +9651,7 @@ class KappaApp {
       alerts.push({
         type: 'warning',
         icon: '📋',
-        message: `${unassignedProjects.length} projekt${unassignedProjects.length > 1 ? 'ów' : ''} bez obsady: ${unassignedProjects.slice(0, 3).join(', ')}${unassignedProjects.length > 3 ? '...' : ''}`
+        message: i18n.t('schedule.unassignedProjectsWarn').replace('{0}', String(unassignedProjects.length)).replace('{1}', unassignedProjects.slice(0, 3).join(', ') + (unassignedProjects.length > 3 ? '...' : ''))
       });
     }
     
@@ -8507,7 +9675,7 @@ class KappaApp {
       const type = this.state.types.find(t => t.id === p.type_id);
       if (type?.name?.toLowerCase().includes('przyczepm') || type?.name?.toLowerCase().includes('adhesion')) {
         if (!hasAdhesion) {
-          processWarnings.push(`${customer?.name}: Brak obsady przyczepności`);
+          processWarnings.push(i18n.t('schedule.adhesionMissing').replace('{0}', customer?.name || '?'));
         }
       }
       
@@ -8521,7 +9689,7 @@ class KappaApp {
       alerts.push({
         type: 'warning',
         icon: '⚠️',
-        message: `Nieobsadzone procesy: ${processWarnings.slice(0, 2).join(', ')}${processWarnings.length > 2 ? ` (+${processWarnings.length - 2} więcej)` : ''}`
+        message: i18n.t('schedule.uncoveredProcesses').replace('{0}', processWarnings.slice(0, 2).join(', ') + (processWarnings.length > 2 ? ` (${i18n.t('schedule.moreItems').replace('{0}', String(processWarnings.length - 2))})` : ''))
       });
     }
 
@@ -8540,7 +9708,7 @@ class KappaApp {
         
         if (prevMainShift === currentMainShift) {
           const suggestedShift = prevMainShift === 1 ? 2 : 1;
-          rotationSuggestions.push(`${emp.firstName}: zmiana ${prevMainShift}→${suggestedShift}`);
+          rotationSuggestions.push(i18n.t('schedule.rotationHint').replace('{0}', emp.firstName).replace('{1}', String(prevMainShift)).replace('{2}', String(suggestedShift)));
         }
       }
     });
@@ -8549,7 +9717,7 @@ class KappaApp {
       alerts.push({
         type: 'suggestion',
         icon: '🔄',
-        message: `Sugestia rotacji: ${rotationSuggestions.slice(0, 2).join(', ')}${rotationSuggestions.length > 2 ? '...' : ''}`
+        message: i18n.t('schedule.rotationAlert').replace('{0}', rotationSuggestions.slice(0, 2).join(', ') + (rotationSuggestions.length > 2 ? '...' : ''))
       });
     }
     
@@ -8558,7 +9726,7 @@ class KappaApp {
       alerts.push({
         type: 'success',
         icon: '✓',
-        message: 'Wszystkie projekty mają przypisanych pracowników'
+        message: i18n.t('schedule.allProjectsAssigned')
       });
     }
     
@@ -8574,7 +9742,7 @@ class KappaApp {
       <div class="sched-alert sched-alert-${alert.type}">
         <span class="sched-alert-icon">${alert.icon}</span>
         <span class="sched-alert-text">${alert.message}</span>
-        ${alert.action ? `<button class="sched-alert-action" data-action="${alert.action}">Przypisz</button>` : ''}
+        ${alert.action ? `<button class="sched-alert-action" data-action="${alert.action}">${i18n.t('schedule.assign')}</button>` : ''}
       </div>
     `).join('');
     
@@ -8608,9 +9776,9 @@ class KappaApp {
     if (!container) return;
     
     const weeks = [
-      { week: this.scheduleCurrentWeek - 1 < 1 ? 52 : this.scheduleCurrentWeek - 1, year: this.scheduleCurrentWeek - 1 < 1 ? this.scheduleCurrentYear - 1 : this.scheduleCurrentYear, label: 'Poprz.' },
-      { week: this.scheduleCurrentWeek, year: this.scheduleCurrentYear, label: 'Obecny' },
-      { week: this.scheduleCurrentWeek + 1 > 52 ? 1 : this.scheduleCurrentWeek + 1, year: this.scheduleCurrentWeek + 1 > 52 ? this.scheduleCurrentYear + 1 : this.scheduleCurrentYear, label: 'Następny' }
+      { week: this.scheduleCurrentWeek - 1 < 1 ? 52 : this.scheduleCurrentWeek - 1, year: this.scheduleCurrentWeek - 1 < 1 ? this.scheduleCurrentYear - 1 : this.scheduleCurrentYear, label: i18n.t('schedule.previousWeek') },
+      { week: this.scheduleCurrentWeek, year: this.scheduleCurrentYear, label: i18n.t('schedule.currentWeekLabel') },
+      { week: this.scheduleCurrentWeek + 1 > 52 ? 1 : this.scheduleCurrentWeek + 1, year: this.scheduleCurrentWeek + 1 > 52 ? this.scheduleCurrentYear + 1 : this.scheduleCurrentYear, label: i18n.t('schedule.nextWeek') }
     ];
     
     // Update header for multi-week
@@ -8618,7 +9786,7 @@ class KappaApp {
     if (headerContainer) {
       headerContainer.className = 'sched-table-header sched-multiweek';
       headerContainer.innerHTML = `
-        <div class="sched-col-project">Projekt</div>
+        <div class="sched-col-project">${i18n.t('schedule.project')}</div>
         ${weeks.map(w => `
           <div class="sched-col-week ${w.label === 'Obecny' ? 'current' : ''}">
             <span class="sched-week-num">KW${w.week.toString().padStart(2, '0')}</span>
@@ -8667,7 +9835,7 @@ class KappaApp {
             <rect x="3" y="4" width="18" height="18" rx="2"/>
             <line x1="3" y1="10" x2="21" y2="10"/>
           </svg>
-          <span>Brak projektów w wybranym okresie</span>
+          <span>${i18n.t('schedule.noProjectsInPeriod')}</span>
         </div>
       `;
       return;
@@ -8709,6 +9877,381 @@ class KappaApp {
       `;
     }).join('');
   }
+
+  // ==================== History View (3 weeks back + selected) ====================
+
+  private renderHistoryView(): void {
+    const headerContainer = document.getElementById('scheduleShiftsHeader');
+    const projectsContainer = document.getElementById('scheduleProjectsList');
+    if (!headerContainer || !projectsContainer) return;
+
+    const realCurrentWeek = this.getCurrentWeek();
+    const realCurrentYear = new Date().getFullYear();
+
+    // Build 4 weeks: selected - 3, selected - 2, selected - 1, selected
+    const weeks: { week: number; year: number; label: string; weekKey: string; isRealCurrent: boolean; isSelected: boolean; weeksAgo: number }[] = [];
+    for (let offset = 3; offset >= 0; offset--) {
+      let w = this.scheduleCurrentWeek - offset;
+      let y = this.scheduleCurrentYear;
+      if (w < 1) { w += 52; y--; }
+      const weekKey = `${y}-KW${w.toString().padStart(2, '0')}`;
+      const isRealCurrent = (w === realCurrentWeek && y === realCurrentYear);
+      const isSelected = (offset === 0);
+      let label: string;
+      if (isRealCurrent) {
+        label = i18n.t('schedule.currentWeekCurrent');
+      } else if (offset === 1) {
+        label = i18n.t('schedule.oneWeekAgo');
+      } else if (offset === 2) {
+        label = i18n.t('schedule.twoWeeksAgo');
+      } else if (offset === 3) {
+        label = i18n.t('schedule.threeWeeksAgo');
+      } else {
+        label = `KW${w.toString().padStart(2, '0')}`;
+      }
+      weeks.push({ week: w, year: y, label, weekKey, isRealCurrent, isSelected, weeksAgo: offset });
+    }
+
+    // Header 
+    headerContainer.className = 'sched-table-header sched-history';
+    headerContainer.innerHTML = `
+      <div class="sched-header-cell sched-project-col sortable ${this.scheduleSortMode !== 'default' ? 'sorted' : ''}" id="schedProjectColHeaderHistory">
+        <span>${i18n.t('schedule.project')}</span>
+      </div>
+      ${weeks.map(w => `
+        <div class="sched-header-cell sched-history-week-col ${w.isRealCurrent ? 'real-current' : ''} ${w.isSelected ? 'selected' : ''}" data-history-week="${w.week}" data-history-year="${w.year}">
+          <span class="sched-history-week-kw">KW${w.week.toString().padStart(2, '0')}</span>
+          <span class="sched-history-week-label">${w.label}</span>
+        </div>
+      `).join('')}
+    `;
+
+    // Sort header click
+    document.getElementById('schedProjectColHeaderHistory')?.addEventListener('click', () => {
+      if (this.scheduleSortMode === 'default') this.scheduleSortMode = 'alpha';
+      else if (this.scheduleSortMode === 'alpha') this.scheduleSortMode = 'coverage';
+      else this.scheduleSortMode = 'default';
+      this.renderScheduleContent();
+    });
+
+    // Week header click - navigate to that week
+    const realYear = new Date().getFullYear();
+    headerContainer.querySelectorAll('.sched-history-week-col').forEach(col => {
+      (col as HTMLElement).style.cursor = 'pointer';
+      col.addEventListener('click', () => {
+        const targetWeek = parseInt((col as HTMLElement).dataset.historyWeek || '1');
+        const targetYear = parseInt((col as HTMLElement).dataset.historyYear || String(realYear));
+        this.scheduleCurrentWeek = targetWeek;
+        this.scheduleCurrentYear = targetYear;
+        this.renderScheduleWeekNav();
+        this.renderScheduleAlerts();
+        this.renderScheduleContent();
+        this.renderScheduleEmployeePanel();
+      });
+    });
+
+    // Gather all project groups that have SOLL > 0 in any of the 4 weeks
+    const allProjectGroups = new Map<string, {
+      customerName: string;
+      typeName: string;
+      customerId: string;
+      items: Project[];
+    }>();
+
+    weeks.forEach(({ weekKey }) => {
+      this.state.projects.filter(p => !p.hidden).forEach(p => {
+        const weekData = p.weeks[weekKey];
+        if (weekData && weekData.soll > 0) {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          const type = this.state.types.find(t => t.id === p.type_id);
+          const groupKey = `${p.customer_id}-${p.type_id}`;
+
+          if (!allProjectGroups.has(groupKey)) {
+            allProjectGroups.set(groupKey, {
+              customerName: customer?.name || '?',
+              typeName: type?.name || '?',
+              customerId: p.customer_id,
+              items: []
+            });
+          }
+          const group = allProjectGroups.get(groupKey)!;
+          if (!group.items.some(item => item.id === p.id)) {
+            group.items.push(p);
+          }
+        }
+      });
+    });
+
+    // Apply filters
+    if (this.scheduleFilterProject) {
+      for (const [key, group] of allProjectGroups) {
+        if (group.customerId !== this.scheduleFilterProject) allProjectGroups.delete(key);
+      }
+    }
+    if (this.scheduleFilterEmployee) {
+      const empWeekKeys = new Set<string>();
+      weeks.forEach(w => {
+        this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+          a.employeeId === this.scheduleFilterEmployee && a.week === w.weekKey
+        ).forEach((a: ScheduleAssignment) => {
+          empWeekKeys.add(a.projectId);
+          // Also match groupKeys
+          const project = this.state.projects.find(p => p.id === a.projectId);
+          if (project) empWeekKeys.add(`${project.customer_id}-${project.type_id}`);
+        });
+      });
+      for (const [key] of allProjectGroups) {
+        if (!empWeekKeys.has(key)) allProjectGroups.delete(key);
+      }
+    }
+
+    if (allProjectGroups.size === 0) {
+      projectsContainer.innerHTML = `
+        <div class="sched-empty-table">
+          <span class="sched-empty-icon">📋</span>
+          <p>${i18n.t('schedule.noProjectsInPeriod')}</p>
+        </div>
+      `;
+      return;
+    }
+
+    // Sort groups
+    let sortedGroups = Array.from(allProjectGroups.entries());
+    const selectedWeekKey = weeks[3].weekKey;
+
+    if (this.scheduleSortMode === 'alpha') {
+      sortedGroups.sort((a, b) => a[1].customerName.localeCompare(b[1].customerName));
+    } else if (this.scheduleSortMode === 'coverage') {
+      sortedGroups.sort((a, b) => {
+        const aAss = this.state.scheduleAssignments.filter((ass: ScheduleAssignment) =>
+          (ass.projectId === a[0] || a[1].items.some(item => item.id === ass.projectId)) && ass.week === selectedWeekKey
+        ).length;
+        const bAss = this.state.scheduleAssignments.filter((ass: ScheduleAssignment) =>
+          (ass.projectId === b[0] || b[1].items.some(item => item.id === ass.projectId)) && ass.week === selectedWeekKey
+        ).length;
+        return aAss - bAss;
+      });
+    }
+
+    // Pinned on top
+    sortedGroups.sort((a, b) => {
+      const aPinned = this.pinnedScheduleProjects.has(a[0]) ? 0 : 1;
+      const bPinned = this.pinnedScheduleProjects.has(b[0]) ? 0 : 1;
+      return aPinned - bPinned;
+    });
+
+    projectsContainer.innerHTML = '';
+
+    sortedGroups.forEach(([groupKey, group]) => {
+      const row = document.createElement('div');
+      row.className = 'sched-row sched-history';
+      row.dataset.groupKey = groupKey;
+
+      // Project cell - staffing status based on selected week
+      const isPinned = this.pinnedScheduleProjects?.has(groupKey) || false;
+      const selectedAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+        (a.projectId === groupKey || group.items.some(item => item.id === a.projectId)) && a.week === selectedWeekKey
+      );
+      const staffingStatus = this.getProjectStaffingStatus(groupKey, group.items, selectedAssignments);
+
+      const projectCell = document.createElement('div');
+      projectCell.className = `sched-project-cell sched-history-project ${staffingStatus.class}`;
+      projectCell.innerHTML = `
+        <div class="sched-project-info">
+          <button class="sched-project-pin ${isPinned ? 'pinned' : ''}" data-group="${groupKey}" title="${isPinned ? 'Unpin' : 'Pin'}">
+            <svg viewBox="0 0 24 24" fill="${isPinned ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>
+          </button>
+          <span class="sched-staffing-indicator ${staffingStatus.class}" title="${staffingStatus.tooltip}">
+            ${staffingStatus.icon}
+          </span>
+          <div class="sched-project-text">
+            <span class="sched-project-customer">${group.customerName}</span>
+            <span class="sched-project-type">${group.typeName}</span>
+          </div>
+        </div>
+      `;
+
+      projectCell.querySelector('.sched-project-pin')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.toggleScheduleProjectPin(groupKey);
+      });
+
+      row.appendChild(projectCell);
+
+      // Week cells - ALL are interactive
+      weeks.forEach(weekInfo => {
+        const weekCell = document.createElement('div');
+        weekCell.className = `sched-history-week-cell ${weekInfo.isRealCurrent ? 'real-current' : ''} ${weekInfo.isSelected ? 'selected' : ''}`;
+
+        const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+          (a.projectId === groupKey || group.items.some(item => item.id === a.projectId)) &&
+          a.week === weekInfo.weekKey
+        );
+
+        // SOLL total for this group in this week  
+        let totalSoll = 0;
+        group.items.forEach(p => {
+          const wd = p.weeks[weekInfo.weekKey];
+          if (wd) totalSoll += wd.soll;
+        });
+
+        // Get project comment
+        const projectComment = this.getProjectComment(groupKey, weekInfo.weekKey);
+        let mainComment = projectComment || '';
+        let repliesCount = 0;
+        if (mainComment.includes('---REPLIES---')) {
+          const parts = mainComment.split('---REPLIES---');
+          mainComment = parts[0].trim();
+          try {
+            const parsedReplies = JSON.parse(parts[1]);
+            repliesCount = Array.isArray(parsedReplies) ? parsedReplies.length : 0;
+          } catch (e) { repliesCount = 0; }
+        }
+        const hasComment = mainComment.length > 0 || repliesCount > 0;
+
+        if (totalSoll === 0) {
+          weekCell.innerHTML = `<span class="sched-history-nodata">${i18n.t('schedule.noDataForWeek')}</span>`;
+        } else {
+          // Build shift breakdown - each shift is an interactive droppable zone
+          const shiftBreakdown: string[] = [];
+          for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+            const shiftAss = weekAssignments.filter((a: ScheduleAssignment) => a.shift === s);
+            shiftBreakdown.push(`
+              <div class="sched-history-shift shift-${s}" data-shift="${s}" data-week-key="${weekInfo.weekKey}" data-group-key="${groupKey}">
+                <span class="sched-history-shift-label">Z${s}</span>
+                <div class="sched-history-chips">
+                  ${shiftAss.slice(0, 6).map((a: ScheduleAssignment) => {
+                    const emp = this.state.employees.find(e => e.id === a.employeeId);
+                    if (!emp) return '';
+                    const fullName = `${emp.firstName} ${emp.lastName}`;
+                    const scopeClass = a.scope === 'audit' ? 'scope-audit' : a.scope === 'adhesion' ? 'scope-adhesion' : '';
+                    return `<span class="sched-history-chip ${scopeClass}" style="--chip-color: ${emp.color}" title="${fullName}${a.scope !== 'project' ? ' (' + this.getScopeLabel(a.scope) + ')' : ''}" data-assignment-id="${a.id}">${fullName}</span>`;
+                  }).join('')}
+                  ${shiftAss.length > 6 ? `<span class="sched-history-more">+${shiftAss.length - 6}</span>` : ''}
+                </div>
+                <button class="sched-history-shift-add" title="+">+</button>
+              </div>
+            `);
+          }
+
+          const assignedCount = weekAssignments.length;
+          const statusClass = assignedCount === 0 ? 'unassigned' : assignedCount >= totalSoll ? 'full' : 'partial';
+
+          const commentPreview = mainComment.length > 25 ? mainComment.slice(0, 25) + '...' : mainComment;
+
+          weekCell.innerHTML = `
+            <div class="sched-history-cell-header">
+              <span class="sched-history-soll">SOLL: ${totalSoll}</span>
+              <span class="sched-history-status ${statusClass}">${assignedCount}/${totalSoll}</span>
+            </div>
+            <div class="sched-history-shifts">
+              ${shiftBreakdown.join('')}
+            </div>
+            ${hasComment ? `
+              <div class="sched-history-comment clickable" data-week-key="${weekInfo.weekKey}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="11" height="11"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span class="sched-history-comment-text" title="${mainComment.replace(/"/g, '&quot;')}">${commentPreview}</span>
+                ${repliesCount > 0 ? `<span class="sched-history-replies-badge">${repliesCount}</span>` : ''}
+              </div>
+            ` : ''}
+          `;
+
+          // Comment click - edit for any week
+          const commentEl = weekCell.querySelector('.sched-history-comment');
+          if (commentEl) {
+            commentEl.addEventListener('click', () => {
+              this.showProjectCommentModal(groupKey, weekInfo.weekKey, projectComment);
+            });
+          }
+
+          // Add comment button for cells without comments
+          if (!hasComment) {
+            const addCommentBtn = document.createElement('button');
+            addCommentBtn.className = 'sched-history-add-comment';
+            addCommentBtn.title = i18n.t('schedule.addComment');
+            addCommentBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+            addCommentBtn.addEventListener('click', () => {
+              this.showProjectCommentModal(groupKey, weekInfo.weekKey, undefined);
+            });
+            weekCell.appendChild(addCommentBtn);
+          }
+
+          // Shift interaction: click + button to assign, drag-drop support
+          weekCell.querySelectorAll('.sched-history-shift').forEach(shiftEl => {
+            const shift = parseInt((shiftEl as HTMLElement).dataset.shift || '1') as 1 | 2 | 3;
+            const wKey = (shiftEl as HTMLElement).dataset.weekKey || '';
+            const gKey = (shiftEl as HTMLElement).dataset.groupKey || '';
+
+            // Click + button to open picker
+            const addBtn = shiftEl.querySelector('.sched-history-shift-add');
+            if (addBtn) {
+              addBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showSimpleEmployeePicker(gKey, group.items, wKey, shift, shiftEl as HTMLElement);
+              });
+            }
+
+            // Click on shift area to open picker (not on chip/add btn)
+            shiftEl.addEventListener('click', (e) => {
+              const target = e.target as HTMLElement;
+              if (target.closest('.sched-history-chip') || target.closest('.sched-history-shift-add')) return;
+              this.showSimpleEmployeePicker(gKey, group.items, wKey, shift, shiftEl as HTMLElement);
+            });
+
+            // Drag & drop
+            (shiftEl as HTMLElement).addEventListener('dragover', (e) => {
+              e.preventDefault();
+              (shiftEl as HTMLElement).classList.add('drag-over');
+            });
+            (shiftEl as HTMLElement).addEventListener('dragleave', () => {
+              (shiftEl as HTMLElement).classList.remove('drag-over');
+            });
+            (shiftEl as HTMLElement).addEventListener('drop', async (e) => {
+              e.preventDefault();
+              (shiftEl as HTMLElement).classList.remove('drag-over');
+              const dropX = (e as DragEvent).clientX;
+              const dropY = (e as DragEvent).clientY;
+
+              const assignmentId = (e as DragEvent).dataTransfer?.getData('assignmentId');
+              if (assignmentId) {
+                const sourceProject = (e as DragEvent).dataTransfer?.getData('sourceProject');
+                const sourceShift = parseInt((e as DragEvent).dataTransfer?.getData('sourceShift') || '0');
+                if (sourceProject !== gKey) {
+                  const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
+                  if (assignment) {
+                    // Nie usuwaj od razu - przekaż do pickera, usunie po potwierdzeniu
+                    this.showScopePickerAtPosition(gKey, group.items, assignment.employeeId, wKey, shift, dropX, dropY, assignmentId);
+                  }
+                  return;
+                }
+                if (sourceShift !== shift) {
+                  await this.moveAssignmentToShift(assignmentId, shift);
+                }
+                return;
+              }
+
+              if (this.draggedEmployeeId) {
+                this.showScopePickerAtPosition(gKey, group.items, this.draggedEmployeeId, wKey, shift, dropX, dropY);
+              }
+            });
+
+            // Right-click on chip: open note modal
+            shiftEl.querySelectorAll('.sched-history-chip').forEach(chip => {
+              chip.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                const aid = (chip as HTMLElement).dataset.assignmentId;
+                if (aid) this.showAssignmentNoteModal(aid);
+              });
+            });
+          });
+        }
+
+        row.appendChild(weekCell);
+      });
+
+      projectsContainer.appendChild(row);
+    });
+  }
   
   // ==================== Year View ====================
   
@@ -8724,9 +10267,9 @@ class KappaApp {
     // Header with months
     headerContainer.className = 'grid-header year-view';
     headerContainer.innerHTML = `
-      <div class="header-cell project-col">Projekt</div>
+      <div class="header-cell project-col">${i18n.t('schedule.project')}</div>
       <div class="header-cell months-row">
-        ${['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'].map((m, i) => 
+        ${[i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'), i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'), i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'), i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')].map((m, i) => 
           `<span class="month-label" style="left: ${(i / 12) * 100}%">${m}</span>`
         ).join('')}
       </div>
@@ -8767,7 +10310,7 @@ class KappaApp {
         const isCurrent = week === currentWeek;
         
         return `<div class="year-cell ${hasSoll ? 'has-soll' : ''} ${hasAssignment ? 'assigned' : ''} ${isCurrent ? 'current' : ''}" 
-                     data-week="${week}" title="KW${week}${hasSoll ? ' • Ma SOLL' : ''}${hasAssignment ? ' • Obsadzony' : ''}"></div>`;
+                     data-week="${week}" title="KW${week}${hasSoll ? i18n.t('schedule.hasSollTooltip') : ''}${hasAssignment ? i18n.t('schedule.coveredTooltip') : ''}"></div>`;
       }).join('');
       
       return `
@@ -8807,8 +10350,8 @@ class KappaApp {
     
     // Compact header
     headerContainer.className = 'grid-header compact-view';
-    let headerHtml = '<div class="header-cell project-col compact">Projekt</div>';
-    headerHtml += '<div class="header-cell compact">Części</div>';
+    let headerHtml = `<div class="header-cell project-col compact">${i18n.t('schedule.project')}</div>`;
+    headerHtml += `<div class="header-cell compact">${i18n.t('schedule.partsLabel')}</div>`;
     headerHtml += '<div class="header-cell compact">SOLL</div>';
     for (let s = 1; s <= this.scheduleShiftSystem; s++) {
       headerHtml += `<div class="header-cell shift-col compact shift-${s}">Z${s}</div>`;
@@ -8857,7 +10400,7 @@ class KappaApp {
     });
     
     if (projectGroups.size === 0) {
-      container.innerHTML = `<div class="grid-empty"><h3>Brak projektów</h3></div>`;
+      container.innerHTML = `<div class="grid-empty"><h3>${i18n.t('schedule.noProjects')}</h3></div>`;
       return;
     }
     
@@ -8869,7 +10412,7 @@ class KappaApp {
       
       const totalAssigned = group.assignments.length;
       const status = totalAssigned === 0 ? 'unassigned' : totalAssigned >= group.partsCount ? 'full' : 'partial';
-      const statusLabel = status === 'unassigned' ? '⚠️ Brak' : status === 'full' ? '✓ OK' : '⚡ Częściowo';
+      const statusLabel = status === 'unassigned' ? i18n.t('schedule.statusMissing') : status === 'full' ? i18n.t('schedule.statusOk') : i18n.t('schedule.statusPartial');
       
       return `
         <div class="compact-row ${status}">
@@ -8900,10 +10443,10 @@ class KappaApp {
   
   private getScopeLabel(scope?: string): string {
     switch(scope) {
-      case 'audit': return 'Audyty';
-      case 'adhesion': return 'Przyczepność';
-      case 'specific': return 'Konkretna część';
-      default: return 'Cały projekt';
+      case 'audit': return i18n.t('schedule.scopeAudit');
+      case 'adhesion': return i18n.t('schedule.scopeAdhesion');
+      case 'specific': return i18n.t('schedule.scopeSpecific');
+      default: return i18n.t('schedule.scopeFullProject');
     }
   }
   
@@ -8929,68 +10472,128 @@ class KappaApp {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
       </svg>
-      Auto-planner
+      ${i18n.t('schedule.autoPlanner')}
     `;
+
+    // Count peel-off projects
+    const peelOffCount = weekProjects.filter(p => {
+      const test = this.state.tests.find(t => t.id === p.test_id);
+      if (!test) return false;
+      const name = test.name.toLowerCase();
+      return name.includes('peel') || name.includes('adhesion') || name.includes('przyczep');
+    }).length;
     
+    // Count available employees (not absent)
+    const availableEmpCount = this.state.employees.filter(e => {
+      if (e.status && e.status !== 'available') return false;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !absence;
+    }).length;
+
     modalBody.innerHTML = `
       <div class="auto-assign-modal">
         <div class="info-box">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
           </svg>
-          <span>Auto-planner rozdzieli pracowników równomiernie na projekty bez obsady.</span>
+          <span>${i18n.t('schedule.autoPlannerDesc')}</span>
         </div>
         
         <div class="auto-stats">
           <div class="stat">
             <span class="stat-value">${weekProjects.length}</span>
-            <span class="stat-label">Projektów</span>
+            <span class="stat-label">${i18n.t('schedule.autoPlannerProjects')}</span>
           </div>
           <div class="stat">
-            <span class="stat-value">${this.state.employees.length}</span>
-            <span class="stat-label">Pracowników</span>
+            <span class="stat-value">${availableEmpCount}</span>
+            <span class="stat-label">${i18n.t('schedule.autoPlannerEmployees')}</span>
           </div>
           <div class="stat">
             <span class="stat-value">${weekProjects.length - assignedProjectIds.size}</span>
-            <span class="stat-label">Bez obsady</span>
+            <span class="stat-label">${i18n.t('schedule.autoPlannerUnassigned')}</span>
+          </div>
+          <div class="stat">
+            <span class="stat-value">${peelOffCount}</span>
+            <span class="stat-label">${i18n.t('schedule.autoPlannerPeelOff')}</span>
           </div>
         </div>
         
         <div class="form-group">
-          <label class="form-label">Strategia:</label>
+          <label class="form-label">${i18n.t('schedule.autoPlannerStrategy')}</label>
           <select id="autoStrategy" class="form-control">
-            <option value="rotate">Rotacja zmian (1→2→3→1...)</option>
-            <option value="balance">Równomierne obciążenie</option>
-            <option value="copy">Kopiuj z poprzedniego tygodnia</option>
+            <option value="fair" selected>${i18n.t('schedule.strategyFair')}</option>
+            <option value="fairPeelOff">${i18n.t('schedule.strategyFairPeelOff')}</option>
+            <option value="rotate">${i18n.t('schedule.strategyRotation')}</option>
+            <option value="balance">${i18n.t('schedule.strategyBalance')}</option>
+            <option value="copy">${i18n.t('schedule.strategyCopy')}</option>
           </select>
+          <div id="autoStrategyDesc" class="auto-strategy-desc" style="margin-top: 6px; font-size: 0.82rem; color: var(--text-muted); line-height: 1.4;">
+            ${i18n.t('schedule.strategyFairDesc')}
+          </div>
         </div>
         
-        <div class="form-group">
-          <label class="form-label">Domyślny zakres:</label>
+        <div class="form-group" id="autoScopeGroup">
+          <label class="form-label">${i18n.t('schedule.autoPlannerDefaultScope')}</label>
           <select id="autoScope" class="form-control">
-            <option value="project">Cały projekt</option>
-            <option value="audit">Tylko audyty</option>
-            <option value="adhesion">Tylko przyczepność</option>
+            <option value="project">${i18n.t('schedule.wholeProjectLabel')}</option>
+            ${(() => {
+              const weekTestIds = new Set(weekProjects.map(p => p.test_id).filter(Boolean));
+              return this.state.tests
+                .filter(t => weekTestIds.has(t.id))
+                .map(t => `<option value="test-${t.id}">🧪 ${t.name}</option>`)
+                .join('');
+            })()}
           </select>
         </div>
       </div>
     `;
     
+    // Dynamic description update based on strategy selection
+    const strategySelect = document.getElementById('autoStrategy') as HTMLSelectElement;
+    const strategyDesc = document.getElementById('autoStrategyDesc');
+    const scopeGroup = document.getElementById('autoScopeGroup');
+    
+    const strategyDescriptions: Record<string, string> = {
+      'fair': i18n.t('schedule.strategyFairDesc'),
+      'fairPeelOff': i18n.t('schedule.strategyFairPeelOffDesc'),
+      'rotate': i18n.t('schedule.strategyRotationDesc'),
+      'balance': i18n.t('schedule.strategyBalanceDesc'),
+      'copy': i18n.t('schedule.strategyCopyDesc')
+    };
+    
+    strategySelect?.addEventListener('change', () => {
+      if (strategyDesc) {
+        strategyDesc.textContent = strategyDescriptions[strategySelect.value] || '';
+      }
+      // Hide scope selector for peel-off strategy (scope is always 'adhesion')
+      if (scopeGroup) {
+        scopeGroup.style.display = strategySelect.value === 'fairPeelOff' ? 'none' : '';
+      }
+    });
+    
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     confirmBtn.style.display = '';
-    confirmBtn.textContent = 'Uruchom auto-planner';
+    confirmBtn.textContent = i18n.t('schedule.autoPlannerRun');
     confirmBtn.onclick = async () => {
       const strategy = (document.getElementById('autoStrategy') as HTMLSelectElement).value;
-      const scope = (document.getElementById('autoScope') as HTMLSelectElement).value as 'project' | 'audit' | 'adhesion';
+      const scopeVal = (document.getElementById('autoScope') as HTMLSelectElement).value;
+      const scopeTestId = scopeVal.startsWith('test-') ? scopeVal.replace('test-', '') : undefined;
+      const scope: 'project' | 'audit' | 'adhesion' | 'specific' = scopeTestId ? 'specific' : (scopeVal as any);
       
-      await this.runAutoAssign(strategy, scope);
+      if (strategy === 'fair') {
+        await this.runFairAutoAssign(scope, scopeTestId);
+      } else if (strategy === 'fairPeelOff') {
+        await this.runFairPeelOffAssign();
+      } else {
+        await this.runAutoAssign(strategy, scope, scopeTestId);
+      }
       this.hideModal();
     };
     
     modal.classList.add('active');
   }
   
-  private async runAutoAssign(strategy: string, defaultScope: 'project' | 'audit' | 'adhesion'): Promise<void> {
+  private async runAutoAssign(strategy: string, defaultScope: 'project' | 'audit' | 'adhesion' | 'specific', scopeTestId?: string): Promise<void> {
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     
     if (strategy === 'copy') {
@@ -9016,13 +10619,31 @@ class KappaApp {
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const assignedGroupIds = new Set<string>();
     weekAssignments.forEach((a: ScheduleAssignment) => {
-      assignedGroupIds.add(a.projectId);
+      if (scopeTestId) {
+        // Only block if this exact test is already assigned to the group
+        if (a.scope === 'specific' && a.testId === scopeTestId) {
+          assignedGroupIds.add(a.projectId);
+        }
+      } else {
+        assignedGroupIds.add(a.projectId);
+      }
     });
     
-    const unassignedGroups = Array.from(projectGroups.keys()).filter(g => !assignedGroupIds.has(g));
+    let unassignedGroups = Array.from(projectGroups.keys()).filter(g => !assignedGroupIds.has(g));
+    
+    // When assigning specific test, only include groups that actually have that test
+    if (scopeTestId) {
+      unassignedGroups = unassignedGroups.filter(g => {
+        const itemIds = projectGroups.get(g)!;
+        return itemIds.some(id => {
+          const proj = weekProjects.find(p => p.id === id);
+          return proj && proj.test_id === scopeTestId;
+        });
+      });
+    }
     
     if (unassignedGroups.length === 0 || this.state.employees.length === 0) {
-      this.showToast('Wszystkie projekty już obsadzone lub brak pracowników', 'warning');
+      this.showToast(i18n.t('schedule.allCoveredOrNoEmp'), 'warning');
       return;
     }
     
@@ -9034,20 +10655,22 @@ class KappaApp {
       const employee = this.state.employees[employeeIndex % this.state.employees.length];
       
       if (strategy === 'rotate') {
-        // Get previous week's shift for this employee
+        // Get previous week's shift for this employee, respecting shiftSystem
+        const empMax = employee.shiftSystem || 2;
         const prevWeekKey = this.getPreviousWeekKey(weekKey);
         const prevAssignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => 
           a.employeeId === employee.id && a.week === prevWeekKey
         );
         
         if (prevAssignment) {
-          shift = (prevAssignment.shift % this.scheduleShiftSystem) + 1;
+          const nextShift = (prevAssignment.shift % Math.min(this.scheduleShiftSystem, empMax)) + 1;
+          shift = nextShift;
         }
       }
       
       await this.addAssignmentWithScope(
         groupKey,
-        undefined,
+        scopeTestId,
         undefined,
         employee.id,
         weekKey,
@@ -9061,9 +10684,1483 @@ class KappaApp {
       }
     }
     
-    this.showToast(`Przypisano ${unassignedGroups.length} projektów`, 'success');
+    this.showToast(i18n.t('schedule.assignedNProjects').replace('{0}', String(unassignedGroups.length)), 'success');
     this.renderScheduleAlerts();
     this.renderScheduleContent();
+  }
+  
+  // ==================== Fair Auto-Assignment Algorithm ====================
+  
+  private async runFairAutoAssign(defaultScope: 'project' | 'audit' | 'adhesion' | 'specific', scopeTestId?: string): Promise<void> {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // 1. Get projects with SOLL > 0 this week
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+    
+    // 2. Build project groups (customer-type)
+    const projectGroups = new Map<string, { customerId: string; typeId: string; items: Project[] }>();
+    weekProjects.forEach(p => {
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      if (!projectGroups.has(groupKey)) {
+        projectGroups.set(groupKey, { customerId: p.customer_id, typeId: p.type_id, items: [] });
+      }
+      projectGroups.get(groupKey)!.items.push(p);
+    });
+    
+    // 3. Find already assigned groups this week
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedGroupIds = new Set<string>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (scopeTestId) {
+        // Only block if this exact test is already assigned to the group
+        if (a.scope === 'specific' && a.testId === scopeTestId) {
+          assignedGroupIds.add(a.projectId);
+        }
+      } else {
+        assignedGroupIds.add(a.projectId);
+      }
+    });
+    
+    let unassignedGroups = Array.from(projectGroups.keys()).filter(g => !assignedGroupIds.has(g));
+    
+    // When assigning specific test, only include groups that actually have that test
+    if (scopeTestId) {
+      unassignedGroups = unassignedGroups.filter(g => {
+        const group = projectGroups.get(g)!;
+        return group.items.some(p => p.test_id === scopeTestId);
+      });
+    }
+    
+    // 4. Get available employees (not absent, available status)
+    const availableEmployees = this.state.employees.filter(e => {
+      if (e.status && e.status !== 'available') return false;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !absence;
+    });
+    
+    if (unassignedGroups.length === 0 || availableEmployees.length === 0) {
+      this.showToast(i18n.t('schedule.allCoveredOrNoEmp'), 'warning');
+      return;
+    }
+    
+    // 5. Build historical assignment counts per employee per project group
+    const allAssignments = this.state.scheduleAssignments;
+    const empProjectHistory = new Map<string, Map<string, number>>(); // empId -> (groupKey -> count)
+    const empTotalAssignments = new Map<string, number>(); // empId -> total count this week
+    const empConsecutive = new Map<string, Map<string, number>>(); // empId -> (groupKey -> consecutive weeks)
+    
+    availableEmployees.forEach(e => {
+      empProjectHistory.set(e.id, new Map());
+      empTotalAssignments.set(e.id, 0);
+      empConsecutive.set(e.id, new Map());
+    });
+    
+    // Count historical assignments per employee per project group
+    allAssignments.forEach((a: ScheduleAssignment) => {
+      const histMap = empProjectHistory.get(a.employeeId);
+      if (histMap) {
+        histMap.set(a.projectId, (histMap.get(a.projectId) || 0) + 1);
+      }
+    });
+    
+    // Count current week assignments
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (empTotalAssignments.has(a.employeeId)) {
+        empTotalAssignments.set(a.employeeId, (empTotalAssignments.get(a.employeeId) || 0) + 1);
+      }
+    });
+    
+    // Calculate consecutive weeks per employee per project (check last N weeks)
+    const maxConsecutiveCheck = 8;
+    availableEmployees.forEach(emp => {
+      const consecutiveMap = empConsecutive.get(emp.id)!;
+      
+      unassignedGroups.forEach(groupKey => {
+        let consecutive = 0;
+        let checkWeekKey = weekKey;
+        
+        for (let w = 0; w < maxConsecutiveCheck; w++) {
+          checkWeekKey = this.getPreviousWeekKey(checkWeekKey);
+          const wasAssigned = allAssignments.some((a: ScheduleAssignment) => 
+            a.employeeId === emp.id && 
+            a.projectId === groupKey && 
+            a.week === checkWeekKey
+          );
+          if (wasAssigned) {
+            consecutive++;
+          } else {
+            break;
+          }
+        }
+        
+        consecutiveMap.set(groupKey, consecutive);
+      });
+    });
+    
+    // 6. Fair assignment algorithm
+    // For each unassigned project group, find the best employee:
+    // - Prefer employees with FEWER total assignments this week (balance workload)
+    // - Among those, prefer employee with FEWER historical assignments to this specific project
+    // - Penalize employees with many consecutive weeks on the same project (encourage rotation)
+    
+    let assignedCount = 0;
+    
+    // Determine shift assignment strategy: balance across shifts
+    const shiftCounts: Record<number, number> = {};
+    for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+      shiftCounts[s] = weekAssignments.filter((a: ScheduleAssignment) => a.shift === s).length;
+    }
+    
+    for (const groupKey of unassignedGroups) {
+      // Score each available employee (lower = better)
+      const scored = availableEmployees.map(emp => {
+        const totalThisWeek = empTotalAssignments.get(emp.id) || 0;
+        const historyOnProject = empProjectHistory.get(emp.id)?.get(groupKey) || 0;
+        const consecutive = empConsecutive.get(emp.id)?.get(groupKey) || 0;
+        
+        // Score formula:
+        // - Primary: total assignments this week (balance workload) x 100
+        // - Secondary: historical assignments to this project x 10
+        // - Tertiary: consecutive weeks penalty x 5
+        // Lower score = better candidate
+        const score = (totalThisWeek * 100) + (historyOnProject * 10) + (consecutive * 5);
+        
+        return { employee: emp, score, totalThisWeek };
+      });
+      
+      // Sort by score (ascending = fairest first)
+      scored.sort((a, b) => {
+        if (a.score !== b.score) return a.score - b.score;
+        // Tie-break: random
+        return Math.random() - 0.5;
+      });
+      
+      const bestEmployee = scored[0].employee;
+      
+      // Determine best shift (least loaded), respecting employee's shiftSystem
+      const empMaxShift = bestEmployee.shiftSystem || 2;
+      let bestShift = 1;
+      let minShiftCount = Infinity;
+      for (let s = 1; s <= Math.min(this.scheduleShiftSystem, empMaxShift); s++) {
+        if ((shiftCounts[s] || 0) < minShiftCount) {
+          minShiftCount = shiftCounts[s] || 0;
+          bestShift = s;
+        }
+      }
+      
+      // Check employee's suggested shift preference (must be within their shiftSystem)
+      if (bestEmployee.suggestedShift && bestEmployee.suggestedShift <= Math.min(this.scheduleShiftSystem, empMaxShift)) {
+        bestShift = bestEmployee.suggestedShift;
+      }
+      
+      await this.addScopedAssignment(
+        groupKey,
+        bestEmployee.id,
+        weekKey,
+        bestShift as 1 | 2 | 3,
+        defaultScope,
+        scopeTestId
+      );
+      
+      // Update counters
+      empTotalAssignments.set(bestEmployee.id, (empTotalAssignments.get(bestEmployee.id) || 0) + 1);
+      const histMap = empProjectHistory.get(bestEmployee.id)!;
+      histMap.set(groupKey, (histMap.get(groupKey) || 0) + 1);
+      shiftCounts[bestShift] = (shiftCounts[bestShift] || 0) + 1;
+      
+      assignedCount++;
+    }
+    
+    // ==================== SECOND PASS: Ensure everyone gets an assignment ====================
+    // Find available employees who still have no assignment this week
+    const allWeekAssignmentsAfter = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedEmpIdsAfter = new Set(allWeekAssignmentsAfter.map((a: ScheduleAssignment) => a.employeeId));
+    
+    const stillUnassigned = availableEmployees.filter(emp => !assignedEmpIdsAfter.has(emp.id));
+    
+    if (stillUnassigned.length > 0 && projectGroups.size > 0) {
+      // Calculate workload (in minutes) per project group
+      const groupWorkloadMinutes = new Map<string, number>();
+      
+      allWeekAssignmentsAfter.forEach((a: ScheduleAssignment) => {
+        const gKey = a.projectId;
+        if (!projectGroups.has(gKey)) return; // skip extra tasks etc.
+        const empCount = allWeekAssignmentsAfter.filter(x => x.projectId === gKey).length;
+        // We'll compute total project minutes and divide by employees on it
+      });
+      
+      // For each project group: total minutes / number of assigned employees
+      projectGroups.forEach((group, gKey) => {
+        let totalMinutes = 0;
+        group.items.forEach(p => {
+          const wd = p.weeks?.[weekKey];
+          if (wd && wd.soll > 0) {
+            totalMinutes += wd.soll * (p.timePerUnit || 0);
+          }
+        });
+        const empCount = allWeekAssignmentsAfter.filter(x => x.projectId === gKey).length;
+        // Workload per person on this project (higher = more overloaded = needs help)
+        groupWorkloadMinutes.set(gKey, empCount > 0 ? totalMinutes / empCount : totalMinutes);
+      });
+      
+      // Sort groups by per-person workload descending (most loaded first = needs help most)
+      const sortedGroups = Array.from(groupWorkloadMinutes.entries())
+        .sort((a, b) => b[1] - a[1]);
+      
+      let groupIndex = 0;
+      for (const unassignedEmp of stillUnassigned) {
+        if (sortedGroups.length === 0) break;
+        
+        // Pick the most loaded group
+        const [groupKey] = sortedGroups[groupIndex % sortedGroups.length];
+        
+        // Determine shift: use existing assignments' shift for this group, or balance
+        // Respect employee's shiftSystem
+        const empMax = unassignedEmp.shiftSystem || 2;
+        const groupAssigns = allWeekAssignmentsAfter.filter(a => a.projectId === groupKey);
+        let bestShift = 1;
+        if (groupAssigns.length > 0) {
+          // Use the most common shift for this group, but only if within employee's shiftSystem
+          const shiftMap: Record<number, number> = {};
+          groupAssigns.forEach(a => shiftMap[a.shift] = (shiftMap[a.shift] || 0) + 1);
+          const sortedShifts = Object.entries(shiftMap).sort((a, b) => b[1] - a[1]);
+          // Pick the most common shift that is within employee's shiftSystem
+          for (const [shiftStr] of sortedShifts) {
+            const s = parseInt(shiftStr);
+            if (s <= empMax) {
+              bestShift = s;
+              break;
+            }
+          }
+        } else {
+          // Find least loaded shift within employee's shiftSystem
+          let minCount = Infinity;
+          for (let s = 1; s <= Math.min(this.scheduleShiftSystem, empMax); s++) {
+            if ((shiftCounts[s] || 0) < minCount) {
+              minCount = shiftCounts[s] || 0;
+              bestShift = s;
+            }
+          }
+        }
+        
+        await this.addScopedAssignment(
+          groupKey,
+          unassignedEmp.id,
+          weekKey,
+          bestShift as 1 | 2 | 3,
+          defaultScope,
+          scopeTestId
+        );
+        
+        empTotalAssignments.set(unassignedEmp.id, (empTotalAssignments.get(unassignedEmp.id) || 0) + 1);
+        shiftCounts[bestShift] = (shiftCounts[bestShift] || 0) + 1;
+        
+        // Recalculate per-person workload for the group we just assigned to
+        const newEmpCount = allWeekAssignmentsAfter.filter(x => x.projectId === groupKey).length + 1;
+        const group = projectGroups.get(groupKey)!;
+        let totalMins = 0;
+        group.items.forEach(p => {
+          const wd = p.weeks?.[weekKey];
+          if (wd && wd.soll > 0) totalMins += wd.soll * (p.timePerUnit || 0);
+        });
+        // Update and re-sort
+        sortedGroups[groupIndex % sortedGroups.length] = [groupKey, totalMins / newEmpCount];
+        sortedGroups.sort((a, b) => b[1] - a[1]);
+        
+        assignedCount++;
+        groupIndex++;
+      }
+    }
+    
+    this.showToast(
+      i18n.t('schedule.fairAssignComplete').replace('{0}', String(assignedCount)),
+      'success'
+    );
+    this.renderScheduleAlerts();
+    this.renderScheduleContent();
+    this.renderScheduleEmployeePanel();
+  }
+  
+  // ==================== Fair Peel-Off Test Assignment ====================
+  
+  private async runFairPeelOffAssign(): Promise<void> {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // 1. Find all peel-off test projects with SOLL > 0 this week
+    const peelOffProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      if (!weekData || weekData.soll <= 0 || p.hidden) return false;
+      
+      const test = this.state.tests.find(t => t.id === p.test_id);
+      if (!test) return false;
+      
+      const testName = test.name.toLowerCase();
+      return testName.includes('peel') || testName.includes('adhesion') || testName.includes('przyczep');
+    });
+    
+    if (peelOffProjects.length === 0) {
+      this.showToast(i18n.t('schedule.noPeelOffProjects'), 'warning');
+      return;
+    }
+    
+    // 2. Group peel-off projects by customer-type (assign as projects, not parts)
+    const peelOffGroups = new Map<string, { 
+      customerId: string; 
+      typeName: string; 
+      customerName: string;
+      items: Project[]; 
+      totalWorkload: number;
+    }>();
+    
+    peelOffProjects.forEach(p => {
+      const groupKey = `${p.customer_id}-${p.type_id}`;
+      const weekData = p.weeks[weekKey];
+      const workload = (p.timePerUnit || 1) * (weekData?.soll || 0);
+      
+      if (!peelOffGroups.has(groupKey)) {
+        const customer = this.state.customers.find(c => c.id === p.customer_id);
+        const type = this.state.types.find(t => t.id === p.type_id);
+        peelOffGroups.set(groupKey, {
+          customerId: p.customer_id,
+          typeName: type?.name || '?',
+          customerName: customer?.name || '?',
+          items: [],
+          totalWorkload: 0
+        });
+      }
+      
+      const group = peelOffGroups.get(groupKey)!;
+      group.items.push(p);
+      group.totalWorkload += workload;
+    });
+    
+    // 3. Check already assigned peel-off groups
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const alreadyAssignedPeelOff = new Set<string>();
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (a.scope === 'adhesion' || peelOffGroups.has(a.projectId)) {
+        alreadyAssignedPeelOff.add(a.projectId);
+      }
+    });
+    
+    const unassignedPeelOffKeys = Array.from(peelOffGroups.keys()).filter(k => !alreadyAssignedPeelOff.has(k));
+    
+    if (unassignedPeelOffKeys.length === 0) {
+      this.showToast(i18n.t('schedule.allPeelOffAssigned'), 'warning');
+      return;
+    }
+    
+    // 4. Get available employees
+    const availableEmployees = this.state.employees.filter(e => {
+      if (e.status && e.status !== 'available') return false;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !absence;
+    });
+    
+    if (availableEmployees.length === 0) {
+      this.showToast(i18n.t('schedule.allCoveredOrNoEmp'), 'warning');
+      return;
+    }
+    
+    // 5. Calculate current workload per employee (from all peel-off assignments, historical)
+    const empPeelOffWorkload = new Map<string, number>(); // empId -> total workload (minutes)
+    const empPeelOffHistory = new Map<string, Map<string, number>>(); // empId -> (groupKey -> count)
+    
+    availableEmployees.forEach(e => {
+      empPeelOffWorkload.set(e.id, 0);
+      empPeelOffHistory.set(e.id, new Map());
+    });
+    
+    // Historical peel-off assignments
+    this.state.scheduleAssignments.forEach((a: ScheduleAssignment) => {
+      if (!empPeelOffHistory.has(a.employeeId)) return;
+      
+      // Check if this assignment is for a peel-off project
+      const isPeelOff = a.scope === 'adhesion' || peelOffGroups.has(a.projectId);
+      if (!isPeelOff) return;
+      
+      const histMap = empPeelOffHistory.get(a.employeeId)!;
+      histMap.set(a.projectId, (histMap.get(a.projectId) || 0) + 1);
+    });
+    
+    // Current week peel-off workload
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (!empPeelOffWorkload.has(a.employeeId)) return;
+      
+      const group = peelOffGroups.get(a.projectId);
+      if (group || a.scope === 'adhesion') {
+        const workload = group ? group.totalWorkload : 0;
+        empPeelOffWorkload.set(a.employeeId, (empPeelOffWorkload.get(a.employeeId) || 0) + workload);
+      }
+    });
+    
+    // 6. Sort unassigned peel-off groups by workload (heaviest first for better balancing)
+    const sortedPeelOff = unassignedPeelOffKeys
+      .map(key => ({ key, group: peelOffGroups.get(key)! }))
+      .sort((a, b) => b.group.totalWorkload - a.group.totalWorkload);
+    
+    // 7. Assign each peel-off project to the best employee
+    // PRIORITY: First assign employees who have NO assignments at all this week,
+    // then fall back to those with least workload.
+    let assignedCount = 0;
+    
+    // Determine shift: balance across shifts
+    const shiftCounts: Record<number, number> = {};
+    for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+      shiftCounts[s] = weekAssignments.filter((a: ScheduleAssignment) => a.shift === s).length;
+    }
+    
+    // Track which employees are fully unassigned (no assignments at all this week)
+    const empTotalThisWeek = new Map<string, number>();
+    availableEmployees.forEach(e => empTotalThisWeek.set(e.id, 0));
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (empTotalThisWeek.has(a.employeeId)) {
+        empTotalThisWeek.set(a.employeeId, (empTotalThisWeek.get(a.employeeId) || 0) + 1);
+      }
+    });
+    
+    for (const { key: groupKey, group } of sortedPeelOff) {
+      // Score: lower = better
+      // PRIORITY 1: Employees with ZERO assignments this week (completely free)
+      // PRIORITY 2: Employees with least peel-off workload
+      // PRIORITY 3: Employees with least total assignments
+      const scored = availableEmployees.map(emp => {
+        const currentWorkload = empPeelOffWorkload.get(emp.id) || 0;
+        const historyOnProject = empPeelOffHistory.get(emp.id)?.get(groupKey) || 0;
+        const totalThisWeek = empTotalThisWeek.get(emp.id) || 0;
+        const isUnassigned = totalThisWeek === 0;
+        
+        // Unassigned employees get huge priority bonus (lower score)
+        const unassignedBonus = isUnassigned ? 0 : 100000;
+        const score = unassignedBonus + currentWorkload + (historyOnProject * 10) + (totalThisWeek * 50);
+        
+        return { employee: emp, score, currentWorkload };
+      });
+      
+      scored.sort((a, b) => {
+        if (a.score !== b.score) return a.score - b.score;
+        return Math.random() - 0.5;
+      });
+      
+      const bestEmployee = scored[0].employee;
+      
+      // Pick least loaded shift, respecting employee's shiftSystem
+      const empMaxShift = bestEmployee.shiftSystem || 2;
+      let bestShift = 1;
+      let minShiftCount = Infinity;
+      for (let s = 1; s <= Math.min(this.scheduleShiftSystem, empMaxShift); s++) {
+        if ((shiftCounts[s] || 0) < minShiftCount) {
+          minShiftCount = shiftCounts[s] || 0;
+          bestShift = s;
+        }
+      }
+      
+      if (bestEmployee.suggestedShift && bestEmployee.suggestedShift <= Math.min(this.scheduleShiftSystem, empMaxShift)) {
+        bestShift = bestEmployee.suggestedShift;
+      }
+      
+      // Assign as 'adhesion' scope (peel-off tests)
+      await this.addScopedAssignment(
+        groupKey,
+        bestEmployee.id,
+        weekKey,
+        bestShift as 1 | 2 | 3,
+        'adhesion'
+      );
+      
+      // Update workload tracking
+      empPeelOffWorkload.set(bestEmployee.id, (empPeelOffWorkload.get(bestEmployee.id) || 0) + group.totalWorkload);
+      empTotalThisWeek.set(bestEmployee.id, (empTotalThisWeek.get(bestEmployee.id) || 0) + 1);
+      shiftCounts[bestShift] = (shiftCounts[bestShift] || 0) + 1;
+      
+      assignedCount++;
+    }
+    
+    this.showToast(
+      i18n.t('schedule.fairPeelOffComplete').replace('{0}', String(assignedCount)),
+      'success'
+    );
+    this.renderScheduleAlerts();
+    this.renderScheduleContent();
+    this.renderScheduleEmployeePanel();
+  }
+  
+  // ==================== Shift Planner Modal ====================
+  
+  private projectShiftConfig: Map<string, Set<number>> = new Map(); // groupKey -> Set of shifts (1,2,3)
+  private employeeWeekShift: Map<string, number> = new Map(); // empId -> shift (1 or 2 or 3) for this week
+  private currentShiftSystem: number = 2; // 1, 2 or 3 - global shift system for this week
+  private shiftPlannerGroupMode: 'project' | 'customer' = 'project'; // grouping mode
+  
+  private async loadShiftPlannerConfig(): Promise<void> {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    try {
+      // Load global shift system for this week
+      const shiftSystem = await db.getPreference(`shiftSystem_${weekKey}`);
+      this.currentShiftSystem = (typeof shiftSystem === 'number' && [1, 2, 3].includes(shiftSystem)) ? shiftSystem : 2;
+      
+      // Load grouping mode
+      const groupMode = await db.getPreference(`shiftGroupMode_${weekKey}`);
+      this.shiftPlannerGroupMode = (groupMode === 'customer') ? 'customer' : 'project';
+      
+      // Load project shift config for this week
+      const projectConfig = await db.getPreference(`shiftConfig_${weekKey}`);
+      this.projectShiftConfig.clear();
+      if (projectConfig && typeof projectConfig === 'object') {
+        for (const [key, shifts] of Object.entries(projectConfig)) {
+          this.projectShiftConfig.set(key, new Set(shifts as number[]));
+        }
+      }
+      
+      // Load employee shift assignments for this week
+      const empShifts = await db.getPreference(`empShifts_${weekKey}`);
+      this.employeeWeekShift.clear();
+      if (empShifts && typeof empShifts === 'object') {
+        for (const [empId, shift] of Object.entries(empShifts)) {
+          this.employeeWeekShift.set(empId, shift as number);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load shift planner config');
+    }
+  }
+  
+  private async saveShiftPlannerConfig(): Promise<void> {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // Save global shift system
+    await db.setPreference(`shiftSystem_${weekKey}`, this.currentShiftSystem);
+    
+    // Save grouping mode
+    await db.setPreference(`shiftGroupMode_${weekKey}`, this.shiftPlannerGroupMode);
+    
+    // Save project shift config
+    const projectConfig: Record<string, number[]> = {};
+    this.projectShiftConfig.forEach((shifts, key) => {
+      projectConfig[key] = Array.from(shifts);
+    });
+    await db.setPreference(`shiftConfig_${weekKey}`, projectConfig);
+    
+    // Save employee shifts
+    const empShifts: Record<string, number> = {};
+    this.employeeWeekShift.forEach((shift, empId) => {
+      empShifts[empId] = shift;
+    });
+    await db.setPreference(`empShifts_${weekKey}`, empShifts);
+  }
+  
+  private getEmployeeSuggestedShift(empId: string): number {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const prevWeekKey = this.getPreviousWeekKey(weekKey);
+    
+    const emp = this.state.employees.find(e => e.id === empId);
+    const empShiftSystem = emp?.shiftSystem || 2;
+    
+    // Limit to the global shift system setting
+    const maxShift = Math.min(empShiftSystem, this.currentShiftSystem);
+    
+    // Check previous week's actual shift
+    const prevAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => 
+      a.employeeId === empId && a.week === prevWeekKey
+    );
+    
+    if (prevAssignments.length > 0) {
+      const prevShift = this.getMostCommonShift(prevAssignments);
+      // Rotate based on shift system: 1→2, 2→1 for 2-shift; 1→2→3→1 for 3-shift
+      if (maxShift >= 3) {
+        return prevShift === 1 ? 2 : prevShift === 2 ? 3 : 1;
+      } else if (maxShift >= 2) {
+        return prevShift === 1 ? 2 : 1;
+      }
+      return 1;
+    }
+    
+    // Check employee's preference
+    if (emp?.suggestedShift && emp.suggestedShift <= maxShift) {
+      return emp.suggestedShift;
+    }
+    
+    // Default: shift 1
+    return 1;
+  }
+  
+  private getDefaultProjectShifts(groupKey: string, groupItems: Project[]): Set<number> {
+    // Check if there's a pattern in historical assignments
+    const allAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+      a.projectId === groupKey || groupItems.some(item => item.id === a.projectId)
+    );
+    
+    if (allAssignments.length > 0) {
+      const shifts = new Set<number>();
+      allAssignments.forEach((a: ScheduleAssignment) => shifts.add(a.shift));
+      if (shifts.size > 0) return shifts;
+    }
+    
+    // Default: respect global shift system setting
+    const defaults = new Set([1]);
+    if (this.currentShiftSystem >= 2) defaults.add(2);
+    if (this.currentShiftSystem >= 3) defaults.add(3);
+    return defaults;
+  }
+  
+  private async showShiftPlannerModal(): Promise<void> {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    await this.loadShiftPlannerConfig();
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekNum = this.scheduleCurrentWeek.toString().padStart(2, '0');
+    
+    // Get projects with SOLL > 0 this week
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+    
+    // Group projects by customer-type OR customer only
+    const projectGroups = new Map<string, { customerName: string; typeName: string; items: Project[] }>();
+    weekProjects.forEach(p => {
+      const groupKey = this.shiftPlannerGroupMode === 'customer' 
+        ? p.customer_id 
+        : `${p.customer_id}-${p.type_id}`;
+      if (!projectGroups.has(groupKey)) {
+        const customer = this.state.customers.find(c => c.id === p.customer_id);
+        const type = this.state.types.find(t => t.id === p.type_id);
+        projectGroups.set(groupKey, {
+          customerName: customer?.name || '?',
+          typeName: this.shiftPlannerGroupMode === 'customer' ? '' : (type?.name || '?'),
+          items: []
+        });
+      }
+      projectGroups.get(groupKey)!.items.push(p);
+    });
+    
+    // In customer mode, collect all type names for display
+    if (this.shiftPlannerGroupMode === 'customer') {
+      projectGroups.forEach((group) => {
+        const typeNames = [...new Set(group.items.map(p => {
+          const type = this.state.types.find(t => t.id === p.type_id);
+          return type?.name || '?';
+        }))];
+        group.typeName = typeNames.join(', ');
+      });
+    }
+    
+    // Initialize shift config for projects that don't have config yet
+    projectGroups.forEach((group, groupKey) => {
+      if (!this.projectShiftConfig.has(groupKey)) {
+        this.projectShiftConfig.set(groupKey, this.getDefaultProjectShifts(groupKey, group.items));
+      }
+    });
+    
+    // Get available employees
+    const availableEmployees = this.state.employees.filter(e => {
+      if (e.status && e.status !== 'available') return false;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !absence;
+    });
+    
+    // Initialize employee shifts
+    availableEmployees.forEach(emp => {
+      if (!this.employeeWeekShift.has(emp.id)) {
+        this.employeeWeekShift.set(emp.id, this.getEmployeeSuggestedShift(emp.id));
+      }
+    });
+    
+    // Current week assignments
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedGroupIds = new Set<string>();
+    weekAssignments.forEach((a: ScheduleAssignment) => assignedGroupIds.add(a.projectId));
+    
+    const unassignedCount = Array.from(projectGroups.keys()).filter(k => !assignedGroupIds.has(k)).length;
+    
+    // Count per shift
+    const empOnShift1 = availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 1).length;
+    const empOnShift2 = availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 2).length;
+    const empOnShift3 = availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 3).length;
+    const projectsOnShift1 = Array.from(projectGroups.keys()).filter(k => this.projectShiftConfig.get(k)?.has(1)).length;
+    const projectsOnShift2 = Array.from(projectGroups.keys()).filter(k => this.projectShiftConfig.get(k)?.has(2)).length;
+    const projectsOnShift3 = Array.from(projectGroups.keys()).filter(k => this.projectShiftConfig.get(k)?.has(3)).length;
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" style="display:inline;vertical-align:middle;margin-right:8px">
+        <rect x="3" y="4" width="18" height="18" rx="2"/>
+        <line x1="3" y1="10" x2="21" y2="10"/>
+        <line x1="9" y1="4" x2="9" y2="22"/>
+        <line x1="15" y1="4" x2="15" y2="22"/>
+      </svg>
+      ${i18n.t('schedule.shiftPlanner')} – KW${weekNum}
+    `;
+    
+    modalBody.innerHTML = `
+      <div class="shift-planner-modal">
+        <div class="shift-planner-summary">
+          <div class="shift-planner-stat">
+            <span class="stat-value">${projectGroups.size}</span>
+            <span class="stat-label">${i18n.t('schedule.autoPlannerProjects')}</span>
+          </div>
+          <div class="shift-planner-stat">
+            <span class="stat-value">${availableEmployees.length}</span>
+            <span class="stat-label">${i18n.t('schedule.autoPlannerEmployees')}</span>
+          </div>
+          <div class="shift-planner-stat">
+            <span class="stat-value">${unassignedCount}</span>
+            <span class="stat-label">${i18n.t('schedule.autoPlannerUnassigned')}</span>
+          </div>
+        </div>
+        
+        <!-- SHIFT SYSTEM SELECTOR -->
+        <div class="shift-system-selector">
+          <div class="shift-system-selector-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+            <span>${i18n.t('schedule.globalShiftSystem')}</span>
+          </div>
+          <div class="shift-system-buttons" id="shiftSystemButtons">
+            <button class="shift-system-btn ${this.currentShiftSystem === 1 ? 'active' : ''}" data-system="1">
+              <span class="shift-system-num">1</span>
+              <span class="shift-system-label">${i18n.t('schedule.shiftSystem1Short')}</span>
+            </button>
+            <button class="shift-system-btn ${this.currentShiftSystem === 2 ? 'active' : ''}" data-system="2">
+              <span class="shift-system-num">2</span>
+              <span class="shift-system-label">${i18n.t('schedule.shiftSystem2Short')}</span>
+            </button>
+            <button class="shift-system-btn ${this.currentShiftSystem === 3 ? 'active' : ''}" data-system="3">
+              <span class="shift-system-num">3</span>
+              <span class="shift-system-label">${i18n.t('schedule.shiftSystem3Short')}</span>
+            </button>
+          </div>
+        </div>
+        
+        <div class="shift-planner-columns">
+          <!-- LEFT: Project shift configuration -->
+          <div class="shift-planner-col shift-planner-projects">
+            <h4>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+              ${i18n.t('schedule.shiftPlannerProjects')}
+            </h4>
+            <div class="shift-planner-info">${i18n.t('schedule.shiftPlannerProjectsDesc')}</div>
+            
+            <table class="shift-planner-table">
+              <thead>
+                <tr>
+                  <th>${i18n.t('schedule.project')}</th>
+                  <th class="shift-col">
+                    <span class="shift-header-icon">☀️</span>
+                    <span>Z1</span>
+                  </th>
+                  <th class="shift-col">
+                    <span class="shift-header-icon">🌅</span>
+                    <span>Z2</span>
+                  </th>
+                  <th class="shift-col">
+                    <span class="shift-header-icon">🌙</span>
+                    <span>Z3</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="shiftPlannerProjectsBody">
+                ${Array.from(projectGroups.entries()).map(([groupKey, group]) => {
+                  const shifts = this.projectShiftConfig.get(groupKey) || new Set([1, 2]);
+                  const tests = group.items.map(p => this.state.tests.find(t => t.id === p.test_id)?.name || '').filter(Boolean);
+                  const uniqueTests = [...new Set(tests)];
+                  return `
+                    <tr data-group="${groupKey}">
+                      <td class="project-name-cell">
+                        <span class="project-name">${group.customerName}</span>
+                        <span class="project-type">${group.typeName}</span>
+                        ${uniqueTests.length > 0 ? `<span class="project-tests">${uniqueTests.join(', ')}</span>` : ''}
+                      </td>
+                      <td class="shift-col">
+                        <label class="shift-checkbox">
+                          <input type="checkbox" data-group="${groupKey}" data-shift="1" ${shifts.has(1) ? 'checked' : ''}/>
+                          <span class="shift-check-mark"></span>
+                        </label>
+                      </td>
+                      <td class="shift-col">
+                        <label class="shift-checkbox">
+                          <input type="checkbox" data-group="${groupKey}" data-shift="2" ${shifts.has(2) ? 'checked' : ''}/>
+                          <span class="shift-check-mark"></span>
+                        </label>
+                      </td>
+                      <td class="shift-col">
+                        <label class="shift-checkbox">
+                          <input type="checkbox" data-group="${groupKey}" data-shift="3" ${shifts.has(3) ? 'checked' : ''}/>
+                          <span class="shift-check-mark"></span>
+                        </label>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+              <tfoot>
+                <tr class="shift-planner-totals">
+                  <td><strong>${i18n.t('schedule.total')}</strong></td>
+                  <td class="shift-col" id="shiftPlannerTotal1"><strong>${projectsOnShift1}</strong></td>
+                  <td class="shift-col" id="shiftPlannerTotal2"><strong>${projectsOnShift2}</strong></td>
+                  <td class="shift-col" id="shiftPlannerTotal3"><strong>${projectsOnShift3}</strong></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+          
+          <!-- RIGHT: Employee shift rotation -->
+          <div class="shift-planner-col shift-planner-employees">
+            <h4>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+              </svg>
+              ${i18n.t('schedule.shiftPlannerEmployees')}
+            </h4>
+            <div class="shift-planner-info">${i18n.t('schedule.shiftPlannerEmployeesDesc')}</div>
+            
+            <table class="shift-planner-table">
+              <thead>
+                <tr>
+                  <th>${i18n.t('schedule.employeeLabel')}</th>
+                  <th class="shift-col-wide">${i18n.t('schedule.shiftPlannerPrevWeek')}</th>
+                  <th class="shift-col-wide">${i18n.t('schedule.shiftPlannerThisWeek')}</th>
+                </tr>
+              </thead>
+              <tbody id="shiftPlannerEmployeesBody">
+                ${availableEmployees.map(emp => {
+                  const prevWeekKey = this.getPreviousWeekKey(weekKey);
+                  const prevAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => 
+                    a.employeeId === emp.id && a.week === prevWeekKey
+                  );
+                  const prevShift = prevAssignments.length > 0 ? this.getMostCommonShift(prevAssignments) : '-';
+                  const currentShift = this.employeeWeekShift.get(emp.id) || 1;
+                  
+                  return `
+                    <tr data-employee="${emp.id}">
+                      <td class="emp-name-cell">
+                        <span class="emp-avatar-mini" style="background:${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
+                        <span class="emp-name-text">${emp.firstName} ${emp.lastName}</span>
+                        <span class="emp-shift-system-badge" title="${i18n.t('schedule.shiftSystemLabel')}">${emp.shiftSystem || 2}Z</span>
+                      </td>
+                      <td class="shift-col-wide">
+                        <span class="prev-shift-badge shift-${prevShift}">${prevShift === '-' ? '–' : `Z${prevShift}`}</span>
+                      </td>
+                      <td class="shift-col-wide">
+                        <select class="shift-select" data-employee="${emp.id}">
+                          <option value="1" ${currentShift === 1 ? 'selected' : ''}>☀️ Z1</option>
+                          ${(emp.shiftSystem || 2) >= 2 ? `<option value="2" ${currentShift === 2 ? 'selected' : ''}>🌅 Z2</option>` : ''}
+                          ${(emp.shiftSystem || 2) >= 3 ? `<option value="3" ${currentShift === 3 ? 'selected' : ''}>🌙 Z3</option>` : ''}
+                        </select>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+              <tfoot>
+                <tr class="shift-planner-totals">
+                  <td><strong>${i18n.t('schedule.total')}</strong></td>
+                  <td class="shift-col-wide"></td>
+                  <td class="shift-col-wide">
+                    <span class="emp-shift-count"><span id="shiftPlannerEmp1">${availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 1).length}</span> ☀️</span>
+                    <span class="emp-shift-count"><span id="shiftPlannerEmp2">${availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 2).length}</span> 🌅</span>
+                    <span class="emp-shift-count" style="${this.currentShiftSystem >= 3 ? '' : 'display:none'}"><span id="shiftPlannerEmp3">${availableEmployees.filter(e => (this.employeeWeekShift.get(e.id) || 1) === 3).length}</span> 🌙</span>
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        
+        <div class="shift-planner-footer">
+          <div class="shift-planner-options-row">
+            <div class="shift-planner-scope">
+              <label class="form-label">${i18n.t('schedule.autoPlannerDefaultScope')}</label>
+              <select id="shiftPlannerScope" class="form-control">
+                <option value="project">${i18n.t('schedule.wholeProjectLabel')}</option>
+                ${(() => {
+                  const weekTestIds = new Set(weekProjects.map(p => p.test_id).filter(Boolean));
+                  return this.state.tests
+                    .filter(t => weekTestIds.has(t.id))
+                    .map(t => `<option value="test-${t.id}">🧪 ${t.name}</option>`)
+                    .join('');
+                })()}
+              </select>
+            </div>
+            <div class="shift-planner-group-mode">
+              <label class="form-label">${i18n.t('schedule.groupModeLabel')}</label>
+              <div class="group-mode-toggle" id="groupModeToggle">
+                <button class="group-mode-btn ${this.shiftPlannerGroupMode === 'project' ? 'active' : ''}" data-mode="project">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+                  ${i18n.t('schedule.groupByProject')}
+                </button>
+                <button class="group-mode-btn ${this.shiftPlannerGroupMode === 'customer' ? 'active' : ''}" data-mode="customer">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  ${i18n.t('schedule.groupByCustomer')}
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="shift-planner-night-info" id="shiftPlannerNightInfo" style="${this.currentShiftSystem >= 3 ? '' : 'display:none'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+            <span>${i18n.t('schedule.shiftPlannerNightInfo')}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    // Event listeners for shift system buttons
+    modalBody.querySelectorAll('.shift-system-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const button = (e.currentTarget as HTMLElement);
+        const system = parseInt(button.dataset.system!);
+        this.currentShiftSystem = system;
+        
+        // Update active button state
+        modalBody.querySelectorAll('.shift-system-btn').forEach(b => b.classList.remove('active'));
+        button.classList.add('active');
+        
+        // Auto-configure project shifts based on shift system
+        this.projectShiftConfig.forEach((shifts, groupKey) => {
+          shifts.clear();
+          shifts.add(1); // always include shift 1
+          if (system >= 2) shifts.add(2);
+          if (system >= 3) shifts.add(3);
+        });
+        
+        // Update project checkboxes in the UI
+        modalBody.querySelectorAll('.shift-checkbox input[type="checkbox"]').forEach(cb => {
+          const input = cb as HTMLInputElement;
+          const shift = parseInt(input.dataset.shift!);
+          input.checked = shift <= system;
+        });
+        
+        // Recalculate employee shifts based on new system
+        availableEmployees.forEach(emp => {
+          const currentEmpShift = this.employeeWeekShift.get(emp.id) || 1;
+          const empShiftSystem = emp.shiftSystem || 2;
+          const maxShift = Math.min(empShiftSystem, system);
+          
+          // If employee's current shift exceeds the new system, reassign
+          if (currentEmpShift > maxShift) {
+            const newShift = this.getEmployeeSuggestedShift(emp.id);
+            this.employeeWeekShift.set(emp.id, Math.min(newShift, maxShift));
+          }
+        });
+        
+        // Update employee shift dropdowns
+        modalBody.querySelectorAll('.shift-select').forEach(select => {
+          const sel = select as HTMLSelectElement;
+          const empId = sel.dataset.employee!;
+          const emp = this.state.employees.find(e => e.id === empId);
+          const empShiftSystem = emp?.shiftSystem || 2;
+          const maxShift = Math.min(empShiftSystem, system);
+          const currentValue = this.employeeWeekShift.get(empId) || 1;
+          
+          // Rebuild options
+          sel.innerHTML = `
+            <option value="1" ${currentValue === 1 ? 'selected' : ''}>☀️ Z1</option>
+            ${maxShift >= 2 ? `<option value="2" ${currentValue === 2 ? 'selected' : ''}>🌅 Z2</option>` : ''}
+            ${maxShift >= 3 ? `<option value="3" ${currentValue === 3 ? 'selected' : ''}>🌙 Z3</option>` : ''}
+          `;
+          
+          // Ensure selected value is valid
+          if (currentValue > maxShift) {
+            sel.value = '1';
+            this.employeeWeekShift.set(empId, 1);
+          }
+        });
+        
+        // Toggle night info visibility
+        const nightInfo = document.getElementById('shiftPlannerNightInfo');
+        if (nightInfo) nightInfo.style.display = system >= 3 ? '' : 'none';
+        
+        this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+      });
+    });
+    
+    // Event listeners for project shift checkboxes
+    modalBody.querySelectorAll('.shift-checkbox input[type="checkbox"]').forEach(cb => {
+      cb.addEventListener('change', (e) => {
+        const input = e.target as HTMLInputElement;
+        const groupKey = input.dataset.group!;
+        const shift = parseInt(input.dataset.shift!);
+        
+        if (!this.projectShiftConfig.has(groupKey)) {
+          this.projectShiftConfig.set(groupKey, new Set());
+        }
+        
+        const shifts = this.projectShiftConfig.get(groupKey)!;
+        if (input.checked) {
+          shifts.add(shift);
+        } else {
+          shifts.delete(shift);
+        }
+        
+        this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+      });
+    });
+    
+    // Event listeners for employee shift selects
+    modalBody.querySelectorAll('.shift-select').forEach(select => {
+      select.addEventListener('change', (e) => {
+        const sel = e.target as HTMLSelectElement;
+        const empId = sel.dataset.employee!;
+        this.employeeWeekShift.set(empId, parseInt(sel.value));
+        
+        this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+      });
+    });
+    
+    // Helper to rebuild project groups based on current group mode
+    const rebuildProjectGroups = () => {
+      const newGroups = new Map<string, { customerName: string; typeName: string; items: Project[] }>();
+      weekProjects.forEach(p => {
+        const gk = this.shiftPlannerGroupMode === 'customer' 
+          ? p.customer_id 
+          : `${p.customer_id}-${p.type_id}`;
+        if (!newGroups.has(gk)) {
+          const customer = this.state.customers.find(c => c.id === p.customer_id);
+          const type = this.state.types.find(t => t.id === p.type_id);
+          newGroups.set(gk, {
+            customerName: customer?.name || '?',
+            typeName: this.shiftPlannerGroupMode === 'customer' ? '' : (type?.name || '?'),
+            items: []
+          });
+        }
+        newGroups.get(gk)!.items.push(p);
+      });
+      if (this.shiftPlannerGroupMode === 'customer') {
+        newGroups.forEach((group) => {
+          const typeNames = [...new Set(group.items.map(p => {
+            const type = this.state.types.find(t => t.id === p.type_id);
+            return type?.name || '?';
+          }))];
+          group.typeName = typeNames.join(', ');
+        });
+      }
+      newGroups.forEach((group, gk) => {
+        if (!this.projectShiftConfig.has(gk)) {
+          this.projectShiftConfig.set(gk, this.getDefaultProjectShifts(gk, group.items));
+        }
+      });
+      return newGroups;
+    };
+    
+    // Helper to render project table rows and bind checkbox listeners
+    const renderProjectRows = () => {
+      const tbody = document.getElementById('shiftPlannerProjectsBody');
+      if (!tbody) return;
+      
+      tbody.innerHTML = Array.from(projectGroups.entries()).map(([groupKey, group]) => {
+        const shifts = this.projectShiftConfig.get(groupKey) || new Set([1, 2]);
+        const tests = group.items.map(p => this.state.tests.find(t => t.id === p.test_id)?.name || '').filter(Boolean);
+        const uniqueTests = [...new Set(tests)];
+        return `
+          <tr data-group="${groupKey}">
+            <td class="project-name-cell">
+              <span class="project-name">${group.customerName}</span>
+              <span class="project-type">${group.typeName}</span>
+              ${uniqueTests.length > 0 ? `<span class="project-tests">${uniqueTests.join(', ')}</span>` : ''}
+            </td>
+            <td class="shift-col">
+              <label class="shift-checkbox">
+                <input type="checkbox" data-group="${groupKey}" data-shift="1" ${shifts.has(1) ? 'checked' : ''}/>
+                <span class="shift-check-mark"></span>
+              </label>
+            </td>
+            <td class="shift-col">
+              <label class="shift-checkbox">
+                <input type="checkbox" data-group="${groupKey}" data-shift="2" ${shifts.has(2) ? 'checked' : ''}/>
+                <span class="shift-check-mark"></span>
+              </label>
+            </td>
+            <td class="shift-col">
+              <label class="shift-checkbox">
+                <input type="checkbox" data-group="${groupKey}" data-shift="3" ${shifts.has(3) ? 'checked' : ''}/>
+                <span class="shift-check-mark"></span>
+              </label>
+            </td>
+          </tr>
+        `;
+      }).join('');
+      
+      // Re-bind checkbox listeners on new rows
+      tbody.querySelectorAll('.shift-checkbox input[type="checkbox"]').forEach(cb => {
+        cb.addEventListener('change', (ev) => {
+          const input = ev.target as HTMLInputElement;
+          const gk = input.dataset.group!;
+          const shift = parseInt(input.dataset.shift!);
+          if (!this.projectShiftConfig.has(gk)) {
+            this.projectShiftConfig.set(gk, new Set());
+          }
+          const shifts = this.projectShiftConfig.get(gk)!;
+          if (input.checked) { shifts.add(shift); } else { shifts.delete(shift); }
+          this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+        });
+      });
+      
+      this.updateShiftPlannerTotals(projectGroups, availableEmployees);
+    };
+    
+    // Event listeners for group mode toggle
+    modalBody.querySelectorAll('#groupModeToggle .group-mode-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const button = e.currentTarget as HTMLElement;
+        const mode = button.dataset.mode as 'project' | 'customer';
+        if (mode === this.shiftPlannerGroupMode) return;
+        
+        this.shiftPlannerGroupMode = mode;
+        
+        // Update active button state
+        modalBody.querySelectorAll('#groupModeToggle .group-mode-btn').forEach(b => b.classList.remove('active'));
+        button.classList.add('active');
+        
+        // Rebuild project groups with new mode
+        projectGroups.clear();
+        const newGroups = rebuildProjectGroups();
+        newGroups.forEach((v, k) => projectGroups.set(k, v));
+        
+        // Update summary stats
+        const statValues = modalBody.querySelectorAll('.shift-planner-stat .stat-value');
+        if (statValues[0]) statValues[0].textContent = String(projectGroups.size);
+        const newUnassigned = Array.from(projectGroups.keys()).filter(k => !assignedGroupIds.has(k)).length;
+        if (statValues[2]) statValues[2].textContent = String(newUnassigned);
+        
+        // Re-render project rows in place
+        renderProjectRows();
+        
+        await this.saveShiftPlannerConfig();
+      });
+    });
+    
+    // Confirm button
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = '';
+    confirmBtn.textContent = i18n.t('schedule.shiftPlannerRun');
+    confirmBtn.onclick = async () => {
+      await this.saveShiftPlannerConfig();
+      const scopeVal = (document.getElementById('shiftPlannerScope') as HTMLSelectElement).value;
+      const scopeTestId = scopeVal.startsWith('test-') ? scopeVal.replace('test-', '') : undefined;
+      const scope: 'project' | 'audit' | 'adhesion' | 'specific' = scopeTestId ? 'specific' : (scopeVal as any);
+      await this.runShiftBasedAssignment(scope, scopeTestId);
+      this.hideModal();
+    };
+    
+    modal.classList.add('active');
+    
+    // Make modal wider for shift planner
+    const modalContent = modal.querySelector('.modal-content') as HTMLElement;
+    if (modalContent) {
+      modalContent.style.maxWidth = '900px';
+      // Reset on close
+      const origClose = modal.querySelector('.modal-close') as HTMLElement;
+      if (origClose) {
+        const origHandler = origClose.onclick;
+        origClose.onclick = (e) => {
+          modalContent.style.maxWidth = '';
+          if (origHandler) (origHandler as Function).call(origClose, e);
+        };
+      }
+    }
+  }
+  
+  private updateShiftPlannerTotals(
+    projectGroups: Map<string, any>,
+    availableEmployees: Employee[]
+  ): void {
+    // Update project shift totals
+    let total1 = 0, total2 = 0, total3 = 0;
+    projectGroups.forEach((_, groupKey) => {
+      const shifts = this.projectShiftConfig.get(groupKey);
+      if (shifts?.has(1)) total1++;
+      if (shifts?.has(2)) total2++;
+      if (shifts?.has(3)) total3++;
+    });
+    
+    const t1 = document.getElementById('shiftPlannerTotal1');
+    const t2 = document.getElementById('shiftPlannerTotal2');
+    const t3 = document.getElementById('shiftPlannerTotal3');
+    if (t1) t1.innerHTML = `<strong>${total1}</strong>`;
+    if (t2) t2.innerHTML = `<strong>${total2}</strong>`;
+    if (t3) t3.innerHTML = `<strong>${total3}</strong>`;
+    
+    // Update employee shift counts
+    let emp1 = 0, emp2 = 0, emp3 = 0;
+    availableEmployees.forEach(e => {
+      const shift = this.employeeWeekShift.get(e.id) || 1;
+      if (shift === 1) emp1++;
+      else if (shift === 2) emp2++;
+      else if (shift === 3) emp3++;
+    });
+    
+    const e1 = document.getElementById('shiftPlannerEmp1');
+    const e2 = document.getElementById('shiftPlannerEmp2');
+    const e3 = document.getElementById('shiftPlannerEmp3');
+    if (e1) e1.textContent = String(emp1);
+    if (e2) e2.textContent = String(emp2);
+    if (e3) {
+      e3.textContent = String(emp3);
+      const e3Container = e3.closest('.emp-shift-count') as HTMLElement;
+      if (e3Container) e3Container.style.display = this.currentShiftSystem >= 3 ? '' : 'none';
+    }
+  }
+  
+  private async runShiftBasedAssignment(defaultScope: 'project' | 'audit' | 'adhesion' | 'specific', scopeTestId?: string): Promise<void> {
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    
+    // 1. Get projects with SOLL > 0
+    const weekProjects = this.state.projects.filter(p => {
+      const weekData = p.weeks[weekKey];
+      return weekData && weekData.soll > 0 && !p.hidden;
+    });
+    
+    // 2. Build project groups
+    const projectGroups = new Map<string, { items: Project[] }>();
+    weekProjects.forEach(p => {
+      const groupKey = this.shiftPlannerGroupMode === 'customer' 
+        ? String(p.customer_id) 
+        : `${p.customer_id}-${p.type_id}`;
+      if (!projectGroups.has(groupKey)) {
+        projectGroups.set(groupKey, { items: [] });
+      }
+      projectGroups.get(groupKey)!.items.push(p);
+    });
+    
+    // 3. Get already assigned groups
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedGroupIds = new Set<string>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (scopeTestId) {
+        // Only block if this exact test is already assigned to the group
+        if (a.scope === 'specific' && a.testId === scopeTestId) {
+          assignedGroupIds.add(a.projectId);
+        }
+      } else {
+        assignedGroupIds.add(a.projectId);
+      }
+    });
+    
+    let unassignedGroups = Array.from(projectGroups.keys()).filter(g => !assignedGroupIds.has(g));
+    
+    // When assigning specific test, only include groups that actually have that test
+    if (scopeTestId) {
+      unassignedGroups = unassignedGroups.filter(g => {
+        const group = projectGroups.get(g)!;
+        return group.items.some(p => p.test_id === scopeTestId);
+      });
+    }
+    
+    if (unassignedGroups.length === 0) {
+      this.showToast(i18n.t('schedule.allCoveredOrNoEmp'), 'warning');
+      return;
+    }
+    
+    // 4. Get available employees grouped by their assigned shift
+    const availableEmployees = this.state.employees.filter(e => {
+      if (e.status && e.status !== 'available') return false;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !absence;
+    });
+    
+    const empByShift = new Map<number, Employee[]>();
+    empByShift.set(1, []);
+    empByShift.set(2, []);
+    empByShift.set(3, []);
+    
+    availableEmployees.forEach(emp => {
+      const shift = this.employeeWeekShift.get(emp.id) || this.getEmployeeSuggestedShift(emp.id);
+      const empShiftSystem = emp.shiftSystem || 2;
+      // Validate: employee can't be on a shift higher than their shiftSystem
+      const validShift = shift <= empShiftSystem ? shift : 1;
+      if (!empByShift.has(validShift)) empByShift.set(validShift, []);
+      empByShift.get(validShift)!.push(emp);
+    });
+    
+    // 5. Build historical assignment counts
+    const allAssignments = this.state.scheduleAssignments;
+    const empProjectHistory = new Map<string, Map<string, number>>();
+    const empTotalThisWeek = new Map<string, number>();
+    
+    availableEmployees.forEach(e => {
+      empProjectHistory.set(e.id, new Map());
+      empTotalThisWeek.set(e.id, 0);
+    });
+    
+    allAssignments.forEach((a: ScheduleAssignment) => {
+      const histMap = empProjectHistory.get(a.employeeId);
+      if (histMap) {
+        histMap.set(a.projectId, (histMap.get(a.projectId) || 0) + 1);
+      }
+    });
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      if (empTotalThisWeek.has(a.employeeId)) {
+        empTotalThisWeek.set(a.employeeId, (empTotalThisWeek.get(a.employeeId) || 0) + 1);
+      }
+    });
+    
+    // 6. For each unassigned project, assign worker from matching shift
+    let assignedCount = 0;
+    
+    for (const groupKey of unassignedGroups) {
+      const projectShifts = this.projectShiftConfig.get(groupKey) || new Set([1, 2]);
+      
+      // Determine which employee shift pool to use
+      // If project runs on shift 1 and/or 2 -> use those employees
+      // PRIORITY: Employee's shift determines which projects they can work on.
+      // A Z2 employee can ONLY be assigned to projects running on Z2 (or Z3 night).
+      // A Z1 employee can ONLY be assigned to projects running on Z1 (or Z3 night).
+      // The assignment shift is always the employee's own shift.
+      
+      // Build candidate pool: only employees whose shift matches the project's shift(s)
+      // Also respect employee's shiftSystem: a 2-shift employee cannot work on Z3
+      let candidatePool: Employee[] = [];
+      
+      if (projectShifts.has(1)) {
+        candidatePool.push(...(empByShift.get(1) || []));
+      }
+      if (projectShifts.has(2)) {
+        candidatePool.push(...(empByShift.get(2) || []));
+      }
+      if (projectShifts.has(3)) {
+        // Z3 projects: only employees in 3-shift system can be directly on Z3
+        candidatePool.push(...(empByShift.get(3) || []));
+        // If no Z3 employees available, Z1/Z2 employees from 3-shift system can cover
+        if (candidatePool.length === 0) {
+          const threeShiftEmps = availableEmployees.filter(e => (e.shiftSystem || 2) >= 3);
+          candidatePool.push(...threeShiftEmps);
+        }
+      }
+      
+      // Remove duplicates (in case project runs on both Z1 and Z2)
+      const seenIds = new Set<string>();
+      candidatePool = candidatePool.filter(e => {
+        if (seenIds.has(e.id)) return false;
+        seenIds.add(e.id);
+        return true;
+      });
+      
+      // NO cross-shift fallback: if no matching employees, skip this project
+      if (candidatePool.length === 0) continue;
+      
+      // Score each candidate (lower = better)
+      const scored = candidatePool.map(emp => {
+        const totalThisWeek = empTotalThisWeek.get(emp.id) || 0;
+        const historyOnProject = empProjectHistory.get(emp.id)?.get(groupKey) || 0;
+        const score = (totalThisWeek * 100) + (historyOnProject * 10);
+        return { employee: emp, score };
+      });
+      
+      scored.sort((a, b) => {
+        if (a.score !== b.score) return a.score - b.score;
+        return Math.random() - 0.5;
+      });
+      
+      if (scored.length === 0) continue;
+      
+      const bestEmployee = scored[0].employee;
+      
+      // ALWAYS use the employee's actual shift as the assignment shift
+      const empShift = this.employeeWeekShift.get(bestEmployee.id) || 1;
+      // Exception: night-only projects (Z3) get shift 3
+      const assignShift: 1 | 2 | 3 = (projectShifts.size === 1 && projectShifts.has(3))
+        ? 3
+        : (empShift as 1 | 2 | 3);
+      
+      await this.addScopedAssignment(
+        groupKey,
+        bestEmployee.id,
+        weekKey,
+        assignShift,
+        defaultScope,
+        scopeTestId
+      );
+      
+      // Update counters
+      empTotalThisWeek.set(bestEmployee.id, (empTotalThisWeek.get(bestEmployee.id) || 0) + 1);
+      const histMap = empProjectHistory.get(bestEmployee.id)!;
+      histMap.set(groupKey, (histMap.get(groupKey) || 0) + 1);
+      
+      assignedCount++;
+    }
+    
+    // ==================== SECOND PASS: Ensure everyone gets an assignment ====================
+    const allWeekAssignmentsAfter = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const assignedEmpIdsAfter = new Set(allWeekAssignmentsAfter.map((a: ScheduleAssignment) => a.employeeId));
+    
+    const stillUnassigned = availableEmployees.filter(emp => !assignedEmpIdsAfter.has(emp.id));
+    
+    if (stillUnassigned.length > 0 && projectGroups.size > 0) {
+      // Calculate workload per project group (total minutes / assigned employees)
+      const groupWorkload: Array<[string, number]> = [];
+      
+      projectGroups.forEach((group, gKey) => {
+        let totalMinutes = 0;
+        group.items.forEach(p => {
+          const wd = p.weeks?.[weekKey];
+          if (wd && wd.soll > 0) {
+            totalMinutes += wd.soll * (p.timePerUnit || 0);
+          }
+        });
+        const empCount = allWeekAssignmentsAfter.filter(x => x.projectId === gKey).length;
+        groupWorkload.push([gKey, empCount > 0 ? totalMinutes / empCount : totalMinutes]);
+      });
+      
+      // Sort by per-person workload descending (most loaded = needs help most)
+      groupWorkload.sort((a, b) => b[1] - a[1]);
+      
+      let gIdx = 0;
+      for (const unassignedEmp of stillUnassigned) {
+        if (groupWorkload.length === 0) break;
+        
+        const [groupKey] = groupWorkload[gIdx % groupWorkload.length];
+        
+        // Use employee's configured shift, validated against their shiftSystem
+        const empMaxShiftVal = unassignedEmp.shiftSystem || 2;
+        const configuredShift = this.employeeWeekShift.get(unassignedEmp.id) || 1;
+        const empShiftVal = configuredShift <= empMaxShiftVal ? configuredShift : 1;
+        
+        await this.addScopedAssignment(
+          groupKey,
+          unassignedEmp.id,
+          weekKey,
+          empShiftVal as 1 | 2 | 3,
+          defaultScope,
+          scopeTestId
+        );
+        
+        empTotalThisWeek.set(unassignedEmp.id, (empTotalThisWeek.get(unassignedEmp.id) || 0) + 1);
+        
+        // Recalculate per-person workload
+        const group = projectGroups.get(groupKey)!;
+        let totalMins = 0;
+        group.items.forEach(p => {
+          const wd = p.weeks?.[weekKey];
+          if (wd && wd.soll > 0) totalMins += wd.soll * (p.timePerUnit || 0);
+        });
+        const newCount = allWeekAssignmentsAfter.filter(x => x.projectId === groupKey).length + 1;
+        groupWorkload[gIdx % groupWorkload.length] = [groupKey, totalMins / newCount];
+        groupWorkload.sort((a, b) => b[1] - a[1]);
+        
+        assignedCount++;
+        gIdx++;
+      }
+    }
+    
+    this.showToast(
+      i18n.t('schedule.shiftPlannerComplete').replace('{0}', String(assignedCount)),
+      'success'
+    );
+    this.renderScheduleAlerts();
+    this.renderScheduleContent();
+    this.renderScheduleEmployeePanel();
   }
   
   // Check if employee has absence in a given week
@@ -9114,6 +12211,33 @@ class KappaApp {
     const assignedAvailable = availableEmployees.filter(e => assignedEmployeeIds.has(e.id));
     const unassignedAvailable = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id));
     
+    // Helper: calculate weekly workload in minutes for an employee
+    const calcEmployeeWorkloadMinutes = (empId: string): number => {
+      const empAssignments = weekAssignments.filter((a: ScheduleAssignment) => a.employeeId === empId);
+      let totalMinutes = 0;
+      
+      empAssignments.forEach((a: ScheduleAssignment) => {
+        // Find projects in this group
+        const groupProjects = this.state.projects.filter(p => 
+          `${p.customer_id}-${p.type_id}` === a.projectId || p.id === a.projectId
+        );
+        
+        groupProjects.forEach(p => {
+          const wd = p.weeks?.[weekKey];
+          if (wd && wd.soll > 0) {
+            // How many employees share this project group?
+            const sharedCount = weekAssignments.filter((x: ScheduleAssignment) => x.projectId === a.projectId).length;
+            totalMinutes += (wd.soll * (p.timePerUnit || 0)) / Math.max(sharedCount, 1);
+          }
+        });
+      });
+      
+      return Math.round(totalMinutes);
+    };
+    
+    // Weekly available minutes: 5 days × 8h = 2400 min
+    const WEEKLY_AVAILABLE_MINUTES = 2400;
+    
     // Helper: karta pracownika
     const renderEmployeeCard = (emp: Employee, isDraggable: boolean = true) => {
       const tasks = weekAssignments
@@ -9128,12 +12252,27 @@ class KappaApp {
         });
       const uniqueTasks = [...new Set(tasks)];
       
+      // Calculate workload
+      const workloadMin = calcEmployeeWorkloadMinutes(emp.id);
+      const workloadPct = WEEKLY_AVAILABLE_MINUTES > 0 ? Math.round((workloadMin / WEEKLY_AVAILABLE_MINUTES) * 100) : 0;
+      const isOverloaded = workloadPct > 100;
+      const workloadClass = workloadPct === 0 ? 'workload-empty' : workloadPct <= 60 ? 'workload-low' : workloadPct <= 90 ? 'workload-medium' : workloadPct <= 100 ? 'workload-high' : 'workload-over';
+      const shiftSystemBadge = emp.shiftSystem || 2;
+      
       return `
         <div class="sched-emp-card" ${isDraggable ? 'draggable="true"' : ''} data-employee-id="${emp.id}">
           <div class="sched-emp-avatar" style="background: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
           <div class="sched-emp-info">
-            <span class="sched-emp-name">${emp.firstName} ${emp.lastName}</span>
+            <span class="sched-emp-name">${emp.firstName} ${emp.lastName} <span class="emp-shift-sys-tag">${shiftSystemBadge}Z</span></span>
             ${uniqueTasks.length > 0 ? `<span class="sched-emp-tasks">${uniqueTasks.slice(0, 2).join(', ')}${uniqueTasks.length > 2 ? '...' : ''}</span>` : ''}
+            ${workloadMin > 0 ? `
+              <div class="sched-emp-workload">
+                <div class="workload-bar-bg">
+                  <div class="workload-bar-fill ${workloadClass}" style="width: ${Math.min(workloadPct, 100)}%"></div>
+                </div>
+                <span class="workload-text ${workloadClass}">${workloadMin} / ${WEEKLY_AVAILABLE_MINUTES} min (${workloadPct}%)${isOverloaded ? ' ⚠️' : ''}</span>
+              </div>
+            ` : ''}
           </div>
         </div>
       `;
@@ -9181,7 +12320,7 @@ class KappaApp {
             icon = isVacation 
               ? '<svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="18" height="18"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M21 15l-3-3m0 0l-3 3m3-3v9"/></svg>'
               : '<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" width="18" height="18"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>';
-            label = isVacation ? 'Urlop' : 'L4';
+            label = isVacation ? i18n.t('schedule.vacationLabel') : i18n.t('schedule.sickLeaveLabel');
             badgeClass = emp.status || 'vacation';
           }
           
@@ -9190,7 +12329,7 @@ class KappaApp {
               <span class="sched-absent-icon">${icon}</span>
               <span class="sched-absent-name">${emp.firstName} ${emp.lastName}</span>
               <span class="sched-absent-badge ${badgeClass}">${label}</span>
-              <button class="sched-absent-return" data-emp-id="${emp.id}" title="Przywróć">
+              <button class="sched-absent-return" data-emp-id="${emp.id}" title="${i18n.t('schedule.restore')}">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
               </button>
             </div>
@@ -9207,7 +12346,7 @@ class KappaApp {
               if (emp) {
                 emp.status = 'available';
                 await db.put('employees', emp);
-                this.showToast(`${emp.firstName} wrócił do pracy`, 'success');
+                this.showToast(i18n.t('schedule.returnedToWork').replace('{0}', emp.firstName), 'success');
                 this.renderScheduleEmployeePanel();
               }
             }
@@ -9314,7 +12453,7 @@ class KappaApp {
       document.getElementById('uncoveredCount')!.textContent = String(uncoveredGroupsList.length);
       
       if (uncoveredGroupsList.length === 0) {
-        uncoveredList.innerHTML = '<p class="sched-panel-empty">Wszystko obsadzone ✓</p>';
+        uncoveredList.innerHTML = '<p class="sched-panel-empty">' + i18n.t('schedule.allCovered') + '</p>';
       } else {
         uncoveredList.innerHTML = uncoveredGroupsList.map(g => `
           <div class="sched-uncovered-item ${g.staffingClass}">
@@ -9324,12 +12463,12 @@ class KappaApp {
             </div>
             ${g.missing.length > 0 ? `
               <div class="sched-uncovered-missing">
-                <span class="sched-uncovered-label">Brakuje:</span>
+                <span class="sched-uncovered-label">${i18n.t('schedule.missing')}</span>
                 ${g.missing.map(m => `<span class="sched-uncovered-test">${m}</span>`).join('')}
               </div>
             ` : `
               <div class="sched-uncovered-missing">
-                <span class="sched-uncovered-label">Brak obsady</span>
+                <span class="sched-uncovered-label">${i18n.t('schedule.noCoverageLabel')}</span>
               </div>
             `}
           </div>
@@ -9397,40 +12536,98 @@ class KappaApp {
     const allAssignments = this.state.scheduleAssignments;
     
     // ===== PODSTAWOWE STATYSTYKI =====
-    const availableEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
-    const absentEmployees = this.state.employees.filter(e => e.status === 'vacation' || e.status === 'sick');
+    const availableEmployees = this.state.employees.filter(e => {
+      if (e.status && e.status !== 'available') return false;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !absence;
+    });
+    const absentEmployees = this.state.employees.filter(e => {
+      if (e.status === 'vacation' || e.status === 'sick') return true;
+      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !!absence;
+    });
     const assignedEmployeeIds = new Set(weekAssignments.map(a => a.employeeId));
     const unassignedCount = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id)).length;
     
-    // ===== ANALIZA OBCIĄŻENIA PRACOWNIKÓW =====
-    const employeeWorkload = new Map<string, number>();
-    weekAssignments.forEach(a => {
-      employeeWorkload.set(a.employeeId, (employeeWorkload.get(a.employeeId) || 0) + 1);
+    // ===== ANALIZA OBCIĄŻENIA PRACOWNIKÓW (na podstawie minut z planera) =====
+    // Oblicz obciążenie w minutach: soll × timePerUnit dla każdego przypisanego projektu
+    const employeeWorkloadMinutes = new Map<string, number>(); // empId -> total minutes
+    const employeeProjectCount = new Map<string, number>(); // empId -> project count
+    const employeeWorkloadDetails = new Map<string, Array<{project: string; minutes: number; parts: number}>>(); // empId -> details
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const empId = a.employeeId;
+      employeeProjectCount.set(empId, (employeeProjectCount.get(empId) || 0) + 1);
+      
+      if (!employeeWorkloadDetails.has(empId)) employeeWorkloadDetails.set(empId, []);
+      
+      // Find all projects in the assigned group
+      const groupProjects = this.state.projects.filter(p => {
+        if (p.hidden) return false;
+        const groupKey = `${p.customer_id}-${p.type_id}`;
+        return (groupKey === a.projectId || p.id === a.projectId);
+      });
+      
+      let groupMinutes = 0;
+      let groupParts = 0;
+      groupProjects.forEach(p => {
+        const wd = p.weeks?.[weekKey];
+        if (wd && wd.soll > 0) {
+          const mins = wd.soll * (p.timePerUnit || 0);
+          groupMinutes += mins;
+          groupParts += wd.soll;
+        }
+      });
+      
+      // For extra tasks
+      if (a.projectId.startsWith('extra-')) {
+        const taskId = a.projectId.replace('extra-', '');
+        const task = this.state.extraTasks.find(t => t.id === taskId);
+        if (task) {
+          groupMinutes = task.timePerUnit * task.units;
+          groupParts = task.units;
+        }
+      }
+      
+      employeeWorkloadMinutes.set(empId, (employeeWorkloadMinutes.get(empId) || 0) + groupMinutes);
+      
+      const customer = groupProjects.length > 0 
+        ? this.state.customers.find(c => c.id === groupProjects[0].customer_id)?.name || '?'
+        : a.projectId;
+      employeeWorkloadDetails.get(empId)!.push({ project: customer, minutes: groupMinutes, parts: groupParts });
     });
     
+    const workloadMinValues = Array.from(employeeWorkloadMinutes.values());
+    const maxWorkloadMin = Math.max(...workloadMinValues, 0);
+    const avgWorkloadMin = workloadMinValues.length > 0 ? workloadMinValues.reduce((a, b) => a + b, 0) / workloadMinValues.length : 0;
+    
+    // Backwards compat: keep project count for basic stats
+    const employeeWorkload = employeeProjectCount;
     const workloads = Array.from(employeeWorkload.values());
     const maxWorkload = Math.max(...workloads, 0);
-    const minWorkload = Math.min(...workloads.filter(w => w > 0), maxWorkload);
     const avgWorkload = workloads.length > 0 ? workloads.reduce((a, b) => a + b, 0) / workloads.length : 0;
     
-    // Znajdź pracowników z nierównomiernym obciążeniem
-    const overloadedEmployees: Array<{emp: Employee; count: number}> = [];
-    const underloadedEmployees: Array<{emp: Employee; count: number}> = [];
+    // Znajdź pracowników z nierównomiernym obciążeniem (based on MINUTES, not project count)
+    const overloadedEmployees: Array<{emp: Employee; count: number; minutes: number}> = [];
+    const underloadedEmployees: Array<{emp: Employee; count: number; minutes: number}> = [];
     
-    employeeWorkload.forEach((count, empId) => {
+    employeeWorkloadMinutes.forEach((minutes, empId) => {
       const emp = this.state.employees.find(e => e.id === empId);
       if (emp) {
-        if (count >= avgWorkload * 1.5 && count > 3) {
-          overloadedEmployees.push({ emp, count });
+        if (avgWorkloadMin > 0 && minutes >= avgWorkloadMin * 1.4) {
+          overloadedEmployees.push({ emp, count: employeeProjectCount.get(empId) || 0, minutes });
         }
       }
     });
     
-    // Pracownicy dostępni ale bez przypisań lub z małą liczbą
+    // Pracownicy dostępni ale bez przypisań lub z małym obciążeniem (minuty)
     availableEmployees.forEach(emp => {
-      const count = employeeWorkload.get(emp.id) || 0;
-      if (count < avgWorkload * 0.5 && maxWorkload > 2) {
-        underloadedEmployees.push({ emp, count });
+      const minutes = employeeWorkloadMinutes.get(emp.id) || 0;
+      const count = employeeProjectCount.get(emp.id) || 0;
+      if (avgWorkloadMin > 0 && minutes < avgWorkloadMin * 0.6) {
+        underloadedEmployees.push({ emp, count, minutes });
+      } else if (count === 0) {
+        underloadedEmployees.push({ emp, count: 0, minutes: 0 });
       }
     });
     
@@ -9630,7 +12827,7 @@ class KappaApp {
       const emp = this.state.employees.find(e => e.id === a.employeeId);
       if (emp && (emp.status === 'vacation' || emp.status === 'sick')) {
         if (!absentButAssigned.find(x => x.emp.id === emp.id)) {
-          absentButAssigned.push({ emp, status: emp.status === 'vacation' ? 'urlop' : 'L4' });
+          absentButAssigned.push({ emp, status: emp.status === 'vacation' ? i18n.t('schedule.vacationLabel') : i18n.t('schedule.sickLeaveLabel') });
         }
       }
     });
@@ -9663,8 +12860,8 @@ class KappaApp {
         const candidate = bestCandidate as Employee;
         const exp = projectExp?.get(candidate.id) || 0;
         const reason = exp > 0 
-          ? `był już ${exp} razy na tym projekcie i ma mało zadań`
-          : `ma najmniej zadań w tym tygodniu`;
+          ? i18n.t('schedule.experienceHint').replace('{0}', String(exp))
+          : i18n.t('schedule.leastTasks');
         optimalSuggestions.push({ 
           project: `${customer} ${type}`, 
           suggestedEmp: candidate, 
@@ -9699,57 +12896,65 @@ class KappaApp {
     
     // Alerty krytyczne
     absentButAssigned.forEach(({ emp, status }) => {
-      alerts.push(`<div class="sched-alert danger"><span class="alert-icon">⚠️</span><span class="alert-text"><strong>${emp.firstName} ${emp.lastName}</strong> jest na ${status}, ale ma przypisania!</span></div>`);
+      alerts.push(`<div class="sched-alert danger"><span class="alert-icon">⚠️</span><span class="alert-text">${i18n.t('schedule.absentButAssigned').replace('{0}', '<strong>' + emp.firstName + ' ' + emp.lastName + '</strong>').replace('{1}', status)}</span></div>`);
     });
     
     shiftConflicts.forEach(({ emp, shift, projects }) => {
-      alerts.push(`<div class="sched-alert warning"><span class="alert-icon">⚡</span><span class="alert-text"><strong>${emp.firstName} ${emp.lastName}</strong> ma ${projects.length} projekty na zmianie ${shift} naraz!</span></div>`);
+      // Not an error - multiple projects on same shift is normal for workload distribution
+      // alerts.push(...); // Removed: user confirmed this is not a problem
     });
     
     // Sugestie
     if (longTermAssignments.length > 0) {
       longTermAssignments.slice(0, 3).forEach(({ emp, project, weeks }) => {
-        suggestions.push(`<div class="sched-suggestion rotate"><span class="sugg-icon">🔄</span><span class="sugg-text"><strong>${emp.firstName}</strong> pracuje na <em>${project}</em> już ${weeks} tygodnie z rzędu - może czas na zmianę?</span></div>`);
+        suggestions.push(`<div class="sched-suggestion rotate"><span class="sugg-icon">🔄</span><span class="sugg-text">${i18n.t('schedule.rotationSuggestion').replace('{0}', '<strong>' + emp.firstName + '</strong>').replace('{1}', '<em>' + project + '</em>').replace('{2}', String(weeks))}</span></div>`);
       });
     }
     
     if (experienceImbalance.length > 0) {
       experienceImbalance.slice(0, 2).forEach(({ project, experienced, inexperienced }) => {
-        suggestions.push(`<div class="sched-suggestion balance"><span class="sugg-icon">📊</span><span class="sugg-text"><em>${project}</em>: <strong>${experienced.emp.firstName}</strong> był ${experienced.count} razy, <strong>${inexperienced.emp.firstName}</strong> tylko ${inexperienced.count} - daj szansę mniej doświadczonemu</span></div>`);
+        suggestions.push(`<div class="sched-suggestion balance"><span class="sugg-icon">📊</span><span class="sugg-text">${i18n.t('schedule.experienceSuggestion').replace('{0}', '<em>' + project + '</em>').replace('{1}', '<strong>' + experienced.emp.firstName + '</strong>').replace('{2}', String(experienced.count)).replace('{3}', '<strong>' + inexperienced.emp.firstName + '</strong>').replace('{4}', String(inexperienced.count))}</span></div>`);
       });
     }
     
     if (overloadedEmployees.length > 0 && underloadedEmployees.length > 0) {
       const over = overloadedEmployees[0];
       const under = underloadedEmployees[0];
-      suggestions.push(`<div class="sched-suggestion workload"><span class="sugg-icon">⚖️</span><span class="sugg-text"><strong>${over.emp.firstName}</strong> ma ${over.count} zadań, <strong>${under.emp.firstName}</strong> tylko ${under.count} - przenieś jedno zadanie</span></div>`);
+      const overHours = (over.minutes / 60).toFixed(1);
+      const underHours = (under.minutes / 60).toFixed(1);
+      suggestions.push(`<div class="sched-suggestion workload"><span class="sugg-icon">⚖️</span><span class="sugg-text">${i18n.t('schedule.workloadBalanceSuggestion').replace('{0}', '<strong>' + over.emp.firstName + '</strong>').replace('{1}', overHours + 'h').replace('{2}', '<strong>' + under.emp.firstName + '</strong>').replace('{3}', underHours + 'h')}</span></div>`);
+    } else if (underloadedEmployees.length > 0) {
+      // Even if no one is overloaded, warn about underloaded
+      const under = underloadedEmployees[0];
+      const underHours = (under.minutes / 60).toFixed(1);
+      suggestions.push(`<div class="sched-suggestion workload"><span class="sugg-icon">⚖️</span><span class="sugg-text">${i18n.t('schedule.underloadedWarn').replace('{0}', '<strong>' + under.emp.firstName + '</strong>').replace('{1}', underHours + 'h')}</span></div>`);
     }
     
     if (shiftImbalance) {
-      suggestions.push(`<div class="sched-suggestion shift"><span class="sugg-icon">🔀</span><span class="sugg-text">Zmiana ${shiftImbalance.from} ma ${shiftImbalance.diff} osób więcej niż zmiana ${shiftImbalance.to} - przenieś kogoś</span></div>`);
+      suggestions.push(`<div class="sched-suggestion shift"><span class="sugg-icon">🔀</span><span class="sugg-text">${i18n.t('schedule.shiftImbalance').replace('{0}', String(shiftImbalance.from)).replace('{1}', String(shiftImbalance.diff)).replace('{2}', String(shiftImbalance.to))}</span></div>`);
     }
     
     optimalSuggestions.slice(0, 2).forEach(({ project, suggestedEmp, reason }) => {
-      suggestions.push(`<div class="sched-suggestion optimal"><span class="sugg-icon">💡</span><span class="sugg-text">Przypisz <strong>${suggestedEmp.firstName}</strong> do <em>${project}</em> - ${reason}</span></div>`);
+      suggestions.push(`<div class="sched-suggestion optimal"><span class="sugg-icon">💡</span><span class="sugg-text">${i18n.t('schedule.assignSuggestion').replace('{0}', '<strong>' + suggestedEmp.firstName + '</strong>').replace('{1}', '<em>' + project + '</em>').replace('{2}', reason)}</span></div>`);
     });
     
     panel.innerHTML = `
       <div class="sched-stats-grid">
         <div class="sched-stat-item">
           <span class="sched-stat-value">${assignedEmployeeIds.size}</span>
-          <span class="sched-stat-label">Przypisanych</span>
+          <span class="sched-stat-label">${i18n.t('schedule.assigned')}</span>
         </div>
         <div class="sched-stat-item">
           <span class="sched-stat-value">${unassignedCount}</span>
-          <span class="sched-stat-label">Wolnych</span>
+          <span class="sched-stat-label">${i18n.t('schedule.freeLabel')}</span>
         </div>
         <div class="sched-stat-item">
           <span class="sched-stat-value">${absentEmployees.length}</span>
-          <span class="sched-stat-label">Nieobecnych</span>
+          <span class="sched-stat-label">${i18n.t('schedule.absent')}</span>
         </div>
         <div class="sched-stat-item">
           <span class="sched-stat-value">${coveragePercent}%</span>
-          <span class="sched-stat-label">Pokrycie</span>
+          <span class="sched-stat-label">${i18n.t('schedule.coverageLabel')}</span>
         </div>
       </div>
       
@@ -9758,25 +12963,25 @@ class KappaApp {
           <div class="sched-coverage-fill" style="width: ${coveragePercent}%"></div>
         </div>
         <div class="sched-coverage-legend">
-          <span class="sched-coverage-item full"><span class="dot"></span>${fullyCovered} pełne</span>
-          <span class="sched-coverage-item partial"><span class="dot"></span>${partiallyCovered} częściowe</span>
-          <span class="sched-coverage-item empty"><span class="dot"></span>${notCovered} brak</span>
+          <span class="sched-coverage-item full"><span class="dot"></span>${fullyCovered} ${i18n.t('schedule.fullLabel')}</span>
+          <span class="sched-coverage-item partial"><span class="dot"></span>${partiallyCovered} ${i18n.t('schedule.partialLabel')}</span>
+          <span class="sched-coverage-item empty"><span class="dot"></span>${notCovered} ${i18n.t('schedule.noneLabel')}</span>
         </div>
       </div>
       
       ${alerts.length > 0 ? `
         <div class="sched-alerts-section">
-          <h5>⚠️ Alerty</h5>
+          <h5>⚠️ ${i18n.t('schedule.alertsTitle')}</h5>
           ${alerts.join('')}
         </div>
       ` : ''}
       
       ${suggestions.length > 0 ? `
         <div class="sched-suggestions-section">
-          <h5>💡 Sugestie</h5>
+          <h5>💡 ${i18n.t('schedule.suggestionsTitle')}</h5>
           ${suggestions.join('')}
         </div>
-      ` : '<div class="sched-no-suggestions">✅ Brak sugestii - grafik wygląda dobrze!</div>'}
+      ` : '<div class="sched-no-suggestions">✅ ' + i18n.t('schedule.noSuggestions') + '</div>'}
     `;
   }
   
@@ -9791,7 +12996,7 @@ class KappaApp {
       .slice(0, 5);
     
     if (recentLogs.length === 0) {
-      panel.innerHTML = '<p class="sched-panel-empty">Brak ostatnich zmian</p>';
+      panel.innerHTML = '<p class="sched-panel-empty">' + i18n.t('schedule.noRecentChanges') + '</p>';
       return;
     }
     
@@ -9807,7 +13012,7 @@ class KappaApp {
             ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/></svg>'
             : '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
           
-          const time = new Date(log.timestamp).toLocaleString('pl-PL', { 
+          const time = new Date(log.timestamp).toLocaleString(i18n.getDateLocale(), { 
             day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
           });
           
@@ -9979,7 +13184,7 @@ class KappaApp {
       <div class="employee-modal stats-modal-wide">
         <div class="employee-modal-header">
           <div class="employee-modal-info">
-            <h2>📊 Szczegółowe statystyki - KW${this.scheduleCurrentWeek.toString().padStart(2, '0')} ${this.scheduleCurrentYear}</h2>
+            <h2>${i18n.t('schedule.detailedStatsTitle').replace('{0}', this.scheduleCurrentWeek.toString().padStart(2, '0')).replace('{1}', String(this.scheduleCurrentYear))}</h2>
           </div>
           <button class="employee-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -9991,33 +13196,33 @@ class KappaApp {
           <div class="stats-section stats-summary">
             <div class="stats-summary-card">
               <div class="stats-card-value">${weekAssignments.length}</div>
-              <div class="stats-card-label">Przypisań</div>
+              <div class="stats-card-label">${i18n.t('schedule.assignmentsLabel')}</div>
             </div>
             <div class="stats-summary-card">
               <div class="stats-card-value">${new Set(weekAssignments.map(a => a.employeeId)).size}</div>
-              <div class="stats-card-label">Pracowników</div>
+              <div class="stats-card-label">${i18n.t('schedule.employeesLabel')}</div>
             </div>
             <div class="stats-summary-card">
               <div class="stats-card-value">${coveredProjects}/${totalProjects}</div>
-              <div class="stats-card-label">Projektów</div>
+              <div class="stats-card-label">${i18n.t('schedule.projectsLabel')}</div>
             </div>
             <div class="stats-summary-card ${coveragePercent === 100 ? 'success' : coveragePercent >= 80 ? 'warning' : 'danger'}">
               <div class="stats-card-value">${coveragePercent}%</div>
-              <div class="stats-card-label">Pokrycie</div>
+              <div class="stats-card-label">${i18n.t('schedule.coverageLabel')}</div>
             </div>
           </div>
           
           <!-- SEKCJA 2: Wykres zmian -->
           <div class="stats-section">
-            <h4>📈 Rozkład na zmiany</h4>
+            <h4>📈 ${i18n.t('schedule.shiftDistribution')}</h4>
             <div class="stats-shift-chart">
               ${shiftStats.map(s => `
                 <div class="stats-shift-bar">
-                  <div class="stats-bar-label">Zmiana ${s.shift}</div>
+                  <div class="stats-bar-label">${i18n.t('schedule.shiftN').replace('{0}', String(s.shift))}</div>
                   <div class="stats-bar-track">
                     <div class="stats-bar-fill shift-${s.shift}" style="width: ${totalShiftAssignments > 0 ? (s.count / totalShiftAssignments * 100) : 0}%"></div>
                   </div>
-                  <div class="stats-bar-value">${s.count} <small>(${s.employees} os.)</small></div>
+                  <div class="stats-bar-value">${s.count} <small>(${i18n.t('schedule.personsAbbr').replace('{0}', String(s.employees))})</small></div>
                 </div>
               `).join('')}
             </div>
@@ -10025,7 +13230,7 @@ class KappaApp {
           
           <!-- SEKCJA 3: Wykres obciążenia pracowników -->
           <div class="stats-section">
-            <h4>👥 Obciążenie pracowników</h4>
+            <h4>${i18n.t('schedule.workloadTitle')}</h4>
             <div class="stats-employee-chart">
               ${employeeStats.slice(0, 10).map(e => `
                 <div class="stats-emp-bar ${e.tasks === 0 ? 'zero' : e.tasks > avgTasks * 1.5 ? 'high' : e.tasks < avgTasks * 0.5 ? 'low' : ''}">
@@ -10036,13 +13241,13 @@ class KappaApp {
                   <div class="stats-emp-value">${e.tasks}</div>
                 </div>
               `).join('')}
-              ${employeeStats.length > 10 ? `<div class="stats-more-hint">...i ${employeeStats.length - 10} więcej</div>` : ''}
+              ${employeeStats.length > 10 ? `<div class="stats-more-hint">${i18n.t('schedule.andMore').replace('{0}', String(employeeStats.length - 10))}</div>` : ''}
             </div>
           </div>
           
           <!-- SEKCJA 4: Trend tygodniowy -->
           <div class="stats-section">
-            <h4>📅 Trend ostatnich 6 tygodni</h4>
+            <h4>📅 ${i18n.t('schedule.trendLastWeeks')}</h4>
             <div class="stats-trend-chart">
               ${weeklyHistory.map((w, i) => `
                 <div class="stats-trend-bar ${i === weeklyHistory.length - 1 ? 'current' : ''}">
@@ -10057,13 +13262,13 @@ class KappaApp {
           
           <!-- SEKCJA 5: Top pracownicy miesiąca -->
           <div class="stats-section">
-            <h4>🏆 Top pracownicy (ostatnie 4 tyg.)</h4>
+            <h4>${i18n.t('schedule.topEmployees')}</h4>
             <div class="stats-top-list">
               ${topMonthlyWorkers.map((w, i) => `
                 <div class="stats-top-item">
                   <span class="stats-top-rank">${i + 1}.</span>
                   <span class="stats-top-name">${w.name}</span>
-                  <span class="stats-top-count">${w.count} przypisań</span>
+                  <span class="stats-top-count">${i18n.t('schedule.assignmentsCount').replace('{0}', String(w.count))}</span>
                 </div>
               `).join('')}
             </div>
@@ -10071,7 +13276,7 @@ class KappaApp {
           
           <!-- SEKCJA 6: Doświadczenie pracowników na projektach -->
           <div class="stats-section stats-experience-section">
-            <h4>🎯 Doświadczenie na projektach (wszystkie tygodnie)</h4>
+            <h4>${i18n.t('schedule.experienceTitle')}</h4>
             <div class="stats-experience-legend">
               ${[...projectColorMap.entries()].map(([name, color]) => `
                 <span class="stats-legend-item"><span class="stats-legend-dot" style="background: ${color}"></span>${name}</span>
@@ -10084,7 +13289,7 @@ class KappaApp {
                   <div class="stats-exp-bar-container">
                     <div class="stats-exp-bar">
                       ${e.projects.map(p => `
-                        <div class="stats-exp-segment" style="width: ${(p.count / maxExp * 100)}%; background: ${projectColorMap.get(p.name) || '#888'}" title="${p.name}: ${p.count} razy"></div>
+                        <div class="stats-exp-segment" style="width: ${(p.count / maxExp * 100)}%; background: ${projectColorMap.get(p.name) || '#888'}" title="${p.name}: ${i18n.t('schedule.timesCount').replace('{0}', String(p.count))}"></div>
                       `).join('')}
                     </div>
                   </div>
@@ -10096,13 +13301,13 @@ class KappaApp {
           
           <!-- SEKCJA 7: Tabela szczegółowa -->
           <div class="stats-section">
-            <h4>📋 Szczegóły pracowników</h4>
+            <h4>${i18n.t('schedule.employeeDetails')}</h4>
             <div class="stats-detail-table">
               <div class="stats-table-header">
-                <span>Pracownik</span>
-                <span>Przypisania</span>
-                <span>Zmiany</span>
-                <span>Projekty</span>
+                <span>${i18n.t('schedule.employeeLabel')}</span>
+                <span>${i18n.t('schedule.assignmentsCol')}</span>
+                <span>${i18n.t('schedule.shiftsCol')}</span>
+                <span>${i18n.t('schedule.projectsCol')}</span>
               </div>
               ${employeeStats.map(e => `
                 <div class="stats-table-row ${e.tasks === 0 ? 'inactive' : ''}">
@@ -10168,12 +13373,11 @@ class KappaApp {
     if (emp.status === type) {
       emp.status = 'available';
       await db.put('employees', emp);
-      this.showToast(`${emp.firstName} ${emp.lastName} wrócił do pracy`, 'success');
+      this.showToast(i18n.t('schedule.returnedToWork').replace('{0}', emp.firstName + ' ' + emp.lastName), 'success');
     } else {
       emp.status = type;
       await db.put('employees', emp);
-      const typeLabel = type === 'vacation' ? 'urlopie' : 'L4';
-      this.showToast(`${emp.firstName} ${emp.lastName} jest na ${typeLabel}`, 'success');
+      this.showToast(type === 'vacation' ? i18n.t('schedule.onVacation').replace('{0}', emp.firstName + ' ' + emp.lastName) : i18n.t('schedule.onSickLeave').replace('{0}', emp.firstName + ' ' + emp.lastName), 'success');
     }
     
     this.renderScheduleEmployeePanel();
@@ -10218,17 +13422,17 @@ class KappaApp {
         // Dodaj konkretny zakres pracy zamiast 'specific'
         let scopeLabel = '';
         if (a.scope === 'adhesion') {
-          scopeLabel = '🧪 Przyczepność';
+          scopeLabel = `🧪 ${i18n.t('schedule.scopeAdhesion')}`;
         } else if (a.scope === 'audit') {
-          scopeLabel = '🔍 Audyt';
+          scopeLabel = `🔍 ${i18n.t('schedule.scopeAudit')}`;
         } else if (a.testId) {
           const test = this.state.tests.find(t => t.id === a.testId);
           scopeLabel = `⚙️ ${test?.name || 'Test'}`;
         } else if (a.partId) {
           const part = this.state.parts.find(p => p.id === a.partId);
-          scopeLabel = `📦 ${part?.name || 'Część'}`;
+          scopeLabel = `📦 ${part?.name || i18n.t('schedule.part')}`;
         } else if (a.scope === 'project') {
-          scopeLabel = '📋 Cały projekt';
+          scopeLabel = `📋 ${i18n.t('schedule.scopeFullProject')}`;
         }
         
         if (scopeLabel && !g.scopes.includes(scopeLabel)) g.scopes.push(scopeLabel);
@@ -10252,7 +13456,7 @@ class KappaApp {
         ${hasAnyNotes ? '<span class="sched-popup-note-badge">📝</span>' : ''}
       </div>
       <div class="sched-popup-content">
-        <div class="sched-popup-week">KW${this.scheduleCurrentWeek} • ${assignments.length} przypisań</div>
+        <div class="sched-popup-week">${i18n.t('schedule.weekAssignments').replace('{0}', String(this.scheduleCurrentWeek)).replace('{1}', String(assignments.length))}</div>
         ${Array.from(grouped.entries()).map(([_, g]) => `
           <div class="sched-popup-assignment">
             <div class="sched-popup-project">${g.customer}</div>
@@ -10320,9 +13524,9 @@ class KappaApp {
       }
       
       let scopeLabel = '';
-      if (a.scope === 'adhesion') scopeLabel = 'Przyczepność';
-      else if (a.scope === 'audit') scopeLabel = 'Audyt';
-      else if (a.scope === 'project') scopeLabel = 'Cały projekt';
+      if (a.scope === 'adhesion') scopeLabel = i18n.t('schedule.scopeAdhesion');
+      else if (a.scope === 'audit') scopeLabel = i18n.t('schedule.scopeAudit');
+      else if (a.scope === 'project') scopeLabel = i18n.t('schedule.scopeFullProject');
       else if (a.testId) {
         const test = this.state.tests.find(t => t.id === a.testId);
         scopeLabel = test?.name || 'Test';
@@ -10409,7 +13613,7 @@ class KappaApp {
           </div>
         ` : `
           <div class="sched-popup-no-staff">
-            <span class="sched-popup-warning">⚠️ Brak przypisanych pracowników</span>
+            <span class="sched-popup-warning">${i18n.t('schedule.noAssignedEmployees')}</span>
           </div>
         `}
         
@@ -10484,15 +13688,15 @@ class KappaApp {
       const key = a.projectId;
       
       // Określ zakres pracy
-      let scope = 'Cały projekt';
+      let scope = i18n.t('schedule.scopeFullProject');
       let scopeClass = '';
       const details: string[] = [];
       
       if (a.scope === 'adhesion') {
-        scope = 'Przyczepność';
+        scope = i18n.t('schedule.scopeAdhesion');
         scopeClass = 'scope-adhesion';
       } else if (a.scope === 'audit') {
-        scope = 'Audyt';
+        scope = i18n.t('schedule.scopeAudit');
         scopeClass = 'scope-audit';
       } else if (a.testId) {
         const test = this.state.tests.find(t => t.id === a.testId);
@@ -10500,7 +13704,7 @@ class KappaApp {
         scopeClass = 'scope-test';
       } else if (a.partId) {
         const part = this.state.parts.find(p => p.id === a.partId);
-        scope = part?.name || 'Część';
+        scope = part?.name || i18n.t('schedule.partDefault');
         scopeClass = 'scope-part';
       }
       
@@ -10521,14 +13725,7 @@ class KappaApp {
         task.shifts.push(a.shift);
       }
       if (a.note && a.note.trim()) {
-        // Parsuj notatkę - usuń odpowiedzi (REPLIES)
-        let noteText = a.note;
-        if (noteText.includes('---REPLIES---')) {
-          noteText = noteText.split('---REPLIES---')[0].trim();
-        }
-        if (noteText) {
-          task.notes.push(`Z${a.shift}: ${noteText}`);
-        }
+        task.notes.push(`Z${a.shift}: ${a.note}`);
       }
     });
     
@@ -10537,8 +13734,11 @@ class KappaApp {
     const uniqueProjects = projectTasks.size;
     
     // Dni tygodnia
-    const days = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nie'];
-    const shiftNames = ['Rano', 'Pop.', 'Noc'];
+    const days = [
+      i18n.t('schedule.weekdayMon'), i18n.t('schedule.weekdayTue'), i18n.t('schedule.weekdayWed'),
+      i18n.t('schedule.weekdayThu'), i18n.t('schedule.weekdayFri'), i18n.t('schedule.weekdaySat'), i18n.t('schedule.weekdaySun')
+    ];
+    const shiftNames = [i18n.t('schedule.shiftMorningShort'), i18n.t('schedule.shiftAfternoonShort'), i18n.t('schedule.shiftNightShort')];
     
     // Utwórz overlay
     const overlay = document.createElement('div');
@@ -10556,11 +13756,11 @@ class KappaApp {
               </span>
               <span class="employee-modal-stat">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
-                ${uniqueProjects} ${uniqueProjects === 1 ? 'projekt' : 'projekty'}
+                ${uniqueProjects === 1 ? i18n.t('schedule.nProjects1').replace('{0}', String(uniqueProjects)) : i18n.t('schedule.nProjectsMany').replace('{0}', String(uniqueProjects))}
               </span>
               <span class="employee-modal-stat">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                ${totalShifts} ${totalShifts === 1 ? 'zmiana' : 'zmiany'}
+                ${totalShifts} ${totalShifts === 1 ? i18n.t('schedule.shiftSingular') : i18n.t('schedule.shiftPlural')}
               </span>
             </div>
           </div>
@@ -10571,7 +13771,7 @@ class KappaApp {
         <div class="employee-modal-body">
           ${projectTasks.size > 0 ? `
             <div class="employee-modal-section">
-              <h3>📋 Zadania w tym tygodniu</h3>
+              <h3>📋 ${i18n.t('schedule.tasksThisWeek')}</h3>
               <div class="employee-tasks-list">
                 ${Array.from(projectTasks.entries()).map(([_, task]) => `
                   <div class="employee-task-item">
@@ -10582,7 +13782,7 @@ class KappaApp {
                         <span class="employee-task-tag ${task.scopeClass}">${task.scope}</span>
                         ${task.shifts.sort().map(s => `<span class="employee-task-tag shift">Z${s} ${shiftNames[s-1]}</span>`).join('')}
                         ${task.details.slice(0, 3).map(d => `<span class="employee-task-tag">${d}</span>`).join('')}
-                        ${task.details.length > 3 ? `<span class="employee-task-tag">+${task.details.length - 3} więcej</span>` : ''}
+                        ${task.details.length > 3 ? `<span class="employee-task-tag">${i18n.t('schedule.moreItems').replace('{0}', String(task.details.length - 3))}</span>` : ''}
                       </div>
                       ${task.notes.length > 0 ? `
                         <div class="employee-task-notes">
@@ -10596,13 +13796,13 @@ class KappaApp {
             </div>
           ` : `
             <div class="employee-modal-section">
-              <h3>📋 Zadania w tym tygodniu</h3>
-              <p style="color: var(--color-text-muted); font-size: 0.85rem;">Brak przypisanych zadań w tym tygodniu.</p>
+              <h3>📋 ${i18n.t('schedule.tasksThisWeek')}</h3>
+              <p style="color: var(--color-text-muted); font-size: 0.85rem;">${i18n.t('schedule.noAssignedTasks')}</p>
             </div>
           `}
           
           <div class="employee-modal-section">
-            <h3>� Statystyki</h3>
+            <h3>📊 ${i18n.t('schedule.statisticsTitle')}</h3>
             <div class="employee-stats-grid">
               ${(() => {
                 // Oblicz statystyki z całego roku
@@ -10630,15 +13830,15 @@ class KappaApp {
                 return `
                   <div class="employee-stat-card">
                     <span class="employee-stat-value">${shiftsThisMonth}</span>
-                    <span class="employee-stat-label">Zmian w miesiącu</span>
+                    <span class="employee-stat-label">${i18n.t('schedule.shiftsInMonth')}</span>
                   </div>
                   <div class="employee-stat-card">
                     <span class="employee-stat-value">${shiftsThisYear}</span>
-                    <span class="employee-stat-label">Zmian w roku</span>
+                    <span class="employee-stat-label">${i18n.t('schedule.shiftsInYear')}</span>
                   </div>
                   <div class="employee-stat-card">
                     <span class="employee-stat-value">${uniqueProjectsYear}</span>
-                    <span class="employee-stat-label">Projektów w roku</span>
+                    <span class="employee-stat-label">${i18n.t('schedule.projectsInYear')}</span>
                   </div>
                 `;
               })()}
@@ -10646,19 +13846,19 @@ class KappaApp {
           </div>
           
           <div class="employee-modal-section">
-            <h3>⚡ Szybkie akcje</h3>
+            <h3>⚡ ${i18n.t('stats.quickActions')}</h3>
             <div class="employee-quick-actions">
               <button class="employee-action-btn" data-action="edit">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                Edytuj dane
+                ${i18n.t('stats.editData')}
               </button>
               <button class="employee-action-btn" data-action="vacation">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2"/></svg>
-                ${emp.status === 'vacation' ? 'Zakończ urlop' : 'Ustaw urlop'}
+                ${emp.status === 'vacation' ? i18n.t('schedule.endVacation') : i18n.t('schedule.setVacation')}
               </button>
               <button class="employee-action-btn" data-action="sick">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                ${emp.status === 'sick' ? 'Zakończ L4' : 'Ustaw L4'}
+                ${emp.status === 'sick' ? i18n.t('schedule.endSickLeave') : i18n.t('schedule.setSickLeave')}
               </button>
             </div>
           </div>
@@ -10685,13 +13885,13 @@ class KappaApp {
         } else if (action === 'vacation') {
           emp.status = emp.status === 'vacation' ? 'available' : 'vacation';
           await db.put('employees', emp);
-          this.showToast(emp.status === 'vacation' ? `${emp.firstName} jest na urlopie` : `${emp.firstName} wrócił z urlopu`, 'success');
+          this.showToast(emp.status === 'vacation' ? i18n.t('schedule.onVacation').replace('{0}', emp.firstName) : i18n.t('schedule.returnedFromVacation').replace('{0}', emp.firstName), 'success');
           overlay.remove();
           this.renderScheduleEmployeePanel();
         } else if (action === 'sick') {
           emp.status = emp.status === 'sick' ? 'available' : 'sick';
           await db.put('employees', emp);
-          this.showToast(emp.status === 'sick' ? `${emp.firstName} jest na L4` : `${emp.firstName} wrócił z L4`, 'success');
+          this.showToast(emp.status === 'sick' ? i18n.t('schedule.onSickLeave').replace('{0}', emp.firstName) : i18n.t('schedule.returnedFromSickLeave').replace('{0}', emp.firstName), 'success');
           overlay.remove();
           this.renderScheduleEmployeePanel();
         }
@@ -10722,7 +13922,7 @@ class KappaApp {
       const weekKey = `${year}-KW${week.toString().padStart(2, '0')}`;
       const count = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey).length;
       if (count > 0) {
-        weeks.push({ year, week, label: `KW${week.toString().padStart(2, '0')} ${year} (${count} przypisań)` });
+        weeks.push({ year, week, label: `KW${week.toString().padStart(2, '0')} ${year} (${count} ${i18n.t('schedule.assignmentsLabel').toLowerCase()})` });
       }
     }
     
@@ -10730,7 +13930,7 @@ class KappaApp {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
       </svg>
-      Kopiuj tydzień
+      ${i18n.t('schedule.copyWeekTitle')}
     `;
     
     modalBody.innerHTML = `
@@ -10739,12 +13939,12 @@ class KappaApp {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
           </svg>
-          <span>Skopiuj przypisania z poprzedniego tygodnia do KW${this.scheduleCurrentWeek}.</span>
+          <span>${i18n.t('schedule.copyAssignmentsHint').replace('{0}', String(this.scheduleCurrentWeek))}</span>
         </div>
         
         ${weeks.length > 0 ? `
           <div class="form-group">
-            <label class="form-label">Kopiuj z:</label>
+            <label class="form-label">${i18n.t('schedule.copyFrom')}</label>
             <select id="copySourceWeek" class="form-control">
               ${weeks.map(w => `<option value="${w.year}-${w.week}">${w.label}</option>`).join('')}
             </select>
@@ -10753,11 +13953,11 @@ class KappaApp {
           <div class="form-group">
             <label class="form-checkbox">
               <input type="checkbox" id="copyOverwrite" checked>
-              <span>Zastąp istniejące przypisania</span>
+              <span>${i18n.t('schedule.replaceExisting')}</span>
             </label>
           </div>
         ` : `
-          <p class="form-hint">Brak tygodni z przypisaniami do skopiowania.</p>
+          <p class="form-hint">${i18n.t('schedule.noWeeksToCopy')}</p>
         `}
       </div>
     `;
@@ -10765,7 +13965,7 @@ class KappaApp {
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     if (weeks.length > 0) {
       confirmBtn.style.display = '';
-      confirmBtn.textContent = 'Kopiuj';
+      confirmBtn.textContent = i18n.t('schedule.copy');
       confirmBtn.onclick = async () => {
         const sourceVal = (document.getElementById('copySourceWeek') as HTMLSelectElement).value;
         const overwrite = (document.getElementById('copyOverwrite') as HTMLInputElement).checked;
@@ -10819,8 +14019,8 @@ class KappaApp {
       }
     }
     
-    this.logScheduleChange('added', `${copied} przypisań`, `skopiowano z ${sourceWeekKey}`);
-    this.showToast(`Skopiowano ${copied} przypisań z ${sourceWeekKey}`, 'success');
+    this.logScheduleChange('added', `${copied} ${i18n.t('schedule.assignmentsLabel').toLowerCase()}`, `${i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', sourceWeekKey)}`);
+    this.showToast(i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', sourceWeekKey), 'success');
     this.renderScheduleContent();
     this.renderScheduleEmployeePanel();
     this.updateCoverageBar();
@@ -10840,7 +14040,7 @@ class KappaApp {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
       </svg>
-      Szablony grafiku
+      ${i18n.t('schedule.templatesTitle')}
     `;
     
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
@@ -10849,34 +14049,34 @@ class KappaApp {
     modalBody.innerHTML = `
       <div class="templates-modal">
         <div class="templates-section">
-          <h4>💾 Zapisz obecny tydzień jako szablon</h4>
+          <h4>${i18n.t('schedule.saveCurrentWeek')}</h4>
           <div class="templates-save-form">
-            <input type="text" id="templateName" class="form-control" placeholder="Nazwa szablonu...">
+            <input type="text" id="templateName" class="form-control" placeholder="${i18n.t('schedule.templateNamePlaceholder')}">
             <button class="btn-primary" id="saveTemplateBtn" ${currentCount === 0 ? 'disabled' : ''}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-              Zapisz
+              ${i18n.t('schedule.saveBtn')}
             </button>
           </div>
-          ${currentCount === 0 ? '<p class="form-hint">Brak przypisań do zapisania.</p>' : `<p class="form-hint">${currentCount} przypisań do zapisania.</p>`}
+          ${currentCount === 0 ? `<p class="form-hint">${i18n.t('schedule.noAssignmentsToSave')}</p>` : `<p class="form-hint">${i18n.t('schedule.assignmentsToSave').replace('{0}', String(currentCount))}</p>`}
         </div>
         
         <div class="templates-section">
-          <h4>📂 Dostępne szablony</h4>
+          <h4>${i18n.t('schedule.availableTemplates')}</h4>
           ${templates.length === 0 ? `
-            <p class="templates-empty">Brak zapisanych szablonów.</p>
+            <p class="templates-empty">${i18n.t('schedule.noTemplates')}</p>
           ` : `
             <div class="templates-list">
               ${templates.map(t => `
                 <div class="template-item" data-id="${t.id}">
                   <div class="template-info">
                     <span class="template-name">${t.name}</span>
-                    <span class="template-meta">${t.assignments.length} przypisań • ${new Date(t.createdAt).toLocaleDateString('pl')}</span>
+                    <span class="template-meta">${i18n.t('schedule.templateAssignmentsCount').replace('{0}', String(t.assignments.length))} • ${new Date(t.createdAt).toLocaleDateString()}</span>
                   </div>
                   <div class="template-actions">
-                    <button class="template-apply" data-id="${t.id}" title="Zastosuj">
+                    <button class="template-apply" data-id="${t.id}" title="${i18n.t('schedule.applyTitle')}">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg>
                     </button>
-                    <button class="template-delete" data-id="${t.id}" title="Usuń">
+                    <button class="template-delete" data-id="${t.id}" title="${i18n.t('common.delete')}">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
                     </button>
                   </div>
@@ -10894,7 +14094,7 @@ class KappaApp {
     // Save template
     modalBody.querySelector('#saveTemplateBtn')?.addEventListener('click', async () => {
       const name = (document.getElementById('templateName') as HTMLInputElement).value.trim();
-      if (!name) { this.showToast('Podaj nazwę szablonu', 'warning'); return; }
+      if (!name) { this.showToast(i18n.t('schedule.enterTemplateName'), 'warning'); return; }
       
       const assignments = this.state.scheduleAssignments
         .filter((a: ScheduleAssignment) => a.week === weekKey)
@@ -10903,7 +14103,7 @@ class KappaApp {
       const template = { id: crypto.randomUUID(), name, data: assignments, createdAt: Date.now() };
       await db.addTemplate(template);
       
-      this.showToast(`Szablon "${name}" zapisany`, 'success');
+      this.showToast(i18n.t('schedule.templateSaved').replace('{0}', name), 'success');
       this.hideModal();
     });
     
@@ -10926,7 +14126,7 @@ class KappaApp {
           await db.put('scheduleAssignments', newAssign);
         }
         
-        this.showToast(`Szablon "${template.name}" zastosowany`, 'success');
+        this.showToast(i18n.t('schedule.templateApplied').replace('{0}', template.name), 'success');
         this.hideModal();
         this.renderScheduleContent();
         this.renderScheduleEmployeePanel();
@@ -10941,7 +14141,7 @@ class KappaApp {
         const template = templates.find(t => t.id === id);
         if (template) {
           await db.deleteTemplate(id!);
-          this.showToast(`Szablon "${template.name}" usunięty`, 'success');
+          this.showToast(i18n.t('schedule.templateDeleted').replace('{0}', template.name), 'success');
           this.showTemplatesModal(); // Refresh
         }
       });
@@ -10964,7 +14164,7 @@ class KappaApp {
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 01-3.46 0"/>
       </svg>
-      Powiadomienia
+      ${i18n.t('schedule.notificationsTitle')}
     `;
     
     modalBody.innerHTML = `
@@ -10973,50 +14173,50 @@ class KappaApp {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
           </svg>
-          <span>Konfiguruj powiadomienia email dla grafiku.</span>
+          <span>${i18n.t('schedule.notificationsDesc')}</span>
         </div>
         
         <div class="form-group">
           <label class="form-label">Email:</label>
-          <input type="email" id="notifyEmail" class="form-control" placeholder="twoj@email.pl" value="${settings.email || ''}">
+          <input type="email" id="notifyEmail" class="form-control" placeholder="email@example.com" value="${settings.email || ''}">
         </div>
         
         <div class="form-group">
           <label class="form-checkbox">
             <input type="checkbox" id="notifyEnabled" ${settings.enabled ? 'checked' : ''}>
-            <span>Włącz powiadomienia email</span>
+            <span>${i18n.t('schedule.enableNotifications')}</span>
           </label>
         </div>
         
         <div class="form-group" style="margin-left: 24px;">
           <label class="form-checkbox">
             <input type="checkbox" id="notifyOnAssign" ${settings.onAssign !== false ? 'checked' : ''}>
-            <span>Powiadom gdy zostanę przypisany</span>
+            <span>${i18n.t('schedule.notifyOnAssign')}</span>
           </label>
           <label class="form-checkbox">
             <input type="checkbox" id="notifyOnUnassign" ${settings.onUnassign !== false ? 'checked' : ''}>
-            <span>Powiadom gdy zostanę usunięty</span>
+            <span>${i18n.t('schedule.notifyOnUnassign')}</span>
           </label>
           <label class="form-checkbox">
             <input type="checkbox" id="notifyDailyDigest" ${settings.dailyDigest ? 'checked' : ''}>
-            <span>Codzienne podsumowanie (8:00)</span>
+            <span>${i18n.t('schedule.dailyDigest')}</span>
           </label>
         </div>
         
         <div class="notification-preview">
-          <h4>📧 Podgląd wiadomości</h4>
+          <h4>📧 ${i18n.t('schedule.messagePreview')}</h4>
           <div class="email-preview">
             <div class="email-preview-header">
               <strong>Od:</strong> grafik@kappa-system.pl<br>
-              <strong>Do:</strong> <span id="previewEmail">${settings.email || 'twoj@email.pl'}</span><br>
-              <strong>Temat:</strong> Nowe przypisanie w grafiku - KW${this.scheduleCurrentWeek}
+              <strong>Do:</strong> <span id="previewEmail">${settings.email || 'email@example.com'}</span><br>
+              <strong>${i18n.t('schedule.emailSubject')}:</strong> ${i18n.t('schedule.newAssignment')} - KW${this.scheduleCurrentWeek}
             </div>
             <div class="email-preview-body">
-              Zostałeś przypisany do projektu:<br><br>
-              <strong>Klient:</strong> BMW<br>
-              <strong>Typ:</strong> Interior<br>
-              <strong>Zmiana:</strong> Z1 (6:00-14:00)<br>
-              <strong>Tydzień:</strong> KW${this.scheduleCurrentWeek}
+              ${i18n.t('schedule.assignedToProject')}:<br><br>
+              <strong>${i18n.t('schedule.client')}:</strong> BMW<br>
+              <strong>${i18n.t('schedule.type')}:</strong> Interior<br>
+              <strong>${i18n.t('schedule.shift')}:</strong> Z1 (6:00-14:00)<br>
+              <strong>${i18n.t('schedule.week')}:</strong> KW${this.scheduleCurrentWeek}
             </div>
           </div>
         </div>
@@ -11025,7 +14225,7 @@ class KappaApp {
     
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     confirmBtn.style.display = '';
-    confirmBtn.textContent = 'Zapisz ustawienia';
+    confirmBtn.textContent = i18n.t('schedule.saveSettings');
     confirmBtn.onclick = async () => {
       const newSettings = {
         email: (document.getElementById('notifyEmail') as HTMLInputElement).value,
@@ -11035,13 +14235,13 @@ class KappaApp {
         dailyDigest: (document.getElementById('notifyDailyDigest') as HTMLInputElement).checked
       };
       await db.setPreference('kappa_notification_settings', newSettings);
-      this.showToast('Ustawienia powiadomień zapisane', 'success');
+      this.showToast(i18n.t('schedule.notificationsSaved'), 'success');
       this.hideModal();
     };
     
     // Update preview email
     document.getElementById('notifyEmail')?.addEventListener('input', (e) => {
-      const email = (e.target as HTMLInputElement).value || 'twoj@email.pl';
+      const email = (e.target as HTMLInputElement).value || 'email@example.com';
       const preview = document.getElementById('previewEmail');
       if (preview) preview.textContent = email;
     });
@@ -11061,198 +14261,86 @@ class KappaApp {
     // Pobierz zapisane adresy email z bazy danych
     const savedEmails = await db.getPreference('kappa_email_addresses') || '';
     
-    // Pobierz pracowników z przypisaniami w tym tygodniu
-    const employeesWithAssignments = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      if (emp) {
-        if (!employeesWithAssignments.has(emp.id)) {
-          employeesWithAssignments.set(emp.id, { emp, assignments: [] });
-        }
-        employeesWithAssignments.get(emp.id)!.assignments.push(a);
-      }
-    });
-    
-    // Managerowie
-    const managers = this.state.employees.filter(e => e.role === 'manager' && e.email);
-    
     modalTitle.innerHTML = `
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
       </svg>
-      Centrum komunikacji - ${weekKey}
+      ${i18n.t('schedule.sendScheduleEmail')}
     `;
     
+    // Grupuj przypisania wg pracownika
+    const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (emp) {
+        if (!byEmployee.has(emp.id)) {
+          byEmployee.set(emp.id, { emp, assignments: [] });
+        }
+        byEmployee.get(emp.id)!.assignments.push(a);
+      }
+    });
+    
     modalBody.innerHTML = `
-      <div class="send-email-modal send-email-modal-expanded">
-        <!-- Zakładki -->
-        <div class="email-tabs">
-          <button class="email-tab active" data-tab="general">
+      <div class="send-email-modal">
+        <div class="info-box info-box-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+          </svg>
+          <span>${i18n.t('schedule.sendScheduleDesc')}</span>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">${i18n.t('schedule.emailAddressesLabel')}:</label>
+          <textarea id="emailAddresses" class="form-control" rows="2" placeholder="user1@company.com, user2@company.com">${savedEmails}</textarea>
+        </div>
+        
+        <div class="form-group">
+          <label class="form-label">${i18n.t('schedule.messageType')}:</label>
+          <div class="email-type-options">
+            <label class="radio-option">
+              <input type="radio" name="emailType" value="general" checked>
+              <span>📋 ${i18n.t('schedule.generalSchedule')}</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="emailType" value="individual">
+              <span>👤 ${i18n.t('schedule.individualEmails')}</span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="email-preview-section">
+          <h4>📧 ${i18n.t('schedule.messagePreview')}</h4>
+          <div class="email-preview" id="emailPreviewContent">
+            ${this.generateScheduleEmailHtml(weekKey, 'general')}
+          </div>
+        </div>
+        
+        <div class="form-actions" style="margin-top: 16px; display: flex; gap: 12px;">
+          <button class="btn btn-primary" id="sendGeneralEmail">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
+            ${i18n.t('schedule.openInOutlook')}
+          </button>
+          <button class="btn btn-secondary" id="sendIndividualEmails" style="display: none;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            Grafik ogólny
+            ${i18n.t('schedule.sendToAll')}
           </button>
-          <button class="email-tab" data-tab="individual">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-            Indywidualne
-          </button>
-          <button class="email-tab" data-tab="manager">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
-            Raport manager
-          </button>
-        </div>
-        
-        <!-- Panel: Grafik ogólny -->
-        <div class="email-panel active" id="panel-general">
-          <div class="info-box info-box-primary">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
-            <span>Wyślij pełny grafik tygodniowy do wybranych odbiorców przez Outlook.</span>
-          </div>
-          
-          <div class="form-group">
-            <label class="form-label">Adresy email odbiorców:</label>
-            <textarea id="emailAddresses" class="form-control" rows="2" placeholder="email1@firma.pl, email2@firma.pl">${savedEmails}</textarea>
-          </div>
-          
-          <div class="email-preview-section">
-            <div class="email-preview-header">
-              <h4>📧 Podgląd wiadomości</h4>
-              <button class="btn btn-small btn-outline" id="btnDownloadPDF">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Pobierz PDF
-              </button>
-            </div>
-            <div class="email-preview" id="emailPreviewGeneral">
-              ${this.generateScheduleEmailHtml(weekKey, 'general')}
-            </div>
-          </div>
-          
-          <div class="form-actions">
-            <button class="btn btn-primary" id="sendGeneralEmail">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-              Otwórz w Outlook
-            </button>
-          </div>
-        </div>
-        
-        <!-- Panel: Indywidualne -->
-        <div class="email-panel" id="panel-individual">
-          <div class="info-box info-box-primary">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
-            <span>Każdy pracownik otrzyma spersonalizowany email ze swoim grafikiem i informacją o urlopie.</span>
-          </div>
-          
-          <div class="employee-email-list">
-            <div class="employee-list-header">
-              <span>Pracownicy z przypisaniami (${employeesWithAssignments.size})</span>
-              <label class="checkbox-inline">
-                <input type="checkbox" id="selectAllEmployees" checked> Zaznacz wszystkich
-              </label>
-            </div>
-            
-            <div class="employee-check-list" id="employeeCheckList">
-              ${Array.from(employeesWithAssignments.values()).map(({ emp, assignments }) => `
-                <label class="employee-check-item ${emp.email ? '' : 'no-email'}">
-                  <input type="checkbox" name="empCheck" value="${emp.id}" ${emp.email ? 'checked' : 'disabled'}>
-                  <span class="emp-color" style="background: ${emp.color}"></span>
-                  <span class="emp-name">${emp.firstName} ${emp.lastName}</span>
-                  <span class="emp-email">${emp.email || '⚠️ brak email'}</span>
-                  <span class="emp-badge">${assignments.length} przyp.</span>
-                  <button class="btn-icon btn-preview" data-emp="${emp.id}" title="Podgląd">👁️</button>
-                  <button class="btn-icon btn-ics" data-emp="${emp.id}" title="Pobierz ICS">📅</button>
-                </label>
-              `).join('')}
-            </div>
-          </div>
-          
-          <div class="email-preview-section">
-            <h4>📧 Podgląd przykładowej wiadomości</h4>
-            <div class="email-preview" id="emailPreviewIndividual">
-              ${employeesWithAssignments.size > 0 ? 
-                this.generateIndividualEmailHtml(
-                  Array.from(employeesWithAssignments.keys())[0], 
-                  weekKey
-                ) : '<p style="text-align:center;color:#94a3b8;">Brak pracowników z przypisaniami</p>'}
-            </div>
-          </div>
-          
-          <div class="form-actions">
-            <button class="btn btn-primary" id="sendIndividualEmails">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-              Wyślij do zaznaczonych
-            </button>
-            <button class="btn btn-secondary" id="downloadAllICS">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-              Pobierz wszystkie ICS
-            </button>
-          </div>
-        </div>
-        
-        <!-- Panel: Raport manager -->
-        <div class="email-panel" id="panel-manager">
-          <div class="info-box info-box-primary">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-            </svg>
-            <span>Raport z analizą pokrycia zmian, obciążenia i nieobecności dla kadry zarządzającej.</span>
-          </div>
-          
-          <div class="form-group">
-            <label class="form-label">Wyślij do managerów:</label>
-            <div class="manager-list">
-              ${managers.length > 0 ? managers.map(m => `
-                <label class="checkbox-inline">
-                  <input type="checkbox" name="managerCheck" value="${m.id}" checked>
-                  ${m.firstName} ${m.lastName} (${m.email})
-                </label>
-              `).join('') : `
-                <div class="warning-box">
-                  ⚠️ Brak pracowników z rolą "Manager" lub bez przypisanego emaila.
-                  <a href="#" id="addManagerLink">Dodaj managera</a>
-                </div>
-              `}
-            </div>
-          </div>
-          
-          <div class="email-preview-section">
-            <h4>📊 Podgląd raportu</h4>
-            <div class="email-preview" id="emailPreviewManager">
-              ${this.generateManagerReportHtml(weekKey)}
-            </div>
-          </div>
-          
-          <div class="form-actions">
-            <button class="btn btn-primary" id="sendManagerReport">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-              Wyślij raport
-            </button>
-          </div>
         </div>
       </div>
     `;
     
-    // Obsługa zakładek
-    modalBody.querySelectorAll('.email-tab').forEach(tab => {
-      tab.addEventListener('click', () => {
-        modalBody.querySelectorAll('.email-tab').forEach(t => t.classList.remove('active'));
-        modalBody.querySelectorAll('.email-panel').forEach(p => p.classList.remove('active'));
-        tab.classList.add('active');
-        const panelId = `panel-${(tab as HTMLElement).dataset.tab}`;
-        document.getElementById(panelId)?.classList.add('active');
+    // Obsługa zmiany typu
+    modalBody.querySelectorAll('input[name="emailType"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        const type = (e.target as HTMLInputElement).value as 'general' | 'individual';
+        document.getElementById('emailPreviewContent')!.innerHTML = this.generateScheduleEmailHtml(weekKey, type);
+        document.getElementById('sendGeneralEmail')!.style.display = type === 'general' ? '' : 'none';
+        document.getElementById('sendIndividualEmails')!.style.display = type === 'individual' ? '' : 'none';
       });
     });
     
-    // Zapisz adresy email
+    // Zapisz adresy email do bazy danych
     document.getElementById('emailAddresses')?.addEventListener('blur', async (e) => {
       await db.setPreference('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
-    });
-    
-    // Pobierz PDF
-    document.getElementById('btnDownloadPDF')?.addEventListener('click', () => {
-      this.generateSchedulePDF(weekKey);
     });
     
     // Wysyłanie ogólnego emaila
@@ -11263,113 +14351,33 @@ class KappaApp {
         .filter(e => e);
       
       if (emails.length === 0) {
-        this.showToast('Wprowadź przynajmniej jeden adres email', 'warning');
+        this.showToast(i18n.t('schedule.enterEmailAddress'), 'warning');
         return;
       }
       
       await db.setPreference('kappa_email_addresses', emails.join(', '));
-      this.openOutlookEmail(emails.join('; '), `Grafik ${weekKey}`, this.generateScheduleEmailBody(weekKey, 'general'));
+      this.openOutlookEmail(emails.join('; '), i18n.t('schedule.weeklySchedule') + ' ' + weekKey, this.generateScheduleEmailBody(weekKey, 'general'));
       this.hideModal();
-    });
-    
-    // Zaznacz wszystkich pracowników
-    document.getElementById('selectAllEmployees')?.addEventListener('change', (e) => {
-      const checked = (e.target as HTMLInputElement).checked;
-      document.querySelectorAll('input[name="empCheck"]:not(:disabled)').forEach(cb => {
-        (cb as HTMLInputElement).checked = checked;
-      });
-    });
-    
-    // Podgląd indywidualny
-    document.querySelectorAll('.btn-preview').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const empId = (btn as HTMLElement).dataset.emp!;
-        document.getElementById('emailPreviewIndividual')!.innerHTML = this.generateIndividualEmailHtml(empId, weekKey);
-      });
-    });
-    
-    // Pobierz ICS dla pracownika
-    document.querySelectorAll('.btn-ics').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const empId = (btn as HTMLElement).dataset.emp!;
-        this.downloadICS(empId, weekKey);
-      });
-    });
-    
-    // Pobierz wszystkie ICS
-    document.getElementById('downloadAllICS')?.addEventListener('click', () => {
-      const checked = document.querySelectorAll('input[name="empCheck"]:checked');
-      if (checked.length === 0) {
-        this.showToast('Zaznacz przynajmniej jednego pracownika', 'warning');
-        return;
-      }
-      checked.forEach(cb => {
-        const empId = (cb as HTMLInputElement).value;
-        this.downloadICS(empId, weekKey);
-      });
     });
     
     // Wysyłanie indywidualnych maili
     document.getElementById('sendIndividualEmails')?.addEventListener('click', () => {
-      const checked = document.querySelectorAll('input[name="empCheck"]:checked');
-      if (checked.length === 0) {
-        this.showToast('Zaznacz przynajmniej jednego pracownika', 'warning');
-        return;
-      }
-      
       let count = 0;
-      checked.forEach(cb => {
-        const empId = (cb as HTMLInputElement).value;
-        const emp = this.state.employees.find(e => e.id === empId);
-        if (emp?.email) {
-          this.openOutlookEmail(
-            emp.email, 
-            `Twój grafik na ${weekKey} - ${emp.firstName} ${emp.lastName}`, 
-            this.generateEmployeeScheduleEmailBody(emp.id, weekKey)
-          );
+      byEmployee.forEach(({ emp }) => {
+        const email = this.getEmployeeEmail(emp);
+        if (email) {
+          this.openOutlookEmail(email, i18n.t('schedule.yourScheduleFor').replace('{0}', weekKey) + ` - ${emp.firstName} ${emp.lastName}`, 
+            this.generateEmployeeScheduleEmailBody(emp.id, weekKey));
           count++;
         }
       });
       
       if (count > 0) {
-        this.showToast(`Otwarto ${count} okien Outlook`, 'success');
-        this.hideModal();
+        this.showToast(i18n.t('schedule.outlookOpened').replace('{0}', String(count)), 'success');
+      } else {
+        this.showToast(i18n.t('schedule.noEmailAddresses'), 'warning');
       }
-    });
-    
-    // Wysyłanie raportu do managerów
-    document.getElementById('sendManagerReport')?.addEventListener('click', () => {
-      const checked = document.querySelectorAll('input[name="managerCheck"]:checked');
-      if (checked.length === 0) {
-        this.showToast('Zaznacz przynajmniej jednego managera', 'warning');
-        return;
-      }
-      
-      const emails: string[] = [];
-      checked.forEach(cb => {
-        const empId = (cb as HTMLInputElement).value;
-        const emp = this.state.employees.find(e => e.id === empId);
-        if (emp?.email) emails.push(emp.email);
-      });
-      
-      if (emails.length > 0) {
-        this.openOutlookEmail(
-          emails.join('; '), 
-          `Raport tygodniowy ${weekKey} - Kappa Plannung`, 
-          this.generateManagerReportBody(weekKey)
-        );
-        this.showToast('Otwarto Outlook z raportem', 'success');
-        this.hideModal();
-      }
-    });
-    
-    // Link do dodania managera
-    document.getElementById('addManagerLink')?.addEventListener('click', (e) => {
-      e.preventDefault();
       this.hideModal();
-      setTimeout(() => this.showAddEmployeeModal(), 300);
     });
     
     // Ukryj domyślny przycisk potwierdzenia
@@ -11377,51 +14385,6 @@ class KappaApp {
     confirmBtn.style.display = 'none';
     
     modal.classList.add('active');
-  }
-
-  private generateManagerReportBody(weekKey: string): string {
-    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    const activeEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
-    
-    // Zlicz projekty z weeks jako obiekt
-    const projectsWithSoll = this.state.projects.filter(p => {
-      if (!p.weeks) return false;
-      const weekData = p.weeks[weekKey];
-      return weekData && weekData.soll && weekData.soll > 0;
-    });
-    const totalShifts = projectsWithSoll.length * 3;
-    const coveredShifts = new Set(weekAssignments.map(a => `${a.projectId}-${a.shift}`)).size;
-    const coveragePercent = totalShifts > 0 ? Math.round((coveredShifts / totalShifts) * 100) : 0;
-    
-    let body = `RAPORT TYGODNIOWY ${weekKey}\\n`;
-    body += `DRÄXLMAIER Kappa Plannung\\n`;
-    body += `================================\\n\\n`;
-    body += `📊 PODSUMOWANIE:\\n`;
-    body += `   Pokrycie zmian: ${coveragePercent}%\\n`;
-    body += `   Liczba przypisań: ${weekAssignments.length}\\n`;
-    body += `   Dostępnych pracowników: ${activeEmployees.length}\\n\\n`;
-    
-    const workloadMap = new Map<string, number>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      workloadMap.set(a.employeeId, (workloadMap.get(a.employeeId) || 0) + 1);
-    });
-    
-    if (workloadMap.size > 0) {
-      body += `👥 OBCIĄŻENIE PRACOWNIKÓW:\\n`;
-      Array.from(workloadMap.entries())
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 10)
-        .forEach(([empId, count]) => {
-          const emp = this.state.employees.find(e => e.id === empId);
-          if (emp) {
-            body += `   ${emp.firstName} ${emp.lastName}: ${count} przypisań\\n`;
-          }
-        });
-    }
-    
-    body += `\\nWygenerowano: ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')}`;
-    
-    return body;
   }
   
   private generateScheduleEmailHtml(weekKey: string, type: 'general' | 'individual'): string {
@@ -11448,12 +14411,12 @@ class KappaApp {
         }
       });
       
-      const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
+      const shiftNames = [i18n.t('schedule.shiftName1'), i18n.t('schedule.shiftName2'), i18n.t('schedule.shiftName3')];
       
       return `
         <div style="font-family: Arial, sans-serif; max-width: 600px;">
           <div style="background: #0097AC; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h2 style="margin: 0;">📅 Grafik tygodniowy ${weekKey}</h2>
+            <h2 style="margin: 0;">📅 ${i18n.t('schedule.weeklySchedule')} ${weekKey}</h2>
             <p style="margin: 8px 0 0; opacity: 0.9;">DRÄXLMAIER Kappa Plannung</p>
           </div>
           <div style="padding: 20px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 8px 8px;">
@@ -11472,7 +14435,7 @@ class KappaApp {
                 `).join('')}
               </div>
             `).join('')}
-            ${byProject.size === 0 ? '<p style="text-align: center; color: #64748b;">Brak przypisań w tym tygodniu</p>' : ''}
+            ${byProject.size === 0 ? '<p style="text-align: center; color: #64748b;">' + i18n.t('schedule.noAssignmentsThisWeek') + '</p>' : ''}
           </div>
         </div>
       `;
@@ -11481,15 +14444,15 @@ class KappaApp {
       return `
         <div style="font-family: Arial, sans-serif; max-width: 600px;">
           <div style="background: #0097AC; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h2 style="margin: 0;">👤 Twój grafik na ${weekKey}</h2>
-            <p style="margin: 8px 0 0; opacity: 0.9;">Indywidualna wiadomość dla każdego pracownika</p>
+            <h2 style="margin: 0;">👤 ${i18n.t('schedule.yourScheduleFor').replace('{0}', weekKey)}</h2>
+            <p style="margin: 8px 0 0; opacity: 0.9;">${i18n.t('schedule.individualMessage')}</p>
           </div>
           <div style="padding: 20px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 8px 8px;">
-            <p style="color: #64748b;">Każdy pracownik otrzyma email z listą swoich przypisań:</p>
+            <p style="color: #64748b;">${i18n.t('schedule.eachEmployeeReceives')}:</p>
             <ul style="color: #1e293b;">
-              <li>Projekty do realizacji</li>
-              <li>Zmiany i godziny pracy</li>
-              <li>Szczegóły zadań (audyt, przyczepność itp.)</li>
+              <li>${i18n.t('schedule.projectsToRealize')}</li>
+              <li>${i18n.t('schedule.shiftsAndHours')}</li>
+              <li>${i18n.t('schedule.taskDetails')}</li>
             </ul>
           </div>
         </div>
@@ -11548,8 +14511,8 @@ class KappaApp {
     
     const shiftNames = ['Z1 (6:00-14:00)', 'Z2 (14:00-22:00)', 'Z3 (22:00-6:00)'];
     
-    let body = `Cześć ${emp.firstName}!\\n\\n`;
-    body += `Oto Twój grafik na ${weekKey}:\\n`;
+    let body = `${i18n.t('schedule.emailGreeting').replace('{0}', emp.firstName)}\\n\\n`;
+    body += `${i18n.t('schedule.emailYourSchedule').replace('{0}', weekKey)}\\n`;
     body += `================================\\n\\n`;
     
     assignments.forEach((a: ScheduleAssignment) => {
@@ -11562,400 +14525,28 @@ class KappaApp {
         body += `   ⏰ ${shiftNames[a.shift - 1]}\\n`;
         
         if (a.scope !== 'project') {
-          const scopeLabels: Record<string, string> = { audit: 'Audyt', adhesion: 'Przyczepność', specific: 'Specyficzne zadanie' };
-          body += `   📋 Zakres: ${scopeLabels[a.scope] || a.scope}\\n`;
+          const scopeLabels: Record<string, string> = { audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
+          body += `   📋 ${i18n.t('schedule.scope')}: ${scopeLabels[a.scope] || a.scope}\\n`;
         }
         body += `\\n`;
       }
     });
     
-    body += `\\nPowodzenia!\\nZespół Kappa`;
+    body += `\\n${i18n.t('schedule.goodLuck')}\\n${i18n.t('schedule.teamKappa')}`;
     
     return body;
   }
   
   private getEmployeeEmail(emp: Employee): string | null {
-    return emp.email || null;
+    // Sprawdź czy pracownik ma email (możesz dodać pole email do Employee)
+    // Na razie zwracamy null - trzeba będzie rozszerzyć model Employee
+    return (emp as any).email || null;
   }
   
   private openOutlookEmail(to: string, subject: string, body: string): void {
+    // Użyj protokołu mailto: który otworzy domyślny klient pocztowy (Outlook)
     const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.replace(/\\n/g, '\n'))}`;
     window.open(mailtoUrl, '_blank');
-  }
-
-  // ==================== ROZBUDOWANY SYSTEM EMAILOWY ====================
-
-  private generateManagerReportHtml(weekKey: string): string {
-    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    const activeEmployees = this.state.employees.filter(e => !e.status || e.status === 'available');
-    
-    // Statystyki pokrycia - sprawdź weeks jako obiekt
-    const projectsWithSoll = this.state.projects.filter(p => {
-      if (!p.weeks) return false;
-      const weekData = p.weeks[weekKey];
-      return weekData && weekData.soll && weekData.soll > 0;
-    });
-    const totalShifts = projectsWithSoll.length * 3;
-    const coveredShifts = new Set(weekAssignments.map(a => `${a.projectId}-${a.shift}`)).size;
-    const coveragePercent = totalShifts > 0 ? Math.round((coveredShifts / totalShifts) * 100) : 0;
-    
-    // Obciążenie pracowników
-    const workloadMap = new Map<string, number>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      workloadMap.set(a.employeeId, (workloadMap.get(a.employeeId) || 0) + 1);
-    });
-    
-    const avgWorkload = workloadMap.size > 0 ? 
-      Math.round(Array.from(workloadMap.values()).reduce((a, b) => a + b, 0) / workloadMap.size * 10) / 10 : 0;
-    
-    // Projekty z problemami (niskie pokrycie)
-    const projectIssues: { name: string; issue: string }[] = [];
-    this.state.projects.forEach(p => {
-      const weekData = p.weeks ? p.weeks[weekKey] : null;
-      if (weekData && weekData.soll && weekData.soll > 0) {
-        const assignments = weekAssignments.filter((a: ScheduleAssignment) => 
-          a.projectId === p.id || a.projectId === `${p.customer_id}-${p.type_id}`
-        );
-        if (assignments.length === 0) {
-          const customer = this.state.customers.find(c => c.id === p.customer_id);
-          projectIssues.push({ name: `${customer?.name} - ${p.type_id}`, issue: 'Brak przypisań!' });
-        }
-      }
-    });
-    
-    // Nieobecności
-    const weekStart = this.getWeekStartDate(this.scheduleCurrentYear, this.scheduleCurrentWeek);
-    const absences = (this.state.absences || []).filter(a => {
-      const start = new Date(a.startDate);
-      const end = new Date(a.endDate);
-      return start <= new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000) && end >= weekStart;
-    });
-    
-    return `
-      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 700px; margin: 0 auto;">
-        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #0097AC 100%); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
-          <h2 style="margin: 0; font-size: 24px;">📊 Raport tygodniowy ${weekKey}</h2>
-          <p style="margin: 8px 0 0; opacity: 0.9;">Podsumowanie dla kadry zarządzającej</p>
-        </div>
-        
-        <div style="padding: 24px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none;">
-          <!-- KPI Cards -->
-          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px;">
-            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-              <div style="font-size: 32px; font-weight: bold; color: ${coveragePercent >= 80 ? '#10b981' : coveragePercent >= 50 ? '#f59e0b' : '#ef4444'};">${coveragePercent}%</div>
-              <div style="color: #64748b; font-size: 12px;">Pokrycie zmian</div>
-            </div>
-            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-              <div style="font-size: 32px; font-weight: bold; color: #0097AC;">${weekAssignments.length}</div>
-              <div style="color: #64748b; font-size: 12px;">Przypisań</div>
-            </div>
-            <div style="background: white; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.08);">
-              <div style="font-size: 32px; font-weight: bold; color: #1e293b;">${avgWorkload}</div>
-              <div style="color: #64748b; font-size: 12px;">Śr. przypisań/os.</div>
-            </div>
-          </div>
-          
-          ${projectIssues.length > 0 ? `
-            <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-              <h4 style="margin: 0 0 12px; color: #dc2626;">⚠️ Projekty wymagające uwagi</h4>
-              ${projectIssues.map(i => `<div style="color: #b91c1c; margin: 4px 0;">• ${i.name}: ${i.issue}</div>`).join('')}
-            </div>
-          ` : `
-            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin-bottom: 16px;">
-              <h4 style="margin: 0; color: #16a34a;">✅ Wszystkie projekty są obsadzone</h4>
-            </div>
-          `}
-          
-          ${absences.length > 0 ? `
-            <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-              <h4 style="margin: 0 0 12px; color: #1e293b;">🏖️ Nieobecności w tym tygodniu (${absences.length})</h4>
-              ${absences.slice(0, 5).map(a => {
-                const emp = this.state.employees.find(e => e.id === a.employeeId);
-                return `<div style="margin: 4px 0; color: #475569;">• ${emp?.firstName} ${emp?.lastName}: ${a.startDate} - ${a.endDate}</div>`;
-              }).join('')}
-              ${absences.length > 5 ? `<div style="color: #94a3b8; font-style: italic;">... i ${absences.length - 5} więcej</div>` : ''}
-            </div>
-          ` : ''}
-          
-          <div style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
-            <h4 style="margin: 0 0 12px; color: #1e293b;">👥 Dostępność zespołu</h4>
-            <div style="display: flex; gap: 24px;">
-              <div><span style="color: #10b981; font-weight: bold;">${activeEmployees.length}</span> dostępnych</div>
-              <div><span style="color: #f59e0b; font-weight: bold;">${this.state.employees.filter(e => e.status === 'vacation').length}</span> na urlopie</div>
-              <div><span style="color: #ef4444; font-weight: bold;">${this.state.employees.filter(e => e.status === 'sick').length}</span> chorych</div>
-            </div>
-          </div>
-        </div>
-        
-        <div style="background: #1e293b; color: white; padding: 16px; border-radius: 0 0 12px 12px; text-align: center;">
-          <small>Wygenerowano: ${new Date().toLocaleDateString('pl-PL')} ${new Date().toLocaleTimeString('pl-PL')}</small>
-        </div>
-      </div>
-    `;
-  }
-
-  private generateIndividualEmailHtml(employeeId: string, weekKey: string): string {
-    const emp = this.state.employees.find(e => e.id === employeeId);
-    if (!emp) return '';
-    
-    const assignments = this.state.scheduleAssignments.filter(
-      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
-    );
-    
-    const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
-    const shiftColors = ['#22c55e', '#3b82f6', '#8b5cf6'];
-    
-    // Oblicz pozostałe dni urlopowe
-    const vacationInfo = this.getEmployeeVacationInfo(employeeId);
-    
-    return `
-      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <div style="background: linear-gradient(135deg, #0097AC 0%, #00b4cc 100%); color: white; padding: 24px; border-radius: 12px 12px 0 0;">
-          <h2 style="margin: 0;">👋 Cześć, ${emp.firstName}!</h2>
-          <p style="margin: 8px 0 0; opacity: 0.9;">Twój grafik na tydzień ${weekKey}</p>
-        </div>
-        
-        <div style="padding: 24px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none;">
-          ${assignments.length > 0 ? `
-            <div style="margin-bottom: 20px;">
-              ${assignments.map((a: ScheduleAssignment) => {
-                const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-                const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-                const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
-                
-                return `
-                  <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); border-left: 4px solid ${shiftColors[a.shift - 1]};">
-                    <div style="font-weight: bold; font-size: 16px; color: #1e293b; margin-bottom: 8px;">
-                      ${customer?.name || '?'} - ${ptype?.name || '?'}
-                    </div>
-                    <div style="display: flex; gap: 16px; flex-wrap: wrap;">
-                      <span style="background: ${shiftColors[a.shift - 1]}; color: white; padding: 4px 12px; border-radius: 16px; font-size: 13px;">
-                        ⏰ ${shiftNames[a.shift - 1]}
-                      </span>
-                      ${a.scope !== 'project' ? `
-                        <span style="background: #f1f5f9; color: #475569; padding: 4px 12px; border-radius: 16px; font-size: 13px;">
-                          📋 ${a.scope === 'audit' ? 'Audyt' : a.scope === 'adhesion' ? 'Przyczepność' : a.scope}
-                        </span>
-                      ` : ''}
-                    </div>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          ` : `
-            <div style="background: #fef3c7; border-radius: 8px; padding: 16px; text-align: center;">
-              <p style="margin: 0; color: #92400e;">Nie masz przypisań w tym tygodniu.</p>
-            </div>
-          `}
-          
-          ${vacationInfo.limit > 0 ? `
-            <div style="background: white; border-radius: 8px; padding: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-top: 16px;">
-              <h4 style="margin: 0 0 12px; color: #1e293b;">🏖️ Twój urlop</h4>
-              <div style="display: flex; align-items: center; gap: 16px;">
-                <div style="flex: 1; background: #e5e7eb; border-radius: 8px; height: 12px; overflow: hidden;">
-                  <div style="width: ${(vacationInfo.used / vacationInfo.limit) * 100}%; background: linear-gradient(90deg, #0097AC, #00b4cc); height: 100%;"></div>
-                </div>
-                <div style="white-space: nowrap;">
-                  <span style="color: #0097AC; font-weight: bold;">${vacationInfo.remaining}</span> / ${vacationInfo.limit} dni
-                </div>
-              </div>
-              <div style="margin-top: 8px; font-size: 13px; color: #64748b;">
-                Wykorzystano: ${vacationInfo.used} dni | Pozostało: ${vacationInfo.remaining} dni
-              </div>
-            </div>
-          ` : ''}
-        </div>
-        
-        <div style="background: #1e293b; color: white; padding: 16px; border-radius: 0 0 12px 12px; text-align: center;">
-          <p style="margin: 0 0 8px; font-size: 14px;">Powodzenia w pracy! 💪</p>
-          <small style="opacity: 0.7;">DRÄXLMAIER Kappa Plannung</small>
-        </div>
-      </div>
-    `;
-  }
-
-  private getEmployeeVacationInfo(employeeId: string): { limit: number; used: number; remaining: number } {
-    const year = this.scheduleCurrentYear;
-    
-    // Domyślny limit urlopowy (26 dni w Polsce)
-    const defaultLimit = 26;
-    
-    // Policz wykorzystane dni urlopowe z istniejących nieobecności
-    const absences = this.state.absences || [];
-    const vacations = absences.filter(a => 
-      a.employeeId === employeeId && 
-      new Date(a.startDate).getFullYear() === year
-    );
-    
-    let usedDays = 0;
-    vacations.forEach(v => {
-      usedDays += v.workDays || 1;
-    });
-    
-    return {
-      limit: defaultLimit,
-      used: usedDays,
-      remaining: Math.max(0, defaultLimit - usedDays)
-    };
-  }
-
-  private generateICSContent(employeeId: string, weekKey: string): string {
-    const emp = this.state.employees.find(e => e.id === employeeId);
-    if (!emp) return '';
-    
-    const assignments = this.state.scheduleAssignments.filter(
-      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
-    );
-    
-    const weekStart = this.getWeekStartDate(this.scheduleCurrentYear, this.scheduleCurrentWeek);
-    
-    const shiftTimes = [
-      { start: '06:00', end: '14:00' },
-      { start: '14:00', end: '22:00' },
-      { start: '22:00', end: '06:00' }
-    ];
-    
-    let ics = `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//DRÄXLMAIER Kappa Plannung//PL
-CALSCALE:GREGORIAN
-METHOD:PUBLISH
-X-WR-CALNAME:Grafik ${weekKey} - ${emp.firstName} ${emp.lastName}
-`;
-
-    assignments.forEach((a: ScheduleAssignment, idx: number) => {
-      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-      const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-      const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
-      
-      const shiftTime = shiftTimes[a.shift - 1];
-      
-      // Dla każdego dnia tygodnia (pon-pt dla uproszczenia)
-      for (let day = 0; day < 5; day++) {
-        const eventDate = new Date(weekStart);
-        eventDate.setDate(eventDate.getDate() + day);
-        
-        const dateStr = eventDate.toISOString().split('T')[0].replace(/-/g, '');
-        const startTime = shiftTime.start.replace(':', '');
-        const endTime = shiftTime.end.replace(':', '');
-        
-        const eventEnd = a.shift === 3 ? 
-          new Date(eventDate.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0].replace(/-/g, '') :
-          dateStr;
-        
-        ics += `BEGIN:VEVENT
-UID:${a.id}-${day}-${Date.now()}@kappa
-DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z
-DTSTART;TZID=Europe/Warsaw:${dateStr}T${startTime}00
-DTEND;TZID=Europe/Warsaw:${eventEnd}T${endTime}00
-SUMMARY:${customer?.name || '?'} - ${ptype?.name || '?'}
-DESCRIPTION:Zmiana ${a.shift}${a.scope !== 'project' ? ` | Zakres: ${a.scope}` : ''}
-LOCATION:Produkcja
-STATUS:CONFIRMED
-END:VEVENT
-`;
-      }
-    });
-
-    ics += `END:VCALENDAR`;
-    return ics;
-  }
-
-  private downloadICS(employeeId: string, weekKey: string): void {
-    const emp = this.state.employees.find(e => e.id === employeeId);
-    if (!emp) return;
-    
-    const icsContent = this.generateICSContent(employeeId, weekKey);
-    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `grafik-${weekKey}-${emp.firstName}-${emp.lastName}.ics`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    this.showToast(`Pobrano plik ICS dla ${emp.firstName} ${emp.lastName}`, 'success');
-  }
-
-  private async generateSchedulePDF(weekKey: string): Promise<void> {
-    const { jsPDF } = await import('jspdf');
-    const doc = new jsPDF('landscape', 'mm', 'a4');
-    
-    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    
-    // Header
-    doc.setFillColor(0, 151, 172);
-    doc.rect(0, 0, 297, 30, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFontSize(20);
-    doc.text(`Grafik tygodniowy ${weekKey}`, 15, 18);
-    doc.setFontSize(10);
-    doc.text(`DRÄXLMAIER Kappa Plannung | Wygenerowano: ${new Date().toLocaleDateString('pl-PL')}`, 15, 25);
-    
-    // Grupuj wg projektu
-    const byProject = new Map<string, { customer: string; type: string; shifts: Map<number, string[]> }>();
-    
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      if (project && emp) {
-        const customer = this.state.customers.find(c => c.id === project.customer_id);
-        const ptype = this.state.types.find(t => t.id === project.type_id);
-        const key = `${customer?.name || '?'} - ${ptype?.name || '?'}`;
-        
-        if (!byProject.has(key)) {
-          byProject.set(key, { customer: customer?.name || '?', type: ptype?.name || '?', shifts: new Map() });
-        }
-        const data = byProject.get(key)!;
-        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
-        data.shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
-      }
-    });
-    
-    const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
-    
-    let yPos = 40;
-    doc.setTextColor(0, 0, 0);
-    
-    byProject.forEach((data, name) => {
-      if (yPos > 180) {
-        doc.addPage();
-        yPos = 20;
-      }
-      
-      doc.setFillColor(240, 242, 245);
-      doc.rect(10, yPos, 277, 8, 'F');
-      doc.setFontSize(12);
-      doc.setFont('helvetica', 'bold');
-      doc.text(name, 15, yPos + 6);
-      yPos += 12;
-      
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      
-      [1, 2, 3].forEach(shift => {
-        if (data.shifts.has(shift)) {
-          doc.setTextColor(100, 116, 139);
-          doc.text(shiftNames[shift - 1] + ':', 15, yPos);
-          doc.setTextColor(0, 0, 0);
-          doc.text(data.shifts.get(shift)!.join(', '), 70, yPos);
-          yPos += 6;
-        }
-      });
-      
-      yPos += 6;
-    });
-    
-    // Footer
-    doc.setFontSize(8);
-    doc.setTextColor(150, 150, 150);
-    doc.text('© DRÄXLMAIER Kappa Plannung', 15, 200);
-    
-    doc.save(`grafik-${weekKey}.pdf`);
-    this.showToast('Pobrano PDF z grafikiem', 'success');
   }
 
   // ==================== WIDOK GANTT OBCIĄŻENIA ====================
@@ -11990,16 +14581,16 @@ END:VEVENT
     overlay.innerHTML = `
       <div class="gantt-modal">
         <div class="gantt-modal-header">
-          <h2>📊 Obciążenie pracowników - KW${this.scheduleCurrentWeek}</h2>
+          <h2>${i18n.t('schedule.workloadReport').replace('{0}', String(this.scheduleCurrentWeek))}</h2>
           <button class="employee-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
         <div class="gantt-modal-body">
           <div class="gantt-legend">
-            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-1"></span> Z1 (Rano)</span>
-            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-2"></span> Z2 (Popołudnie)</span>
-            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-3"></span> Z3 (Noc)</span>
+            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-1"></span> ${i18n.t('schedule.shift1Short')}</span>
+            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-2"></span> ${i18n.t('schedule.shift2Short')}</span>
+            <span class="gantt-legend-item"><span class="gantt-bar-segment shift-3"></span> ${i18n.t('schedule.shift3Short')}</span>
           </div>
           
           <div class="gantt-chart">
@@ -12030,19 +14621,19 @@ END:VEVENT
           <div class="gantt-summary">
             <div class="gantt-stat">
               <span class="gantt-stat-value">${sorted.filter(s => s.total > 0).length}</span>
-              <span class="gantt-stat-label">Przypisanych</span>
+              <span class="gantt-stat-label">${i18n.t('schedule.assignedStat')}</span>
             </div>
             <div class="gantt-stat">
               <span class="gantt-stat-value">${sorted.filter(s => s.total === 0).length}</span>
-              <span class="gantt-stat-label">Wolnych</span>
+              <span class="gantt-stat-label">${i18n.t('schedule.freeStat')}</span>
             </div>
             <div class="gantt-stat">
               <span class="gantt-stat-value">${sorted.filter(s => s.total > 5).length}</span>
-              <span class="gantt-stat-label">Przeciążonych</span>
+              <span class="gantt-stat-label">${i18n.t('schedule.overloadedStat')}</span>
             </div>
             <div class="gantt-stat">
               <span class="gantt-stat-value">${weekAssignments.length}</span>
-              <span class="gantt-stat-label">Łącznie zmian</span>
+              <span class="gantt-stat-label">${i18n.t('schedule.totalShiftsStat')}</span>
             </div>
           </div>
         </div>
@@ -12072,10 +14663,10 @@ END:VEVENT
         );
         
         if (assignments.length > 0) {
-          const statusLabel = emp.status === 'vacation' ? 'urlopie' : 'zwolnieniu';
+          const statusLabel = emp.status === 'vacation' ? i18n.t('schedule.onVacationStatus') : i18n.t('schedule.onSickLeaveStatus');
           conflicts.push({
             employee: emp,
-            conflict: `${emp.firstName} ${emp.lastName} jest na ${statusLabel}, ale ma ${assignments.length} przypisań`
+            conflict: i18n.t('schedule.isOnStatusButHasAssignments').replace('{0}', emp.firstName).replace('{1}', emp.lastName).replace('{2}', statusLabel).replace('{3}', String(assignments.length))
           });
         }
       }
@@ -12098,7 +14689,7 @@ END:VEVENT
       alert.innerHTML = `
         <span class="sched-alert-icon">🏖️</span>
         <span class="sched-alert-text">${c.conflict}</span>
-        <button class="sched-alert-action" data-employee="${c.employee.id}">Usuń przypisania</button>
+        <button class="sched-alert-action" data-employee="${c.employee.id}">${i18n.t('schedule.removeAssignmentsBtn')}</button>
       `;
       
       alert.querySelector('.sched-alert-action')?.addEventListener('click', async () => {
@@ -12111,7 +14702,7 @@ END:VEVENT
           await this.removeAssignment(a.id);
         }
         
-        this.showToast(`Usunięto ${toRemove.length} przypisań dla ${c.employee.firstName}`, 'success');
+        this.showToast(i18n.t('schedule.removedAssignments').replace('{0}', String(toRemove.length)).replace('{1}', c.employee.firstName), 'success');
         this.renderVacationConflicts();
       });
       
@@ -12159,7 +14750,7 @@ END:VEVENT
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
         <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
       </svg>
-      Statystyki pracowników (${this.scheduleCurrentYear})
+      ${i18n.t('schedule.employeeStatsTitle').replace('{0}', String(this.scheduleCurrentYear))}
     `;
     
     const totalAssignments = stats.reduce((sum, s) => sum + s.total, 0);
@@ -12170,15 +14761,15 @@ END:VEVENT
         <div class="stats-summary">
           <div class="stats-summary-item">
             <span class="stats-summary-value">${totalAssignments}</span>
-            <span class="stats-summary-label">Łącznie przypisań</span>
+            <span class="stats-summary-label">${i18n.t('schedule.totalAssignmentsLabel')}</span>
           </div>
           <div class="stats-summary-item">
             <span class="stats-summary-value">${avgPerEmployee}</span>
-            <span class="stats-summary-label">Średnia na pracownika</span>
+            <span class="stats-summary-label">${i18n.t('schedule.averagePerEmployee')}</span>
           </div>
           <div class="stats-summary-item">
             <span class="stats-summary-value">${stats.filter(s => s.total > 0).length}</span>
-            <span class="stats-summary-label">Aktywnych pracowników</span>
+            <span class="stats-summary-label">${i18n.t('schedule.activeEmployees')}</span>
           </div>
         </div>
         
@@ -12186,15 +14777,15 @@ END:VEVENT
           <table class="stats-table">
             <thead>
               <tr>
-                <th>Pracownik</th>
-                <th>Łącznie</th>
+                <th>${i18n.t('schedule.employeeLabel')}</th>
+                <th>${i18n.t('schedule.totalAssignmentsLabel')}</th>
                 <th>Z1</th>
                 <th>Z2</th>
                 <th>Z3</th>
-                <th>Projekty</th>
-                <th>Przyczepność</th>
-                <th>Audyty</th>
-                <th>Tygodnie</th>
+                <th>${i18n.t('schedule.projectsLabel')}</th>
+                <th>${i18n.t('schedule.scopeAdhesion')}</th>
+                <th>${i18n.t('schedule.scopeAudit')}</th>
+                <th>${i18n.t('schedule.weeksLabel')}</th>
               </tr>
             </thead>
             <tbody>
@@ -12283,7 +14874,7 @@ END:VEVENT
               <line x1="16" y1="17" x2="8" y2="17"/>
             </svg>
           </div>
-          <h3>Notatka</h3>
+          <h3>${i18n.t('schedule.noteTitle')}</h3>
           <button class="note-modal-close">×</button>
         </div>
         
@@ -12300,7 +14891,7 @@ END:VEVENT
         </div>
         
         <div class="note-modal-body">
-          <textarea class="note-modal-textarea" placeholder="Wpisz notatkę...">${mainNote}</textarea>
+          <textarea class="note-modal-textarea" placeholder="${i18n.t('schedule.notePlaceholder')}">${mainNote}</textarea>
           
           ${replies.length > 0 ? `
             <div class="note-replies-section">
@@ -12309,7 +14900,7 @@ END:VEVENT
                   <polyline points="9 17 4 12 9 7"/>
                   <path d="M20 18v-2a4 4 0 0 0-4-4H4"/>
                 </svg>
-                Odpowiedzi (${replies.length})
+                ${i18n.t('schedule.replies').replace('{0}', String(replies.length))}
               </div>
               <div class="note-replies-list">
                 ${replies.map((r, i) => `
@@ -12317,7 +14908,7 @@ END:VEVENT
                     <div class="note-reply-header">
                       <span class="note-reply-author">${r.author}</span>
                       <span class="note-reply-date">${r.date}</span>
-                      <button class="note-reply-delete" data-index="${i}" title="Usuń odpowiedź">×</button>
+                      <button class="note-reply-delete" data-index="${i}" title="${i18n.t('schedule.deleteReply')}">×</button>
                     </div>
                     <div class="note-reply-text">${r.text}</div>
                   </div>
@@ -12328,8 +14919,8 @@ END:VEVENT
           
           <div class="note-add-reply">
             <div class="note-reply-input-wrapper">
-              <input type="text" class="note-reply-input" placeholder="Dodaj odpowiedź...">
-              <button class="note-reply-submit" title="Dodaj odpowiedź">
+              <input type="text" class="note-reply-input" placeholder="${i18n.t('schedule.addReplyPlaceholder')}">
+              <button class="note-reply-submit" title="${i18n.t('schedule.addReply')}">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <line x1="22" y1="2" x2="11" y2="13"/>
                   <polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -12346,12 +14937,12 @@ END:VEVENT
                 <polyline points="3 6 5 6 21 6"/>
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
               </svg>
-              Usuń
+              ${i18n.t('schedule.deleteBtn')}
             </button>
           ` : ''}
           <div class="note-modal-actions-right">
-            <button class="note-modal-cancel">Anuluj</button>
-            <button class="note-modal-save">Zapisz</button>
+            <button class="note-modal-cancel">${i18n.t('schedule.cancel')}</button>
+            <button class="note-modal-save">${i18n.t('schedule.save')}</button>
           </div>
         </div>
       </div>
@@ -12377,8 +14968,8 @@ END:VEVENT
       
       replies.push({
         text: replyText,
-        date: new Date().toLocaleDateString('pl-PL'),
-        author: this.state.settings.userName || 'Użytkownik'
+        date: new Date().toLocaleDateString(i18n.getDateLocale()),
+        author: this.state.settings.userName || i18n.t('logs.user')
       });
       
       // Zapisz natychmiast do bazy
@@ -12390,7 +14981,7 @@ END:VEVENT
       // Odśwież modal
       overlay.remove();
       this.showAssignmentNoteModal(assignmentId);
-      this.showToast('Odpowiedź dodana', 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success');
     };
     
     overlay.querySelector('.note-reply-submit')?.addEventListener('click', submitReply);
@@ -12412,7 +15003,7 @@ END:VEVENT
         
         overlay.remove();
         this.showAssignmentNoteModal(assignmentId);
-        this.showToast('Odpowiedź usunięta', 'success');
+        this.showToast(i18n.t('schedule.replyDeleted'), 'success');
       });
     });
     
@@ -12421,7 +15012,7 @@ END:VEVENT
       assignment.note = undefined;
       assignment.updatedAt = Date.now();
       await db.put('scheduleAssignments', assignment);
-      this.showToast('Notatka usunięta', 'success');
+      this.showToast(i18n.t('schedule.noteDeleted'), 'success');
       overlay.remove();
       this.renderScheduleContent();
     });
@@ -12433,7 +15024,7 @@ END:VEVENT
       assignment.note = fullNote || undefined;
       assignment.updatedAt = Date.now();
       await db.put('scheduleAssignments', assignment);
-      this.showToast(fullNote ? 'Notatka zapisana' : 'Notatka usunięta', 'success');
+      this.showToast(fullNote ? i18n.t('schedule.noteSaved') : i18n.t('schedule.noteDeleted'), 'success');
       overlay.remove();
       this.renderScheduleContent();
     });
@@ -12474,6 +15065,23 @@ END:VEVENT
     
     if (!shiftChanged && !projectChanged) return;
     
+    // Sprawdź i usuń duplikaty - te same przypisania (employee+project+week+shift) 
+    const targetProjectId = newProjectId || assignment.projectId;
+    const duplicates = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+      a.id !== assignmentId &&
+      a.employeeId === assignment.employeeId &&
+      a.projectId === targetProjectId &&
+      a.week === assignment.week &&
+      a.shift === newShift
+    );
+    for (const dup of duplicates) {
+      const dupIdx = this.state.scheduleAssignments.indexOf(dup);
+      if (dupIdx !== -1) {
+        this.state.scheduleAssignments.splice(dupIdx, 1);
+        await db.delete('scheduleAssignments', dup.id);
+      }
+    }
+    
     if (shiftChanged) {
       assignment.shift = newShift;
     }
@@ -12499,7 +15107,7 @@ END:VEVENT
       const details = `${oldProjectName}: Z${oldShift} → Z${newShift}`;
       await this.addLog('updated', 'Assignment', empName, details);
       this.logScheduleChange('modified', empName, details);
-      this.showToast(`Przeniesiono na zmianę ${newShift}`, 'success');
+      this.showToast(i18n.t('schedule.movedToShift').replace('{0}', String(newShift)), 'success');
     }
     
     this.renderScheduleContent();
@@ -12577,7 +15185,7 @@ END:VEVENT
       projectsContainer.innerHTML = `
         <div class="sched-empty-table">
           <span class="sched-empty-icon">📋</span>
-          <p>${this.scheduleFilterEmployee || this.scheduleFilterProject || this.scheduleFilterTest ? 'Brak wyników dla wybranych filtrów' : i18n.t('schedule.noProjectsThisWeek')}</p>
+          <p>${this.scheduleFilterEmployee || this.scheduleFilterProject || this.scheduleFilterTest ? i18n.t('schedule.noFilterResults') : i18n.t('schedule.noProjectsThisWeek')}</p>
           <span class="sched-empty-hint">${i18n.t('schedule.projectsWithSollAppear')}</span>
         </div>
       `;
@@ -12636,21 +15244,23 @@ END:VEVENT
     
     projectsContainer.innerHTML = '';
     
+    // Build employee multi-shift map for the current week
+    const allWeekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const empShiftsInWeek = new Map<string, Set<number>>();
+    allWeekAssignments.forEach((a: ScheduleAssignment) => {
+      if (!empShiftsInWeek.has(a.employeeId)) empShiftsInWeek.set(a.employeeId, new Set());
+      empShiftsInWeek.get(a.employeeId)!.add(a.shift);
+    });
+    
     sortedGroups.forEach(([groupKey, group]) => {
       const groupAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
         (a.projectId === groupKey || group.items.some(item => item.id === a.projectId)) &&
         a.week === weekKey
       );
       
-      // Sprawdź czy projekt ma postój lub brak części w tym tygodniu
-      const hasStoppage = group.items.some(item => {
-        const weekData = item.weeks[weekKey];
-        return weekData?.stoppage || weekData?.productionLack;
-      });
-      
       // Wiersz projektu z nowymi klasami
       const projectRow = document.createElement('div');
-      projectRow.className = `sched-row shifts-${this.scheduleShiftSystem} ${hasStoppage ? 'project-stoppage' : ''}`;
+      projectRow.className = `sched-row shifts-${this.scheduleShiftSystem}`;
       projectRow.dataset.groupKey = groupKey;
       
       // Pobierz komentarz dla tego projektu i policz odpowiedzi
@@ -12694,7 +15304,7 @@ END:VEVENT
           </div>
         </div>
         <div class="sched-project-actions">
-          <button class="sched-project-comment-btn ${hasProjectComment ? 'has-comment' : ''}" data-group="${groupKey}" title="${hasProjectComment ? 'Edytuj komentarz' : 'Dodaj komentarz'}">
+          <button class="sched-project-comment-btn ${hasProjectComment ? 'has-comment' : ''}" data-group="${groupKey}" title="${hasProjectComment ? i18n.t('schedule.editComment') : i18n.t('schedule.addComment')}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
             ${repliesBadgeHtml}
           </button>
@@ -12768,13 +15378,14 @@ END:VEVENT
           let scopeLabel = '';
           let scopeClass = '';
           let scopeIcon = '';
+          let exclusionLabel = '';
           
           if (a.scope === 'adhesion') {
-            scopeLabel = 'Przyczepność';
+            scopeLabel = i18n.t('schedule.scopeAdhesion');
             scopeClass = 'scope-adhesion';
             scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>';
           } else if (a.scope === 'audit') {
-            scopeLabel = 'Audyt';
+            scopeLabel = i18n.t('schedule.scopeAudit');
             scopeClass = 'scope-audit';
             scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
           } else if (a.testId) {
@@ -12784,13 +15395,38 @@ END:VEVENT
             scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
           } else if (a.partId) {
             const part = this.state.parts.find(p => p.id === a.partId);
-            scopeLabel = part?.name || 'Część';
+            scopeLabel = part?.name || i18n.t('schedule.part');
             scopeClass = 'scope-part';
             scopeIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>';
           }
           
+          // Smart scope exclusion: if this is a "whole project" assignment,
+          // check if other employees have specific test assignments for same project
+          if (a.scope === 'project' && !a.testId && !a.partId) {
+            const specificAssignments = groupAssignments.filter((other: ScheduleAssignment) =>
+              other.id !== a.id &&
+              other.employeeId !== a.employeeId &&
+              other.scope === 'specific' &&
+              other.testId
+            );
+            
+            if (specificAssignments.length > 0) {
+              const excludedTestNames = [...new Set(specificAssignments.map((sa: ScheduleAssignment) => {
+                const test = this.state.tests.find(t => t.id === sa.testId);
+                return test?.name || 'Test';
+              }))];
+              exclusionLabel = `${i18n.t('schedule.scopeExcluding')} ${excludedTestNames.join(', ')}`;
+              scopeClass = 'scope-project-excluding';
+            }
+          }
+          
           const initials = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
           const fullName = `${emp.firstName} ${emp.lastName}`;
+          
+          // Check if employee is on multiple shifts this week
+          const empShifts = empShiftsInWeek.get(emp.id);
+          const isMultiShift = empShifts ? empShifts.size > 1 : false;
+          const multiShiftLabel = isMultiShift ? `⚠️ ${i18n.t('schedule.multiShiftWarning')}` : '';
           
           // Parsowanie notatki - oddziel główną notatkę od odpowiedzi
           let mainNoteText = a.note || '';
@@ -12810,7 +15446,7 @@ END:VEVENT
           const repliesBadge = repliesCount > 0 ? `<span class="chip-replies-badge">${repliesCount}</span>` : '';
           
           return `
-            <div class="sched-chip ${hasNote ? 'has-note' : ''}" 
+            <div class="sched-chip ${hasNote ? 'has-note' : ''} ${isMultiShift ? 'multi-shift-warning' : ''} chip-shift-${s}" 
                  style="--chip-color: ${emp.color}" 
                  data-id="${a.id}" 
                  data-employee-id="${emp.id}"
@@ -12820,11 +15456,13 @@ END:VEVENT
                 <div class="sched-chip-info">
                   <span class="sched-chip-name">${fullName}</span>
                   ${scopeLabel ? `<span class="sched-chip-badge ${scopeClass}">${scopeIcon} ${scopeLabel}</span>` : ''}
+                  ${exclusionLabel ? `<span class="sched-chip-exclusion">${exclusionLabel}</span>` : ''}
+                  ${multiShiftLabel ? `<span class="sched-chip-multi-shift">${multiShiftLabel}</span>` : ''}
                   ${mainNoteText ? `<span class="sched-chip-note-preview" data-full-note="${mainNoteText.replace(/"/g, '&quot;')}">${notePreview}</span>` : ''}
                 </div>
                 ${repliesBadge}
               </div>
-              <button class="sched-chip-comment-btn ${hasNote ? 'has-comment' : ''}" data-aid="${a.id}" title="${hasNote ? 'Edytuj komentarz' : 'Dodaj komentarz'}">
+              <button class="sched-chip-comment-btn ${hasNote ? 'has-comment' : ''}" data-aid="${a.id}" title="${hasNote ? i18n.t('schedule.editComment') : i18n.t('schedule.addComment')}">
                 ${commentIcon}
               </button>
               <button class="sched-chip-remove" data-aid="${a.id}">×</button>
@@ -12938,9 +15576,8 @@ END:VEVENT
             if (sourceProject !== groupKey) {
               const assignment = this.state.scheduleAssignments.find((a: ScheduleAssignment) => a.id === assignmentId);
               if (assignment) {
-                // Usuń stare przypisanie i pokaż picker dla nowego
-                await this.removeAssignment(assignmentId);
-                this.showScopePickerAtPosition(groupKey, group.items, assignment.employeeId, weekKey, s as 1 | 2 | 3, dropX, dropY);
+                // Nie usuwaj od razu - przekaż do pickera, usunie po potwierdzeniu
+                this.showScopePickerAtPosition(groupKey, group.items, assignment.employeeId, weekKey, s as 1 | 2 | 3, dropX, dropY, assignmentId);
               }
               return;
             }
@@ -12980,6 +15617,9 @@ END:VEVENT
       });
     });
     
+    // ==================== EXTRA TASKS SECTION ====================
+    this.renderExtraTasksInSchedule(projectsContainer, weekKey);
+    
     // Dodaj kliknięcie na nagłówek kolumny PROJECT aby cyklicznie zmieniać sortowanie
     document.getElementById('schedProjectColHeader')?.addEventListener('click', () => {
       // Cykliczne przełączanie: default -> alpha -> coverage -> default
@@ -12996,6 +15636,457 @@ END:VEVENT
       });
       this.renderScheduleProjectsPanel();
     });
+  }
+  
+  // ==================== EXTRA TASKS IN SCHEDULE ====================
+  private renderExtraTasksInSchedule(container: HTMLElement, weekKey: string): void {
+    const weekTasks = this.state.extraTasks.filter(t => t.week === weekKey);
+    
+    // Separator
+    const separator = document.createElement('div');
+    separator.className = `sched-row sched-extra-separator shifts-${this.scheduleShiftSystem}`;
+    separator.innerHTML = `
+      <div class="sched-extra-separator-cell" style="grid-column: 1 / -1">
+        <div class="sched-extra-separator-line"></div>
+        <span class="sched-extra-separator-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          ${i18n.t('schedule.extraTasks')}
+        </span>
+        <div class="sched-extra-separator-line"></div>
+      </div>
+    `;
+    container.appendChild(separator);
+    
+    // Render each extra task
+    weekTasks.forEach(task => {
+      const taskRow = document.createElement('div');
+      taskRow.className = `sched-row sched-extra-row shifts-${this.scheduleShiftSystem}`;
+      taskRow.dataset.extraTaskId = task.id;
+      
+      // Task name cell
+      const taskCell = document.createElement('div');
+      taskCell.className = 'sched-project-cell sched-extra-task-cell';
+      const totalTime = task.timePerUnit * task.units;
+      const hours = Math.floor(totalTime / 60);
+      const mins = totalTime % 60;
+      const timeStr = hours > 0 ? `${hours}h ${mins > 0 ? mins + 'min' : ''}` : `${mins}min`;
+      
+      taskCell.innerHTML = `
+        <div class="sched-project-info">
+          <span class="sched-extra-icon">📌</span>
+          <div class="sched-project-text">
+            <span class="sched-project-customer sched-extra-name">${task.name}</span>
+            <span class="sched-project-type sched-extra-time">${task.units} × ${task.timePerUnit}min = ${timeStr}</span>
+            ${task.comment ? `<span class="sched-project-comment-preview">${task.comment.length > 30 ? task.comment.slice(0, 30) + '...' : task.comment}</span>` : ''}
+          </div>
+        </div>
+        <div class="sched-project-actions">
+          <button class="sched-extra-edit-btn" data-task-id="${task.id}" title="${i18n.t('schedule.editExtraTask')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+          </button>
+          <button class="sched-extra-delete-btn" data-task-id="${task.id}" title="${i18n.t('schedule.deleteExtraTask')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+      `;
+      
+      // Edit button handler
+      taskCell.querySelector('.sched-extra-edit-btn')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.showExtraTaskModal(weekKey, task);
+      });
+      
+      // Delete button handler
+      taskCell.querySelector('.sched-extra-delete-btn')?.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await this.deleteExtraTask(task.id);
+      });
+      
+      taskRow.appendChild(taskCell);
+      
+      // Shift cells for extra task
+      const extraProjectId = `extra-${task.id}`;
+      for (let s = 1; s <= this.scheduleShiftSystem; s++) {
+        const shiftCell = document.createElement('div');
+        shiftCell.className = `sched-shift-cell shift-${s}`;
+        
+        const shiftAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+          a.projectId === extraProjectId && a.week === weekKey && a.shift === s
+        );
+        
+        const chipsHtml = shiftAssignments.map((a: ScheduleAssignment) => {
+          const emp = this.state.employees.find(e => e.id === a.employeeId);
+          if (!emp) return '';
+          const initials = `${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}`;
+          const fullName = `${emp.firstName} ${emp.lastName}`;
+          
+          // Parsowanie notatki
+          let mainNoteText = a.note || '';
+          let repliesCount = 0;
+          if (mainNoteText.includes('---REPLIES---')) {
+            const parts = mainNoteText.split('---REPLIES---');
+            mainNoteText = parts[0].trim();
+            try {
+              const parsedReplies = JSON.parse(parts[1]);
+              repliesCount = Array.isArray(parsedReplies) ? parsedReplies.length : 0;
+            } catch (e) { repliesCount = 0; }
+          }
+          
+          const hasNote = mainNoteText.length > 0 || repliesCount > 0;
+          const notePreview = mainNoteText.length > 15 ? mainNoteText.slice(0, 15) + '...' : mainNoteText;
+          const commentIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+          const repliesBadge = repliesCount > 0 ? `<span class="chip-replies-badge">${repliesCount}</span>` : '';
+          
+          return `
+            <div class="sched-chip ${hasNote ? 'has-note' : ''} chip-shift-${s}" 
+                 style="--chip-color: ${emp.color}" 
+                 data-id="${a.id}" 
+                 data-employee-id="${emp.id}"
+                 data-assignment='${JSON.stringify({ id: a.id, note: a.note || '' })}'>
+              <div class="sched-chip-main">
+                <span class="sched-chip-avatar">${initials}</span>
+                <div class="sched-chip-info">
+                  <span class="sched-chip-name">${fullName}</span>
+                  ${mainNoteText ? `<span class="sched-chip-note-preview" data-full-note="${mainNoteText.replace(/"/g, '&quot;')}">${notePreview}</span>` : ''}
+                </div>
+                ${repliesBadge}
+              </div>
+              <button class="sched-chip-comment-btn ${hasNote ? 'has-comment' : ''}" data-aid="${a.id}" title="${hasNote ? i18n.t('schedule.editComment') : i18n.t('schedule.addComment')}">
+                ${commentIcon}
+              </button>
+              <button class="sched-chip-remove" data-aid="${a.id}">×</button>
+            </div>
+          `;
+        }).join('');
+        
+        shiftCell.innerHTML = chipsHtml || '<span class="sched-cell-add">+</span>';
+        
+        // Comment button handler
+        shiftCell.querySelectorAll('.sched-chip-comment-btn').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const assignmentId = (e.target as HTMLElement).closest('.sched-chip-comment-btn')?.getAttribute('data-aid');
+            if (assignmentId) this.showAssignmentNoteModal(assignmentId);
+          });
+        });
+        
+        // Note preview hover - show popup
+        shiftCell.querySelectorAll('.sched-chip-note-preview').forEach(preview => {
+          preview.addEventListener('mouseenter', (e) => {
+            const fullNote = (e.target as HTMLElement).dataset.fullNote || '';
+            if (fullNote.length > 20) {
+              this.showCommentPopup(e.target as HTMLElement, fullNote);
+            }
+          });
+          preview.addEventListener('mouseleave', () => {
+            this.hideCommentPopup();
+          });
+        });
+        
+        // Remove chip handler
+        shiftCell.querySelectorAll('.sched-chip-remove').forEach(btn => {
+          btn.addEventListener('click', async (ev) => {
+            ev.stopPropagation();
+            const aid = (btn as HTMLElement).dataset.aid;
+            if (aid) await this.removeAssignment(aid);
+          });
+        });
+        
+        // Click on chip to see employee
+        shiftCell.querySelectorAll('.sched-chip').forEach(chip => {
+          chip.addEventListener('click', (ev) => {
+            if ((ev.target as HTMLElement).classList.contains('sched-chip-remove')) return;
+            if ((ev.target as HTMLElement).closest('.sched-chip-comment-btn')) return;
+            const empId = (chip as HTMLElement).dataset.employeeId;
+            if (empId) this.showEmployeeModal(empId);
+          });
+        });
+        
+        // Drag & Drop for extra tasks
+        shiftCell.addEventListener('dragover', (ev) => { ev.preventDefault(); shiftCell.classList.add('drag-over'); });
+        shiftCell.addEventListener('dragleave', () => shiftCell.classList.remove('drag-over'));
+        shiftCell.addEventListener('drop', async (ev) => {
+          ev.preventDefault();
+          shiftCell.classList.remove('drag-over');
+          
+          const assignmentId = (ev as DragEvent).dataTransfer?.getData('assignmentId');
+          if (assignmentId) {
+            await this.moveAssignmentToShift(assignmentId, s as 1 | 2 | 3);
+            return;
+          }
+          
+          if (this.draggedEmployeeId) {
+            await this.addExtraTaskAssignment(extraProjectId, this.draggedEmployeeId, weekKey, s as 1 | 2 | 3);
+          }
+        });
+        
+        // Click to add employee
+        shiftCell.addEventListener('click', (ev) => {
+          const target = ev.target as HTMLElement;
+          if (target.closest('.sched-chip')) return;
+          this.showExtraTaskEmployeePicker(extraProjectId, weekKey, s as 1 | 2 | 3, shiftCell);
+        });
+        
+        taskRow.appendChild(shiftCell);
+      }
+      
+      container.appendChild(taskRow);
+    });
+    
+    // Add new extra task button
+    const addRow = document.createElement('div');
+    addRow.className = `sched-row sched-extra-add-row shifts-${this.scheduleShiftSystem}`;
+    addRow.innerHTML = `
+      <div class="sched-extra-add-cell" style="grid-column: 1 / -1">
+        <button class="sched-extra-add-btn" id="addExtraTaskBtn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          ${i18n.t('schedule.addExtraTask')}
+        </button>
+      </div>
+    `;
+    addRow.querySelector('#addExtraTaskBtn')?.addEventListener('click', () => {
+      this.showExtraTaskModal(weekKey);
+    });
+    container.appendChild(addRow);
+  }
+  
+  // Modal do dodawania/edycji dodatkowego zadania
+  private showExtraTaskModal(weekKey: string, existingTask?: ExtraTask): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+      ${existingTask ? i18n.t('schedule.editExtraTask') : i18n.t('schedule.addExtraTask')}
+    `;
+    
+    modalBody.innerHTML = `
+      <div class="extra-task-modal">
+        <div class="form-group">
+          <label class="form-label">${i18n.t('schedule.extraTaskName')}</label>
+          <input type="text" id="extraTaskName" class="form-control" placeholder="${i18n.t('schedule.extraTaskNamePlaceholder')}" value="${existingTask?.name || ''}">
+        </div>
+        <div class="form-row">
+          <div class="form-group" style="flex:1">
+            <label class="form-label">${i18n.t('schedule.extraTaskTimePerUnit')}</label>
+            <input type="number" id="extraTaskTimePerUnit" class="form-control" min="1" value="${existingTask?.timePerUnit || 15}" placeholder="15">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label class="form-label">${i18n.t('schedule.extraTaskUnits')}</label>
+            <input type="number" id="extraTaskUnits" class="form-control" min="1" value="${existingTask?.units || 1}" placeholder="1">
+          </div>
+          <div class="form-group" style="flex:1">
+            <label class="form-label">${i18n.t('schedule.total')}</label>
+            <div id="extraTaskTotal" class="extra-task-total">
+              ${((existingTask?.timePerUnit || 15) * (existingTask?.units || 1))} min
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">${i18n.t('schedule.extraTaskComment')}</label>
+          <input type="text" id="extraTaskComment" class="form-control" placeholder="${i18n.t('schedule.extraTaskCommentPlaceholder')}" value="${existingTask?.comment || ''}">
+        </div>
+      </div>
+    `;
+    
+    // Dynamiczne aktualizowanie sumy
+    const updateTotal = () => {
+      const tpu = parseInt((document.getElementById('extraTaskTimePerUnit') as HTMLInputElement).value) || 0;
+      const units = parseInt((document.getElementById('extraTaskUnits') as HTMLInputElement).value) || 0;
+      const total = tpu * units;
+      const hours = Math.floor(total / 60);
+      const mins = total % 60;
+      const totalEl = document.getElementById('extraTaskTotal');
+      if (totalEl) {
+        totalEl.textContent = hours > 0 ? `${hours}h ${mins > 0 ? mins + 'min' : ''}` : `${total}min`;
+      }
+    };
+    
+    document.getElementById('extraTaskTimePerUnit')?.addEventListener('input', updateTotal);
+    document.getElementById('extraTaskUnits')?.addEventListener('input', updateTotal);
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = '';
+    confirmBtn.textContent = existingTask ? i18n.t('schedule.save') : i18n.t('common.add');
+    confirmBtn.onclick = async () => {
+      const name = (document.getElementById('extraTaskName') as HTMLInputElement)?.value.trim();
+      if (!name) {
+        this.showToast(i18n.t('schedule.extraTaskNameRequired'), 'warning');
+        return;
+      }
+      
+      const timePerUnit = parseInt((document.getElementById('extraTaskTimePerUnit') as HTMLInputElement).value) || 15;
+      const units = parseInt((document.getElementById('extraTaskUnits') as HTMLInputElement).value) || 1;
+      const comment = (document.getElementById('extraTaskComment') as HTMLInputElement)?.value.trim() || undefined;
+      
+      const task = {
+        id: existingTask?.id || crypto.randomUUID(),
+        name,
+        week: weekKey,
+        timePerUnit,
+        units,
+        comment: comment || null,
+        created_at: existingTask?.created_at || Date.now()
+      };
+      
+      try {
+        if (existingTask) {
+          await api.updateExtraTask(task.id, task);
+        } else {
+          await api.addExtraTask(task);
+        }
+        
+        // Aktualizuj stan lokalny
+        const idx = this.state.extraTasks.findIndex(t => t.id === task.id);
+        if (idx >= 0) {
+          this.state.extraTasks[idx] = task as ExtraTask;
+        } else {
+          this.state.extraTasks.push(task as ExtraTask);
+        }
+        
+        this.showToast(existingTask ? i18n.t('schedule.extraTaskUpdated') : i18n.t('schedule.extraTaskAdded'), 'success');
+        this.renderScheduleContent();
+        this.renderPlanningGrid();
+      } catch (err) {
+        this.showToast(i18n.t('schedule.extraTaskError'), 'error');
+      }
+      
+      this.hideModal();
+    };
+    
+    modal.classList.add('active');
+  }
+  
+  private async deleteExtraTask(taskId: string): Promise<void> {
+    try {
+      await api.deleteExtraTask(taskId);
+      this.state.extraTasks = this.state.extraTasks.filter(t => t.id !== taskId);
+      // Usuń też przypisania
+      this.state.scheduleAssignments = this.state.scheduleAssignments.filter(
+        (a: ScheduleAssignment) => a.projectId !== `extra-${taskId}`
+      );
+      this.showToast(i18n.t('schedule.extraTaskDeleted'), 'success');
+      this.renderScheduleContent();
+    } catch (err) {
+      this.showToast(i18n.t('schedule.extraTaskError'), 'error');
+    }
+  }
+  
+  private async updateExtraTaskComment(taskId: string, comment: string): Promise<void> {
+    try {
+      const task = this.state.extraTasks.find(t => t.id === taskId);
+      if (task) {
+        await api.updateExtraTask(taskId, { ...task, comment });
+        // Update all tasks with same name (grouped)
+        const tasksWithSameName = this.state.extraTasks.filter(t => t.name === task.name);
+        tasksWithSameName.forEach(t => t.comment = comment);
+      }
+    } catch (err) {
+      this.showToast(i18n.t('schedule.extraTaskError'), 'error');
+    }
+  }
+
+  private async addExtraTaskAssignment(
+    extraProjectId: string,
+    employeeId: string,
+    week: string,
+    shift: 1 | 2 | 3,
+    note?: string
+  ): Promise<void> {
+    // Sprawdź duplikaty
+    const exists = this.state.scheduleAssignments.find((a: ScheduleAssignment) =>
+      a.projectId === extraProjectId && a.employeeId === employeeId && a.week === week && a.shift === shift
+    );
+    if (exists) {
+      this.showToast(i18n.t('schedule.alreadyExists'), 'warning');
+      return;
+    }
+    
+    const assignment: ScheduleAssignment = {
+      id: crypto.randomUUID(),
+      projectId: extraProjectId,
+      scope: 'project' as AssignmentScope,
+      employeeId,
+      week,
+      shift,
+      note,
+      createdAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    
+    this.state.scheduleAssignments.push(assignment);
+    await db.put('scheduleAssignments', assignment);
+    
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    this.showToast(`${emp?.firstName || ''} ${i18n.t('schedule.employeeAssigned')}`, 'success');
+    this.renderScheduleContent();
+  }
+  
+  private showExtraTaskEmployeePicker(
+    extraProjectId: string,
+    week: string,
+    shift: 1 | 2 | 3,
+    targetCell: HTMLElement
+  ): void {
+    document.querySelectorAll('.sched-picker').forEach(p => p.remove());
+    document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
+    
+    const picker = document.createElement('div');
+    picker.className = 'sched-picker';
+    
+    const currentAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
+      a.projectId === extraProjectId && a.week === week && a.shift === shift
+    );
+    const assignedIds = new Set(currentAssignments.map((a: ScheduleAssignment) => a.employeeId));
+    
+    const availableEmployees = this.state.employees
+      .filter(e => !assignedIds.has(e.id) && (!e.status || e.status === 'available'))
+      .sort((a, b) => a.firstName.localeCompare(b.firstName));
+    
+    if (availableEmployees.length === 0) {
+      picker.innerHTML = `<div class="sched-picker-empty">${i18n.t('schedule.noAvailableEmployees')}</div>`;
+    } else {
+      picker.innerHTML = availableEmployees.map(emp => `
+        <button class="sched-picker-emp" data-id="${emp.id}">
+          <span class="sched-picker-avatar" style="background:${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
+          <span class="sched-picker-name">${emp.firstName} ${emp.lastName}</span>
+        </button>
+      `).join('');
+    }
+    
+    const rect = targetCell.getBoundingClientRect();
+    picker.style.position = 'fixed';
+    picker.style.top = `${rect.bottom + 4}px`;
+    picker.style.left = `${rect.left}px`;
+    picker.style.zIndex = '1001';
+    
+    document.body.appendChild(picker);
+    
+    picker.querySelectorAll('.sched-picker-emp').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const empId = (btn as HTMLElement).dataset.id;
+        if (empId) {
+          await this.addExtraTaskAssignment(extraProjectId, empId, week, shift);
+          picker.remove();
+        }
+      });
+    });
+    
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!picker.contains(e.target as Node)) {
+          picker.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 10);
   }
   
   // Dodawanie przypisania z zakresem
@@ -13020,7 +16111,7 @@ END:VEVENT
     );
     
     if (existingAssignment) {
-      this.showToast('Ten pracownik jest już przypisany do tego zakresu!', 'warning');
+      this.showToast(i18n.t('schedule.alreadyAssignedScope'), 'warning');
       return;
     }
     
@@ -13044,14 +16135,14 @@ END:VEVENT
     const emp = this.state.employees.find(e => e.id === employeeId);
     const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
     const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${shift}`);
+    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - ${i18n.t('schedule.shift')} ${shift}`);
     
-    this.renderScheduleProjectsPanel();
+    this.renderScheduleContent();
     this.renderScheduleAlerts();
     this.renderScheduleEmployeePanel();
     this.updateCoverageBar();
     
-    const scopeText = scope === 'project' ? i18n.t('schedule.wholeProject') : (testId ? 'test' : 'część');
+    const scopeText = scope === 'project' ? i18n.t('schedule.wholeProject') : (testId ? 'test' : i18n.t('schedule.scopePartText'));
     this.showToast(`${i18n.t('schedule.assignedTo')} ${shift} (${scopeText})`, 'success');
   }
   
@@ -13067,7 +16158,7 @@ END:VEVENT
     history.push({
       action,
       type: 'Assignment',
-      details: `${action === 'added' ? 'Przypisano' : action === 'removed' ? 'Usunięto' : 'Zmieniono'} <strong>${employee}</strong> → ${details}`,
+      details: `${action === 'added' ? i18n.t('schedule.logAdded') : action === 'removed' ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged')} <strong>${employee}</strong> → ${details}`,
       timestamp: Date.now()
     });
     
@@ -13169,43 +16260,24 @@ END:VEVENT
     }, 10);
   }
   
-  // Picker zakresu przy pozycji drop
-  private showScopePickerAtPosition(
-    groupKey: string,
-    groupItems: Project[],
-    employeeId: string,
-    week: string,
-    shift: 1 | 2 | 3,
-    x: number,
-    y: number
-  ): void {
-    document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
-    document.querySelectorAll('.sched-picker').forEach(p => p.remove());
-    
-    const picker = document.createElement('div');
-    picker.className = 'sched-scope-picker';
-    
-    const employee = this.state.employees.find(e => e.id === employeeId);
-    
-    // Zbierz wszystkie unikalne testy i części
-    const uniqueTests = new Map<string, Test>();
+  // Helper: generuj HTML opcji zakresu z WSZYSTKIMI testami z bazy
+  private buildScopePickerHTML(groupItems: Project[], employee: Employee | undefined): string {
+    const projectTestIds = new Set<string>();
     const uniqueParts = new Map<string, Part>();
     
     groupItems.forEach(p => {
-      if (p.test_id) {
-        const test = this.state.tests.find(t => t.id === p.test_id);
-        if (test) uniqueTests.set(test.id, test);
-      }
+      if (p.test_id) projectTestIds.add(p.test_id);
       if (p.part_id) {
         const part = this.state.parts.find(pt => pt.id === p.part_id);
         if (part) uniqueParts.set(part.id, part);
       }
     });
     
-    const tests = Array.from(uniqueTests.values());
+    // Testy z projektu
+    const projectTests = this.state.tests.filter(t => projectTestIds.has(t.id));
     const parts = Array.from(uniqueParts.values());
     
-    picker.innerHTML = `
+    return `
       <div class="sched-scope-header">
         <span class="sched-scope-emp" style="--emp-color: ${employee?.color || '#888'}">${employee?.firstName || '?'}</span>
         <span class="sched-scope-title">${i18n.t('schedule.selectScope')}</span>
@@ -13219,9 +16291,9 @@ END:VEVENT
           </div>
         </button>
         
-        ${tests.length > 0 ? `
-          <div class="sched-scope-divider">${i18n.t('messages.test')}</div>
-          ${tests.map(t => `
+        ${projectTests.length > 0 ? `
+          <div class="sched-scope-divider">${i18n.t('schedule.projectTests')}</div>
+          ${projectTests.map(t => `
             <button class="sched-scope-option" data-scope="specific" data-test="${t.id}">
               <span class="sched-scope-icon">🧪</span>
               <span class="sched-scope-label">${t.name}</span>
@@ -13240,6 +16312,28 @@ END:VEVENT
         ` : ''}
       </div>
     `;
+  }
+
+  // Picker zakresu przy pozycji drop
+  private showScopePickerAtPosition(
+    groupKey: string,
+    groupItems: Project[],
+    employeeId: string,
+    week: string,
+    shift: 1 | 2 | 3,
+    x: number,
+    y: number,
+    replaceAssignmentId?: string
+  ): void {
+    document.querySelectorAll('.sched-scope-picker').forEach(p => p.remove());
+    document.querySelectorAll('.sched-picker').forEach(p => p.remove());
+    
+    const picker = document.createElement('div');
+    picker.className = 'sched-scope-picker';
+    
+    const employee = this.state.employees.find(e => e.id === employeeId);
+    
+    picker.innerHTML = this.buildScopePickerHTML(groupItems, employee);
     
     // Pozycjonowanie przy miejscu drop
     picker.style.position = 'fixed';
@@ -13281,6 +16375,10 @@ END:VEVENT
         const testId = (btn as HTMLElement).dataset.test;
         const partId = (btn as HTMLElement).dataset.part;
         
+        // Usuń stare przypisanie dopiero po potwierdzeniu scope
+        if (replaceAssignmentId) {
+          await this.removeAssignment(replaceAssignmentId);
+        }
         await this.addScopedAssignment(groupKey, employeeId, week, shift, scope, testId, partId);
         picker.remove();
       });
@@ -13313,59 +16411,7 @@ END:VEVENT
     
     const employee = this.state.employees.find(e => e.id === employeeId);
     
-    // Zbierz wszystkie unikalne testy i części
-    const uniqueTests = new Map<string, Test>();
-    const uniqueParts = new Map<string, Part>();
-    
-    groupItems.forEach(p => {
-      if (p.test_id) {
-        const test = this.state.tests.find(t => t.id === p.test_id);
-        if (test) uniqueTests.set(test.id, test);
-      }
-      if (p.part_id) {
-        const part = this.state.parts.find(pt => pt.id === p.part_id);
-        if (part) uniqueParts.set(part.id, part);
-      }
-    });
-    
-    const tests = Array.from(uniqueTests.values());
-    const parts = Array.from(uniqueParts.values());
-    
-    picker.innerHTML = `
-      <div class="sched-scope-header">
-        <span class="sched-scope-emp" style="--emp-color: ${employee?.color || '#888'}">${employee?.firstName || '?'}</span>
-        <span class="sched-scope-title">${i18n.t('schedule.selectScope')}</span>
-      </div>
-      <div class="sched-scope-options">
-        <button class="sched-scope-option primary" data-scope="project">
-          <span class="sched-scope-icon">📦</span>
-          <div class="sched-scope-text">
-            <span class="sched-scope-label">${i18n.t('schedule.wholeProject')}</span>
-            <span class="sched-scope-desc">${i18n.t('schedule.allTestsAndParts')}</span>
-          </div>
-        </button>
-        
-        ${tests.length > 0 ? `
-          <div class="sched-scope-divider">${i18n.t('messages.test')}</div>
-          ${tests.map(t => `
-            <button class="sched-scope-option" data-scope="specific" data-test="${t.id}">
-              <span class="sched-scope-icon">🧪</span>
-              <span class="sched-scope-label">${t.name}</span>
-            </button>
-          `).join('')}
-        ` : ''}
-        
-        ${parts.length > 1 ? `
-          <div class="sched-scope-divider">${i18n.t('messages.part')}</div>
-          ${parts.map(p => `
-            <button class="sched-scope-option" data-scope="specific" data-part="${p.id}">
-              <span class="sched-scope-icon">🔧</span>
-              <span class="sched-scope-label">${p.name}</span>
-            </button>
-          `).join('')}
-        ` : ''}
-      </div>
-    `;
+    picker.innerHTML = this.buildScopePickerHTML(groupItems, employee);
     
     // Pozycjonowanie
     const rect = targetCell.getBoundingClientRect();
@@ -13438,15 +16484,15 @@ END:VEVENT
     
     // Render modern header with icons
     headerContainer.className = `grid-header shifts-${this.scheduleShiftSystem}`;
-    let headerHtml = '<div class="header-cell project-col">Projekt / Test</div>';
+    let headerHtml = `<div class="header-cell project-col">${i18n.t('schedule.project')} / Test</div>`;
     for (let s = 1; s <= this.scheduleShiftSystem; s++) {
-      const shiftLabels = ['Poranek', 'Popołudnie', 'Noc'];
+      const shiftLabels = [i18n.t('schedule.shiftMorning'), i18n.t('schedule.shiftAfternoon'), i18n.t('schedule.shiftNight')];
       const shiftTimes = ['6:00-14:00', '14:00-22:00', '22:00-6:00'];
       headerHtml += `<div class="header-cell shift-col shift-${s}" style="--shift-color: ${shiftColors[s-1]}">
         <span class="shift-icon">${shiftIcons[s-1]}</span>
         <div class="shift-info">
           <span class="shift-number">${s}</span>
-          <span class="shift-name">${shiftLabels[s-1] || `Zmiana ${s}`}</span>
+          <span class="shift-name">${shiftLabels[s-1] || i18n.t('schedule.shiftLabel').replace('{0}', String(s))}</span>
           <span class="shift-time">${shiftTimes[s-1]}</span>
         </div>
       </div>`;
@@ -13470,8 +16516,8 @@ END:VEVENT
               <line x1="3" y1="10" x2="21" y2="10"/>
             </svg>
           </div>
-          <h3>Brak projektów w tym tygodniu</h3>
-          <p>Projekty z wartością SOLL > 0 pojawią się tutaj automatycznie</p>
+          <h3>${i18n.t('schedule.noProjectsThisWeek')}</h3>
+          <p>${i18n.t('schedule.projectsAppearAutomatically')}</p>
         </div>
       `;
       return;
@@ -13545,12 +16591,12 @@ END:VEVENT
       
       if (hasProjectLevel) {
         coverageStatus = 'full'; // pełna obsada
-        coverageLabel = '✓ Obsadzony';
+        coverageLabel = i18n.t('schedule.covered');
       } else if (hasAudit || hasAdhesion || hasSpecific) {
         coverageStatus = 'partial'; // częściowa obsada
-        if (!hasAudit) missingScopes.push('Audyty');
-        if (!hasAdhesion) missingScopes.push('Przyczepność');
-        coverageLabel = `⚠ Częściowo`;
+        if (!hasAudit) missingScopes.push(i18n.t('schedule.scopeAudit'));
+        if (!hasAdhesion) missingScopes.push(i18n.t('schedule.scopeAdhesion'));
+        coverageLabel = i18n.t('schedule.partiallyCovered');
       }
       
       // Create project card
@@ -13588,12 +16634,12 @@ END:VEVENT
           <div class="project-subtitle">${projectGroup.typeName}</div>
         </div>
         <div class="project-badges">
-          <span class="badge badge-parts">${partsCount} ${partsCount === 1 ? 'część' : partsCount < 5 ? 'części' : 'części'}</span>
+          <span class="badge badge-parts">${partsCount} ${partsCount === 1 ? i18n.t('schedule.partSingular') : i18n.t('schedule.partPlural')}</span>
           <span class="badge badge-soll">SOLL: ${projectGroup.totalSoll}</span>
           ${coverageBadge}
           ${comment ? `<span class="badge badge-comment has-hover" data-comment="${comment.replace(/"/g, '&quot;')}" data-project="${groupKey}" data-week="${weekKey}">📝</span>` : ''}
         </div>
-        <button class="btn-comment ${comment ? 'has-comment' : ''}" title="Dodaj komentarz">
+        <button class="btn-comment ${comment ? 'has-comment' : ''}" title="${i18n.t('schedule.addComment')}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
           </svg>
@@ -13659,7 +16705,7 @@ END:VEVENT
             <span class="chip-badge">P</span>
             <span class="chip-name">${emp.firstName}</span>
             ${assignment.note ? `<span class="chip-note-icon">💬</span>` : ''}
-            <button class="chip-comment-btn" title="Dodaj/edytuj notatkę">
+            <button class="chip-comment-btn" title="${i18n.t('schedule.addEditNote')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
@@ -13703,7 +16749,7 @@ END:VEVENT
           if (!emp) return;
           
           const scopeLabel = assignment.scope === 'audit' ? 'A' : assignment.scope === 'adhesion' ? 'H' : 'S';
-          const scopeTitle = assignment.scope === 'audit' ? 'Audyty' : assignment.scope === 'adhesion' ? 'Przyczepność' : (assignment.note || 'Specyficzne');
+          const scopeTitle = assignment.scope === 'audit' ? i18n.t('schedule.scopeAudit') : assignment.scope === 'adhesion' ? i18n.t('schedule.scopeAdhesion') : (assignment.note || i18n.t('schedule.scopeSpecific'));
           const scopeIcon = assignment.scope === 'audit' ? '🔍' : assignment.scope === 'adhesion' ? '🔗' : '📌';
           
           // Pobierz notatkę bez odpowiedzi
@@ -13720,7 +16766,7 @@ END:VEVENT
             <span class="chip-badge">${scopeLabel}</span>
             <span class="chip-name">${emp.firstName}</span>
             ${assignment.note ? `<span class="chip-note-icon">💬</span>` : ''}
-            <button class="chip-comment-btn" title="Dodaj/edytuj notatkę">
+            <button class="chip-comment-btn" title="${i18n.t('schedule.addEditNote')}">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
               </svg>
@@ -13819,7 +16865,7 @@ END:VEVENT
           <div class="test-info">
             <span class="test-indicator" style="background-color: ${test.color || '#0097AC'}"></span>
             <span class="test-name">${test.name}</span>
-            <span class="test-count">${parts.length} ${parts.length === 1 ? 'część' : 'części'}</span>
+            <span class="test-count">${parts.length} ${parts.length === 1 ? i18n.t('schedule.partSingular') : i18n.t('schedule.partPlural')}</span>
           </div>
         `;
         
@@ -13827,7 +16873,7 @@ END:VEVENT
         for (let s = 1; s <= this.scheduleShiftSystem; s++) {
           const testShiftCell = document.createElement('div');
           testShiftCell.className = `test-shift-cell shift-${s}`;
-          testShiftCell.innerHTML = `<span class="test-drop-hint">Przeciągnij → Audyt/Przyczepność</span>`;
+          testShiftCell.innerHTML = `<span class="test-drop-hint">${i18n.t('schedule.dragToScope')}</span>`;
           
           testShiftCell.addEventListener('dragover', (e) => {
             e.preventDefault();
@@ -13886,7 +16932,7 @@ END:VEVENT
               chip.title = `${emp.firstName} ${emp.lastName}${assignment.note ? ': ' + assignment.note : ''}`;
               
               chip.addEventListener('click', async () => {
-                if (confirm(`Usunąć przypisanie ${emp.firstName} ${emp.lastName}?`)) {
+                if (confirm(i18n.t('schedule.confirmRemoveAssignment').replace('{0}', emp.firstName).replace('{1}', emp.lastName))) {
                   await this.removeAssignment(assignment.id);
                 }
               });
@@ -13936,7 +16982,7 @@ END:VEVENT
         <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/>
         <line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/>
       </svg>
-      Przypisz: ${emp.firstName} ${emp.lastName}
+      ${i18n.t('schedule.assignEmployee').replace('{0}', emp.firstName).replace('{1}', emp.lastName)}
     `;
     
     const scopeOptions = testLevel ? `
@@ -13945,8 +16991,8 @@ END:VEVENT
         <div class="scope-card">
           <span class="scope-badge scope-audit">A</span>
           <div class="scope-info">
-            <strong>Audyty</strong>
-            <small>Tylko kontrola jakości / audyty</small>
+            <strong>${i18n.t('schedule.scopeAudit')}</strong>
+            <small>${i18n.t('schedule.scopeAuditDesc')}</small>
           </div>
         </div>
       </label>
@@ -13955,8 +17001,8 @@ END:VEVENT
         <div class="scope-card">
           <span class="scope-badge scope-adhesion">H</span>
           <div class="scope-info">
-            <strong>Przyczepność</strong>
-            <small>Tylko testy przyczepności</small>
+            <strong>${i18n.t('schedule.scopeAdhesion')}</strong>
+            <small>${i18n.t('schedule.scopeAdhesionDesc')}</small>
           </div>
         </div>
       </label>
@@ -13966,8 +17012,8 @@ END:VEVENT
         <div class="scope-card">
           <span class="scope-badge scope-project">P</span>
           <div class="scope-info">
-            <strong>Cały projekt</strong>
-            <small>Pracuje nad wszystkim w projekcie</small>
+            <strong>${i18n.t('schedule.scopeFullProject')}</strong>
+            <small>${i18n.t('schedule.scopeFullProjectDesc')}</small>
           </div>
         </div>
       </label>
@@ -13976,8 +17022,8 @@ END:VEVENT
         <div class="scope-card">
           <span class="scope-badge scope-audit">A</span>
           <div class="scope-info">
-            <strong>Tylko audyty</strong>
-            <small>Kontrola jakości i audyty</small>
+            <strong>${i18n.t('schedule.scopeAuditOnly')}</strong>
+            <small>${i18n.t('schedule.scopeAuditOnlyDesc')}</small>
           </div>
         </div>
       </label>
@@ -13986,8 +17032,8 @@ END:VEVENT
         <div class="scope-card">
           <span class="scope-badge scope-adhesion">H</span>
           <div class="scope-info">
-            <strong>Tylko przyczepność</strong>
-            <small>Testy przyczepności</small>
+            <strong>${i18n.t('schedule.scopeAdhesionOnly')}</strong>
+            <small>${i18n.t('schedule.scopeAdhesionOnlyDesc')}</small>
           </div>
         </div>
       </label>
@@ -14001,27 +17047,27 @@ END:VEVENT
           </div>
           <div>
             <strong>${emp.firstName} ${emp.lastName}</strong>
-            <small>Zmiana ${shift} • ${week}</small>
+            <small>${i18n.t('schedule.shiftAndWeek').replace('{0}', String(shift)).replace('{1}', week)}</small>
           </div>
         </div>
         
         <div class="scope-selection">
-          <label class="form-label">Zakres pracy:</label>
+          <label class="form-label">${i18n.t('schedule.workScopeLabel')}</label>
           <div class="scope-options">
             ${scopeOptions}
           </div>
         </div>
         
         <div class="form-group">
-          <label class="form-label">Notatka (opcjonalnie):</label>
-          <input type="text" id="assignmentNote" class="form-control" placeholder="Np. skupić się na..., priorytet...">
+          <label class="form-label">${i18n.t('schedule.noteOptionalLabel')}</label>
+          <input type="text" id="assignmentNote" class="form-control" placeholder="${i18n.t('schedule.notePlaceholderAssignment')}">
         </div>
       </div>
     `;
     
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     confirmBtn.style.display = '';
-    confirmBtn.textContent = 'Przypisz';
+    confirmBtn.textContent = i18n.t('schedule.assign');
     confirmBtn.onclick = async () => {
       const scopeEl = document.querySelector('input[name="assignmentScope"]:checked') as HTMLInputElement;
       const scope = (scopeEl?.value || 'project') as 'project' | 'audit' | 'adhesion' | 'specific';
@@ -14042,7 +17088,7 @@ END:VEVENT
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
     
-    modalTitle.textContent = `Przypisz do części: ${partName}`;
+    modalTitle.textContent = i18n.t('schedule.assignToPart').replace('{0}', partName);
     
     modalBody.innerHTML = `
       <div class="assignment-modal">
@@ -14052,7 +17098,7 @@ END:VEVENT
           </div>
           <div>
             <strong>${emp.firstName} ${emp.lastName}</strong>
-            <small>Zmiana ${shift} • Część: ${partName}</small>
+            <small>${i18n.t('schedule.shiftAndPart').replace('{0}', String(shift)).replace('{1}', partName)}</small>
           </div>
         </div>
         
@@ -14060,23 +17106,23 @@ END:VEVENT
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
           </svg>
-          <span>Przypisanie do konkretnej części będzie widoczne w widoku głównym projektu z oznaczeniem [S]</span>
+          <span>${i18n.t('schedule.specificPartNote')}</span>
         </div>
         
         <div class="form-group">
-          <label class="form-label">Co ma robić? (wymagane):</label>
-          <input type="text" id="specificNote" class="form-control" placeholder="Np. kontrola wymiarowa, test X..." required>
+          <label class="form-label">${i18n.t('schedule.whatToDoRequired')}</label>
+          <input type="text" id="specificNote" class="form-control" placeholder="${i18n.t('schedule.specificPartNotePlaceholder')}" required>
         </div>
       </div>
     `;
     
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     confirmBtn.style.display = '';
-    confirmBtn.textContent = 'Przypisz do części';
+    confirmBtn.textContent = i18n.t('schedule.assignToPartBtn');
     confirmBtn.onclick = async () => {
       const note = (document.getElementById('specificNote') as HTMLInputElement)?.value.trim();
       if (!note) {
-        this.showToast('Podaj co pracownik ma robić', 'warning');
+        this.showToast(i18n.t('schedule.specifyTask'), 'warning');
         return;
       }
       
@@ -14092,13 +17138,13 @@ END:VEVENT
     const modalTitle = document.getElementById('modalTitle')!;
     const modalBody = document.getElementById('modalBody')!;
     
-    modalTitle.textContent = 'Wybierz pracownika';
+    modalTitle.textContent = i18n.t('schedule.selectEmployee');
     
     if (this.state.employees.length === 0) {
       modalBody.innerHTML = `
         <div class="empty-state">
-          <p>Brak pracowników. Dodaj pierwszego pracownika, aby móc przypisywać.</p>
-          <button class="btn-primary" onclick="window.kappaApp.hideModal(); window.kappaApp.showAddEmployeeModal();">Dodaj pracownika</button>
+          <p>${i18n.t('schedule.noEmployeesMsg')}</p>
+          <button class="btn-primary" onclick="window.kappaApp.hideModal(); window.kappaApp.showAddEmployeeModal();">${i18n.t('schedule.addEmployeeBtn')}</button>
         </div>
       `;
       const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
@@ -14157,7 +17203,7 @@ END:VEVENT
     );
     
     if (exists) {
-      this.showToast('To przypisanie już istnieje', 'warning');
+      this.showToast(i18n.t('schedule.alreadyExists'), 'warning');
       return;
     }
     
@@ -14179,11 +17225,11 @@ END:VEVENT
     await db.put('scheduleAssignments', assignment);
     
     const emp = this.state.employees.find(e => e.id === employeeId);
-    const scopeLabels = { project: 'Projekt', audit: 'Audyty', adhesion: 'Przyczepność', specific: 'Konkretne' };
+    const scopeLabels = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
     await this.addLog('created', 'Assignment', `${emp?.firstName || ''} → ${week} Z${shift} [${scopeLabels[scope]}]`);
     
-    this.showToast('Pracownik przypisany', 'success');
-    this.renderScheduleProjectsPanel();
+    this.showToast(i18n.t('schedule.employeeAssigned'), 'success');
+    this.renderScheduleContent();
   }
   
   private createDropZone(projectId: string, testId: string | undefined, week: string, shift: 1 | 2 | 3, isGroupLevel: boolean = false): HTMLElement {
@@ -14259,14 +17305,14 @@ END:VEVENT
       // Czytelny log zamiast ID
       const empName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
       const projectName = customer?.name || '?';
-      const scopeLabels: Record<string, string> = { project: 'Projekt', audit: 'Audyt', adhesion: 'Przyczepność', specific: 'Specyficzne' };
+      const scopeLabels: Record<string, string> = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
       const scopeLabel = scopeLabels[assignment.scope] || assignment.scope;
       await this.addLog('deleted', 'Assignment', `${empName} ← ${projectName}`, `Z${assignment.shift}, ${scopeLabel}`);
       
       // Loguj do historii
-      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - Zmiana ${assignment.shift}`);
+      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - ` + i18n.t('schedule.shift') + ` ${assignment.shift}`);
       
-      this.renderScheduleProjectsPanel();
+      this.renderScheduleContent();
       this.renderScheduleEmployeePanel();
       this.updateCoverageBar();
     }
@@ -14295,7 +17341,7 @@ END:VEVENT
       return {
         class: 'staffing-full',
         icon: '✓',
-        tooltip: 'W pełni obsadzony (przypisanie do całego projektu)'
+        tooltip: i18n.t('schedule.fullyCovered')
       };
     }
     
@@ -14311,13 +17357,13 @@ END:VEVENT
         return {
           class: 'staffing-full',
           icon: '✓',
-          tooltip: 'Obsadzony'
+          tooltip: i18n.t('schedule.staffingCovered')
         };
       }
       return {
         class: 'staffing-none',
         icon: '○',
-        tooltip: 'Brak obsady'
+        tooltip: i18n.t('schedule.noCoverage')
       };
     }
     
@@ -14355,7 +17401,7 @@ END:VEVENT
       return {
         class: 'staffing-none',
         icon: '○',
-        tooltip: 'Brak obsady'
+        tooltip: i18n.t('schedule.noCoverage')
       };
     }
     
@@ -14363,7 +17409,7 @@ END:VEVENT
       return {
         class: 'staffing-full',
         icon: '✓',
-        tooltip: `W pełni obsadzony (${coveredTests}/${totalTests} testów)`
+        tooltip: i18n.t('schedule.fullyCoveredTests').replace('{0}', String(coveredTests)).replace('{1}', String(totalTests))
       };
     }
     
@@ -14376,7 +17422,7 @@ END:VEVENT
     return {
       class: 'staffing-partial',
       icon: '◐',
-      tooltip: `Częściowo obsadzony (${coveredTests}/${totalTests}). Brak: ${missingTests.join(', ')}${missingTests.length < totalTests - coveredTests ? '...' : ''}`
+      tooltip: i18n.t('schedule.partiallyCoveredDetail').replace('{0}', String(coveredTests)).replace('{1}', String(totalTests)).replace('{2}', missingTests.join(', ') + (missingTests.length < totalTests - coveredTests ? '...' : ''))
     };
   }
 
@@ -14414,13 +17460,13 @@ END:VEVENT
       <div class="chip-popup-body">
         ${mainNote ? `
           <div class="chip-popup-note">
-            <div class="chip-popup-note-label">Notatka:</div>
+            <div class="chip-popup-note-label">${i18n.t('schedule.noteTitle')}:</div>
             <div class="chip-popup-note-text">${mainNote}</div>
           </div>
         ` : ''}
         ${replies.length > 0 ? `
           <div class="chip-popup-replies">
-            <div class="chip-popup-replies-label">💬 Odpowiedzi (${replies.length}):</div>
+            <div class="chip-popup-replies-label">💬 ${i18n.t('schedule.repliesCount').replace('{0}', String(replies.length))}</div>
             ${replies.map(r => `
               <div class="chip-popup-reply">
                 <span class="chip-reply-author">${r.author}</span>
@@ -14432,8 +17478,8 @@ END:VEVENT
         ` : ''}
       </div>
       <div class="chip-popup-quick-reply">
-        <input type="text" class="chip-popup-reply-input" placeholder="Szybka odpowiedź..." />
-        <button class="chip-popup-reply-send" title="Wyślij">
+        <input type="text" class="chip-popup-reply-input" placeholder="${i18n.t('schedule.quickReply')}" />
+        <button class="chip-popup-reply-send" title="${i18n.t('schedule.send')}">
           <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
             <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
           </svg>
@@ -14480,8 +17526,8 @@ END:VEVENT
       // Zapisz odpowiedź
       const newReply = {
         text,
-        date: new Date().toLocaleString('pl-PL'),
-        author: 'Użytkownik'
+        date: new Date().toLocaleString(i18n.getDateLocale()),
+        author: i18n.t('logs.user')
       };
       
       let existingNote = assignment.note || '';
@@ -14513,7 +17559,7 @@ END:VEVENT
       }
       
       popup.remove();
-      this.showToast('Dodano odpowiedź', 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success');
       this.renderScheduleView();
     };
     
@@ -14622,7 +17668,7 @@ END:VEVENT
           </svg>
         </div>
         <div class="pcf-header-info">
-          <span class="pcf-title">Komentarz projektu</span>
+          <span class="pcf-title">${i18n.t('schedule.projectComment')}</span>
           <span class="pcf-project">${projectName}</span>
         </div>
       </div>
@@ -14632,7 +17678,7 @@ END:VEVENT
         </div>
         ${replies.length > 0 ? `
           <div class="pcf-replies">
-            <div class="pcf-replies-title">💬 Odpowiedzi (${replies.length}):</div>
+            <div class="pcf-replies-title">💬 ${i18n.t('schedule.repliesCount').replace('{0}', String(replies.length))}</div>
             ${replies.map(r => `
               <div class="pcf-reply">
                 <div class="pcf-reply-meta">
@@ -14646,8 +17692,8 @@ END:VEVENT
         ` : ''}
       </div>
       <div class="pcf-quick-reply">
-        <input type="text" class="pcf-reply-input" placeholder="Szybka odpowiedź..." />
-        <button class="pcf-reply-send" title="Wyślij">
+        <input type="text" class="pcf-reply-input" placeholder="${i18n.t('schedule.quickReply')}" />
+        <button class="pcf-reply-send" title="${i18n.t('schedule.send')}">
           <svg viewBox="0 0 24 24" fill="currentColor" width="14" height="14">
             <path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/>
           </svg>
@@ -14686,8 +17732,8 @@ END:VEVENT
       
       const newReply = {
         text,
-        date: new Date().toLocaleString('pl-PL'),
-        author: 'Użytkownik'
+        date: new Date().toLocaleString(i18n.getDateLocale()),
+        author: i18n.t('logs.user')
       };
       
       replies.push(newReply);
@@ -14717,7 +17763,7 @@ END:VEVENT
       
       popup.remove();
       this.projectCommentHoverPopup = null;
-      this.showToast('Dodano odpowiedź', 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success');
       this.renderScheduleView();
     };
     
@@ -14766,7 +17812,7 @@ END:VEVENT
       <div class="comment-popup-body">
         <div class="comment-main-text">${comment}</div>
         <div class="comment-reply-section">
-          <textarea class="comment-reply-input" placeholder="Dodaj notatkę lub odpowiedź..."></textarea>
+          <textarea class="comment-reply-input" placeholder="${i18n.t('schedule.notePlaceholder')}"></textarea>
           <div class="comment-reply-actions">
             <button class="btn-reply-save">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
@@ -14817,7 +17863,7 @@ END:VEVENT
       if (!replyText) return;
       
       // Dodaj notatkę do komentarza
-      const newComment = comment + `\n\n📌 [${new Date().toLocaleDateString('pl-PL')}]: ${replyText}`;
+      const newComment = comment + `\n\n📌 [${new Date().toLocaleDateString(i18n.getDateLocale())}]: ${replyText}`;
       
       const existing = this.state.projectComments.find((c: ProjectComment) =>
         c.projectId === projectId && c.week === week
@@ -14841,8 +17887,8 @@ END:VEVENT
       }
       
       popup.remove();
-      this.showToast('Notatka dodana', 'success');
-      this.renderScheduleProjectsPanel();
+      this.showToast(i18n.t('schedule.noteAdded'), 'success');
+      this.renderScheduleContent();
     });
     
     // Keep popup on hover
@@ -14889,7 +17935,7 @@ END:VEVENT
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
           </div>
-          <h3>Komentarz do projektu</h3>
+          <h3>${i18n.t('schedule.projectCommentTitle')}</h3>
           <button class="note-modal-close">×</button>
         </div>
         
@@ -14905,7 +17951,7 @@ END:VEVENT
         </div>
         
         <div class="note-modal-body">
-          <textarea class="note-modal-textarea" id="projectCommentText" placeholder="Wpisz komentarz dla projektu...">${mainComment}</textarea>
+          <textarea class="note-modal-textarea" id="projectCommentText" placeholder="${i18n.t('schedule.addComment')}...">${mainComment}</textarea>
           
           ${replies.length > 0 ? `
             <div class="note-replies-section note-replies-project">
@@ -14914,7 +17960,7 @@ END:VEVENT
                   <polyline points="9 17 4 12 9 7"/>
                   <path d="M20 18v-2a4 4 0 0 0-4-4H4"/>
                 </svg>
-                Odpowiedzi (${replies.length})
+                ${i18n.t('schedule.repliesCount').replace('{0}', String(replies.length))}
               </div>
               <div class="note-replies-list">
                 ${replies.map((r, i) => `
@@ -14922,7 +17968,7 @@ END:VEVENT
                     <div class="note-reply-header">
                       <span class="note-reply-author">${r.author}</span>
                       <span class="note-reply-date">${r.date}</span>
-                      <button class="note-reply-delete" data-index="${i}" title="Usuń odpowiedź">×</button>
+                      <button class="note-reply-delete" data-index="${i}" title="${i18n.t('schedule.deleteReply')}">×</button>
                     </div>
                     <div class="note-reply-text">${r.text}</div>
                   </div>
@@ -14933,8 +17979,8 @@ END:VEVENT
           
           <div class="note-add-reply note-add-reply-project">
             <div class="note-reply-input-wrapper">
-              <input type="text" class="note-reply-input" placeholder="Dodaj szybką odpowiedź...">
-              <button class="note-reply-submit" title="Dodaj odpowiedź">
+              <input type="text" class="note-reply-input" placeholder="${i18n.t('schedule.quickReply')}">
+              <button class="note-reply-submit" title="${i18n.t('schedule.addReply')}">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <line x1="22" y1="2" x2="11" y2="13"/>
                   <polygon points="22 2 15 22 11 13 2 9 22 2"/>
@@ -14951,12 +17997,12 @@ END:VEVENT
                 <polyline points="3 6 5 6 21 6"/>
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
               </svg>
-              Usuń
+              ${i18n.t('schedule.deleteBtn')}
             </button>
           ` : '<div></div>'}
           <div class="note-modal-actions-right">
-            <button class="note-modal-cancel">Anuluj</button>
-            <button class="note-modal-save">Zapisz</button>
+            <button class="note-modal-cancel">${i18n.t('schedule.cancel')}</button>
+            <button class="note-modal-save">${i18n.t('schedule.save')}</button>
           </div>
         </div>
       </div>
@@ -14982,8 +18028,8 @@ END:VEVENT
       
       replies.push({
         text: replyText,
-        date: new Date().toLocaleDateString('pl-PL'),
-        author: this.state.settings.userName || 'Użytkownik'
+        date: new Date().toLocaleDateString(i18n.getDateLocale()),
+        author: this.state.settings.userName || i18n.t('logs.user')
       });
       
       // Zapisz natychmiast do bazy
@@ -15014,7 +18060,7 @@ END:VEVENT
       // Odśwież modal
       overlay.remove();
       this.showProjectCommentModal(projectId, week, newCommentText);
-      this.showToast('Odpowiedź dodana', 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success');
     };
     
     overlay.querySelector('.note-reply-submit')?.addEventListener('click', submitReply);
@@ -15052,8 +18098,8 @@ END:VEVENT
         if (newCommentText) {
           this.showProjectCommentModal(projectId, week, newCommentText);
         }
-        this.renderScheduleProjectsPanel();
-        this.showToast('Odpowiedź usunięta', 'success');
+        this.renderScheduleContent();
+        this.showToast(i18n.t('schedule.replyDeleted'), 'success');
       });
     });
     
@@ -15066,10 +18112,10 @@ END:VEVENT
         const idx = this.state.projectComments.indexOf(existing);
         this.state.projectComments.splice(idx, 1);
         await db.delete('projectComments', existing.id);
-        this.showToast('Komentarz usunięty', 'success');
+        this.showToast(i18n.t('schedule.commentDeleted'), 'success');
       }
       overlay.remove();
-      this.renderScheduleProjectsPanel();
+      this.renderScheduleContent();
     });
     
     // Zapisywanie
@@ -15098,7 +18144,7 @@ END:VEVENT
           this.state.projectComments.push(newComment);
           await db.put('projectComments', newComment);
         }
-        this.showToast('Komentarz zapisany', 'success');
+        this.showToast(i18n.t('schedule.commentSaved'), 'success');
       } else if (existing) {
         const idx = this.state.projectComments.indexOf(existing);
         this.state.projectComments.splice(idx, 1);
@@ -15106,7 +18152,7 @@ END:VEVENT
       }
       
       overlay.remove();
-      this.renderScheduleProjectsPanel();
+      this.renderScheduleContent();
     });
     
     // Escape
@@ -15128,7 +18174,7 @@ END:VEVENT
     const prevAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === prevWeekKey);
     
     if (prevAssignments.length === 0) {
-      this.showToast('Brak przypisań w poprzednim tygodniu', 'warning');
+      this.showToast(i18n.t('schedule.noPrevWeekAssignments'), 'warning');
       return;
     }
     
@@ -15157,8 +18203,8 @@ END:VEVENT
       }
     }
     
-    this.showToast(`Skopiowano ${copied} przypisań z ${prevWeekKey}`, 'success');
-    this.renderScheduleProjectsPanel();
+    this.showToast(i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', prevWeekKey), 'success');
+    this.renderScheduleContent();
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -15175,7 +18221,7 @@ END:VEVENT
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private renderScheduleGrid(): void {
     // Legacy - redirects to new method
-    this.renderScheduleProjectsPanel();
+    this.renderScheduleContent();
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -15235,7 +18281,7 @@ END:VEVENT
       );
       
       if (exists) {
-        this.showToast('Ten pracownik jest już przypisany do tego projektu w tym tygodniu', 'warning');
+        this.showToast(i18n.t('schedule.alreadyAssignedWeek'), 'warning');
         return;
       }
       
@@ -15326,69 +18372,42 @@ END:VEVENT
     const selectedColor = employee?.color || EMPLOYEE_COLORS[this.state.employees.length % EMPLOYEE_COLORS.length];
     const currentStatus = employee?.status || 'available';
     const currentShift = employee?.suggestedShift || '';
-    const currentRole = employee?.role || 'worker';
+    const currentShiftSystem = employee?.shiftSystem || 2;
     
     modalBody.innerHTML = `
-      <div class="employee-form-grid">
-        <div class="form-section">
-          <h4 class="form-section-title">👤 Dane podstawowe</h4>
-          <div class="form-row">
-            <div class="form-group">
-              <label>${i18n.t('schedule.firstName')}:</label>
-              <input type="text" id="employeeFirstName" class="form-control" value="${employee?.firstName || ''}" placeholder="${i18n.t('schedule.firstName')}..." />
-            </div>
-            <div class="form-group">
-              <label>${i18n.t('schedule.lastName')}:</label>
-              <input type="text" id="employeeLastName" class="form-control" value="${employee?.lastName || ''}" placeholder="${i18n.t('schedule.lastName')}..." />
-            </div>
-          </div>
-          <div class="form-group">
-            <label>📧 Email:</label>
-            <input type="email" id="employeeEmail" class="form-control" value="${employee?.email || ''}" placeholder="imie.nazwisko@firma.pl" />
-          </div>
-          <div class="form-row">
-            <div class="form-group">
-              <label>📱 Telefon:</label>
-              <input type="tel" id="employeePhone" class="form-control" value="${employee?.phone || ''}" placeholder="+48 123 456 789" />
-            </div>
-            <div class="form-group">
-              <label>🏢 Dział:</label>
-              <input type="text" id="employeeDepartment" class="form-control" value="${employee?.department || ''}" placeholder="np. Produkcja, Jakość..." />
-            </div>
-          </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.firstName')}:</label>
+        <input type="text" id="employeeFirstName" class="form-control" value="${employee?.firstName || ''}" placeholder="${i18n.t('schedule.firstName')}..." />
+      </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.lastName')}:</label>
+        <input type="text" id="employeeLastName" class="form-control" value="${employee?.lastName || ''}" placeholder="${i18n.t('schedule.lastName')}..." />
+      </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.employeeColor')}:</label>
+        <div class="employee-color-picker" id="employeeColorPicker">
+          ${EMPLOYEE_COLORS.map(color => `
+            <div class="employee-color-option ${color === selectedColor ? 'selected' : ''}" 
+                 data-color="${color}" 
+                 style="background: ${color}"></div>
+          `).join('')}
         </div>
-        
-        <div class="form-section">
-          <h4 class="form-section-title">⚙️ Ustawienia</h4>
-          <div class="form-row">
-            <div class="form-group">
-              <label>👔 Rola:</label>
-              <select id="employeeRole" class="form-control">
-                <option value="worker" ${currentRole === 'worker' ? 'selected' : ''}>👷 Pracownik</option>
-                <option value="leader" ${currentRole === 'leader' ? 'selected' : ''}>👨‍💼 Lider zespołu</option>
-                <option value="manager" ${currentRole === 'manager' ? 'selected' : ''}>👔 Kierownik</option>
-              </select>
-            </div>
-            <div class="form-group">
-              <label>${i18n.t('schedule.status')}:</label>
-              <select id="employeeStatus" class="form-control">
-                <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
-                <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
-                <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
-              </select>
-            </div>
-          </div>
-          <div class="form-group">
-            <label>${i18n.t('schedule.employeeColor')}:</label>
-            <div class="employee-color-picker" id="employeeColorPicker">
-              ${EMPLOYEE_COLORS.map(color => `
-                <div class="employee-color-option ${color === selectedColor ? 'selected' : ''}" 
-                     data-color="${color}" 
-                     style="background: ${color}"></div>
-              `).join('')}
-            </div>
-          </div>
-        </div>
+      </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.status')}:</label>
+        <select id="employeeStatus" class="form-control">
+          <option value="available" ${currentStatus === 'available' ? 'selected' : ''}>✅ ${i18n.t('schedule.available')}</option>
+          <option value="vacation" ${currentStatus === 'vacation' ? 'selected' : ''}>🏖️ ${i18n.t('schedule.vacation')}</option>
+          <option value="sick" ${currentStatus === 'sick' ? 'selected' : ''}>🤒 ${i18n.t('schedule.sickLeave')}</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>${i18n.t('schedule.shiftSystemLabel')}:</label>
+        <select id="employeeShiftSystem" class="form-control">
+          <option value="1" ${currentShiftSystem === 1 ? 'selected' : ''}>1️⃣ ${i18n.t('schedule.shiftSystem1')}</option>
+          <option value="2" ${currentShiftSystem === 2 ? 'selected' : ''}>2️⃣ ${i18n.t('schedule.shiftSystem2')}</option>
+          <option value="3" ${currentShiftSystem === 3 ? 'selected' : ''}>3️⃣ ${i18n.t('schedule.shiftSystem3')}</option>
+        </select>
       </div>
     `;
     
@@ -15405,16 +18424,14 @@ END:VEVENT
     confirmBtn.onclick = async () => {
       const firstName = (document.getElementById('employeeFirstName') as HTMLInputElement).value.trim();
       const lastName = (document.getElementById('employeeLastName') as HTMLInputElement).value.trim();
-      const email = (document.getElementById('employeeEmail') as HTMLInputElement).value.trim();
-      const phone = (document.getElementById('employeePhone') as HTMLInputElement).value.trim();
-      const department = (document.getElementById('employeeDepartment') as HTMLInputElement).value.trim();
-      const role = (document.getElementById('employeeRole') as HTMLSelectElement).value as 'worker' | 'leader' | 'manager';
       const colorEl = document.querySelector('.employee-color-option.selected') as HTMLElement;
       const color = colorEl?.dataset.color || EMPLOYEE_COLORS[0];
       const status = (document.getElementById('employeeStatus') as HTMLSelectElement).value as EmployeeStatus;
       const shiftSelect = document.getElementById('employeeShift') as HTMLSelectElement | null;
       const shiftValue = shiftSelect?.value || '';
       const suggestedShift = shiftValue ? parseInt(shiftValue) as 1 | 2 | 3 : undefined;
+      const shiftSystemSelect = document.getElementById('employeeShiftSystem') as HTMLSelectElement | null;
+      const shiftSystem = shiftSystemSelect ? parseInt(shiftSystemSelect.value) as 1 | 2 | 3 : 2;
       
       if (!firstName || !lastName) {
         this.showToast(i18n.t('messages.errorOccurred'), 'error');
@@ -15427,10 +18444,7 @@ END:VEVENT
         employee.color = color;
         employee.status = status;
         employee.suggestedShift = suggestedShift;
-        employee.email = email || undefined;
-        employee.phone = phone || undefined;
-        employee.department = department || undefined;
-        employee.role = role;
+        employee.shiftSystem = shiftSystem;
         await db.put('employees', employee);
         await this.addLog('updated', 'Employee', `${firstName} ${lastName}`);
       } else {
@@ -15441,10 +18455,7 @@ END:VEVENT
           color,
           status,
           suggestedShift,
-          email: email || undefined,
-          phone: phone || undefined,
-          department: department || undefined,
-          role,
+          shiftSystem,
           createdAt: Date.now(),
         };
         this.state.employees.push(newEmployee);
@@ -15896,7 +18907,7 @@ END:VEVENT
         const isComplete = soll > 0 && ist >= soll;
         const level = remaining === 0 ? 0 : remaining <= 2 ? 1 : remaining <= 5 ? 2 : remaining <= 10 ? 3 : 4;
         const cellClass = isComplete ? 'level-complete' : `level-${level}`;
-        const tooltip = `KW${week}: ${ist}/${soll} (pozostało: ${remaining})`;
+        const tooltip = i18n.t('schedule.heatmapTooltip').replace('{0}', String(week)).replace('{1}', String(ist)).replace('{2}', String(soll)).replace('{3}', String(remaining));
         html += `<div class="heatmap-cell ${cellClass}" title="${tooltip}">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</div>`;
       });
       
@@ -16157,7 +19168,7 @@ END:VEVENT
     // Employee filter
     const empFilter = document.getElementById('absenceFilterEmployee') as HTMLSelectElement;
     if (empFilter) {
-      empFilter.innerHTML = '<option value="">Wszyscy</option>' +
+      empFilter.innerHTML = `<option value="">${i18n.t('absence.allEmployees')}</option>` +
         this.state.employees
           .filter(e => !e.status || e.status === 'available')
           .sort((a, b) => a.firstName.localeCompare(b.firstName))
@@ -16168,7 +19179,7 @@ END:VEVENT
     // Type filter
     const typeFilter = document.getElementById('absenceFilterType') as HTMLSelectElement;
     if (typeFilter) {
-      typeFilter.innerHTML = '<option value="">Wszystkie</option>' +
+      typeFilter.innerHTML = `<option value="">${i18n.t('absence.allTypes')}</option>` +
         this.absenceTypes
           .map(t => `<option value="${t.id}" ${t.id === this.absenceFilterType ? 'selected' : ''}>${t.icon} ${t.name}</option>`)
           .join('');
@@ -16189,19 +19200,19 @@ END:VEVENT
       <div class="absence-year-stats-grid">
         <div class="absence-stat-card">
           <div class="absence-stat-value">${totalAbsences}</div>
-          <div class="absence-stat-label">Nieobecności</div>
+          <div class="absence-stat-label">${i18n.t('schedule.absenceStatAbsences')}</div>
         </div>
         <div class="absence-stat-card">
           <div class="absence-stat-value">${totalDays}</div>
-          <div class="absence-stat-label">Dni łącznie</div>
+          <div class="absence-stat-label">${i18n.t('schedule.absenceStatTotalDays')}</div>
         </div>
         <div class="absence-stat-card">
           <div class="absence-stat-value">${pendingCount}</div>
-          <div class="absence-stat-label">Oczekujących</div>
+          <div class="absence-stat-label">${i18n.t('schedule.absenceStatPending')}</div>
         </div>
         <div class="absence-stat-card">
           <div class="absence-stat-value">${employeesOnLeave}</div>
-          <div class="absence-stat-label">Pracowników</div>
+          <div class="absence-stat-label">${i18n.t('schedule.absenceStatEmployees')}</div>
         </div>
       </div>
     `;
@@ -16220,21 +19231,21 @@ END:VEVENT
       .slice(0, 5);
     
     if (upcoming.length === 0) {
-      container.innerHTML = '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">Brak nadchodzących nieobecności</p>';
+      container.innerHTML = '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">' + i18n.t('schedule.noUpcomingAbsences') + '</p>';
       return;
     }
     
     container.innerHTML = upcoming.map(a => {
       const emp = this.state.employees.find(e => e.id === a.employeeId);
       const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
-      const startDate = new Date(a.startDate).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
+      const startDate = new Date(a.startDate).toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit' });
       
       return `
         <div class="absence-upcoming-item">
           <span class="absence-upcoming-icon">${type?.icon || '📅'}</span>
           <div class="absence-upcoming-info">
             <div class="absence-upcoming-name">${emp?.firstName || ''} ${emp?.lastName || ''}</div>
-            <div class="absence-upcoming-date">${startDate} - ${a.workDays} dni</div>
+            <div class="absence-upcoming-date">${startDate} - ${a.workDays} ${i18n.t('absence.days')}</div>
           </div>
         </div>
       `;
@@ -16314,6 +19325,9 @@ END:VEVENT
       case 'employees':
         this.renderAbsenceEmployeesGrid();
         break;
+      case 'timeline':
+        this.renderAbsenceTimeline();
+        break;
     }
   }
   
@@ -16321,9 +19335,16 @@ END:VEVENT
     const container = document.getElementById('absenceContent');
     if (!container) return;
     
-    const months = ['Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec', 
-                    'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień'];
-    const weekdays = ['Pon', 'Wt', 'Śr', 'Czw', 'Pt', 'Sob', 'Nie'];
+    const months = [
+      i18n.t('schedule.monthFullJan'), i18n.t('schedule.monthFullFeb'), i18n.t('schedule.monthFullMar'),
+      i18n.t('schedule.monthFullApr'), i18n.t('schedule.monthFullMay'), i18n.t('schedule.monthFullJun'),
+      i18n.t('schedule.monthFullJul'), i18n.t('schedule.monthFullAug'), i18n.t('schedule.monthFullSep'),
+      i18n.t('schedule.monthFullOct'), i18n.t('schedule.monthFullNov'), i18n.t('schedule.monthFullDec')
+    ];
+    const weekdays = [
+      i18n.t('schedule.weekdayMon'), i18n.t('schedule.weekdayTue'), i18n.t('schedule.weekdayWed'),
+      i18n.t('schedule.weekdayThu'), i18n.t('schedule.weekdayFri'), i18n.t('schedule.weekdaySat'), i18n.t('schedule.weekdaySun')
+    ];
     
     const year = this.absenceYear;
     const month = this.absenceCalendarMonth;
@@ -16382,7 +19403,7 @@ END:VEVENT
       }).join('');
       
       const moreCount = dayAbsences.length - 3;
-      const moreHtml = moreCount > 0 ? `<div class="absence-calendar-event-more">+${moreCount} więcej</div>` : '';
+      const moreHtml = moreCount > 0 ? `<div class="absence-calendar-event-more">+${moreCount} ${i18n.t('schedule.more')}</div>` : '';
       
       daysHtml += `
         <div class="${classes}" data-date="${dateStr}">
@@ -16489,10 +19510,10 @@ END:VEVENT
       container.innerHTML = `
         <div class="absence-empty">
           <div class="absence-empty-icon">📅</div>
-          <h3>Brak nieobecności</h3>
-          <p>Nie znaleziono nieobecności spełniających kryteria.</p>
+          <h3>${i18n.t('schedule.noAbsencesFound')}</h3>
+          <p>${i18n.t('schedule.noAbsencesMatchCriteria')}</p>
           <button class="absence-action-btn primary" onclick="document.getElementById('addAbsenceBtn').click()">
-            Dodaj pierwszą nieobecność
+            ${i18n.t('schedule.addFirstAbsence')}
           </button>
         </div>
       `;
@@ -16502,8 +19523,8 @@ END:VEVENT
     const itemsHtml = filtered.map(a => {
       const emp = this.state.employees.find(e => e.id === a.employeeId);
       const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
-      const startDate = new Date(a.startDate).toLocaleDateString('pl-PL');
-      const endDate = new Date(a.endDate).toLocaleDateString('pl-PL');
+      const startDate = new Date(a.startDate).toLocaleDateString(i18n.getDateLocale());
+      const endDate = new Date(a.endDate).toLocaleDateString(i18n.getDateLocale());
       
       return `
         <div class="absence-list-item" data-absence-id="${a.id}">
@@ -16515,11 +19536,10 @@ END:VEVENT
           </div>
           <div class="absence-list-type">
             <span class="absence-list-type-icon">${type?.icon || '📅'}</span>
-            <span class="absence-list-type-name">${type?.name || 'Nieobecność'}</span>
+            <span class="absence-list-type-name">${type?.name || i18n.t('schedule.absenceDefault')}</span>
           </div>
           <div class="absence-list-dates">${startDate} - ${endDate}</div>
-          <div class="absence-list-days">${a.workDays} dni</div>
-          <div class="absence-list-status ${a.status}">${a.status === 'approved' ? 'Zatwierdzona' : a.status === 'pending' ? 'Oczekuje' : 'Odrzucona'}</div>
+          <div class="absence-list-days">${a.workDays} ${i18n.t('schedule.days')}</div>
           <div class="absence-list-actions">
             <button class="absence-list-action-btn edit-absence" title="Edytuj">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -16527,7 +19547,7 @@ END:VEVENT
                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
               </svg>
             </button>
-            <button class="absence-list-action-btn delete delete-absence" title="Usuń">
+            <button class="absence-list-action-btn delete delete-absence" title="${i18n.t('schedule.deleteBtn')}">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="3 6 5 6 21 6"/>
                 <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -16541,12 +19561,11 @@ END:VEVENT
     container.innerHTML = `
       <div class="absence-list">
         <div class="absence-list-header">
-          <span>Pracownik</span>
-          <span>Typ</span>
-          <span>Daty</span>
-          <span>Dni</span>
-          <span>Status</span>
-          <span>Akcje</span>
+          <span>${i18n.t('schedule.absenceListEmployee')}</span>
+          <span>${i18n.t('schedule.absenceListType')}</span>
+          <span>${i18n.t('schedule.absenceListDates')}</span>
+          <span>${i18n.t('schedule.absenceListDays')}</span>
+          <span>${i18n.t('schedule.absenceListActions')}</span>
         </div>
         ${itemsHtml}
       </div>
@@ -16558,7 +19577,7 @@ END:VEVENT
         e.stopPropagation();
         const item = (btn as HTMLElement).closest('.absence-list-item') as HTMLElement | null;
         const id = item?.dataset?.absenceId;
-        if (id && confirm('Czy na pewno chcesz usunąć tę nieobecność?')) {
+        if (id && confirm(i18n.t('schedule.confirmDeleteAbsence'))) {
           await api.deleteAbsence(id);
           await this.loadAbsenceData();
           this.renderAbsenceContent();
@@ -16583,7 +19602,12 @@ END:VEVENT
     const container = document.getElementById('absenceContent');
     if (!container) return;
     
-    const months = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
+    const months = [
+      i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
+      i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
+      i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
+      i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+    ];
     const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
     
     // Header with months
@@ -16642,22 +19666,22 @@ END:VEVENT
     container.innerHTML = `
       <div class="absence-heatmap">
         <div class="absence-heatmap-header">
-          <h3>Mapa nieobecności ${this.absenceYear}</h3>
-          <p>Liczba dni nieobecności każdego pracownika w danym miesiącu</p>
+          <h3>${i18n.t('schedule.absenceHeatmapTitle').replace('{0}', String(this.absenceYear))}</h3>
+          <p>${i18n.t('schedule.absenceHeatmapDesc')}</p>
         </div>
         <div class="absence-heatmap-grid">
           ${headerHtml}
           ${rowsHtml}
         </div>
         <div class="absence-heatmap-legend">
-          <span>Mniej</span>
+          <span>${i18n.t('schedule.heatmapLess')}</span>
           <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-0"></div></div>
           <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-1"></div></div>
           <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-2"></div></div>
           <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-3"></div></div>
           <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-4"></div></div>
           <div class="absence-heatmap-legend-item"><div class="absence-heatmap-legend-color level-5"></div></div>
-          <span>Więcej</span>
+          <span>${i18n.t('schedule.heatmapMore')}</span>
         </div>
       </div>
     `;
@@ -16708,11 +19732,11 @@ END:VEVENT
             </div>
           </div>
           <div class="absence-employee-full-body">
-            ${limitsHtml || '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">Brak ustawionych limitów</p>'}
+            ${limitsHtml || '<p style="text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">' + i18n.t('schedule.noLimitsSet') + '</p>'}
           </div>
           <div class="absence-employee-full-footer">
-            <span class="absence-employee-full-total">Razem: <strong>${totalUsed} dni</strong></span>
-            <button class="absence-employee-edit-btn">Edytuj limity</button>
+            <span class="absence-employee-full-total">${i18n.t('schedule.total')}: <strong>${totalUsed} ${i18n.t('schedule.days')}</strong></span>
+            <button class="absence-employee-edit-btn">${i18n.t('schedule.editLimits')}</button>
           </div>
         </div>
       `;
@@ -16743,7 +19767,485 @@ END:VEVENT
       });
     });
   }
-  
+
+  // ==================== ABSENCE TIMELINE VIEW (Yearly Spreadsheet) ====================
+  private renderAbsenceTimeline(): void {
+    const container = document.getElementById('absenceContent');
+    if (!container) return;
+
+    const year = this.absenceYear;
+    const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+    const locale = i18n.getDateLocale();
+
+    // Get holidays set
+    const holidayDates = new Set(this.holidays.map((h: any) => h.date));
+
+    const isWeekend = (d: Date): boolean => {
+      const day = d.getDay();
+      return day === 0 || day === 6;
+    };
+
+    // Build absence lookup: dateStr -> { employeeId -> absence }
+    const absenceMap = new Map<string, Map<string, any>>();
+    this.absences.forEach((a: any) => {
+      const start = new Date(a.startDate);
+      const end = new Date(a.endDate);
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const dateStr = d.toISOString().split('T')[0];
+        if (!absenceMap.has(dateStr)) absenceMap.set(dateStr, new Map());
+        absenceMap.get(dateStr)!.set(a.employeeId, a);
+      }
+    });
+
+    // Build summary per type per employee
+    const activeTypes = this.absenceTypes.filter((t: any) => t.isActive);
+    const typeUsage = new Map<string, Map<string, number>>(); // typeId -> { empId -> days }
+    this.absences.forEach((a: any) => {
+      if (!typeUsage.has(a.absenceTypeId)) typeUsage.set(a.absenceTypeId, new Map());
+      const empMap = typeUsage.get(a.absenceTypeId)!;
+      empMap.set(a.employeeId, (empMap.get(a.employeeId) || 0) + (a.workDays || 0));
+    });
+
+    // Build employee limit totals
+    const empLimitTotal = new Map<string, number>();
+    const empUsedTotal = new Map<string, number>();
+    employees.forEach(emp => {
+      const total = this.absenceLimits
+        .filter((l: any) => l.employeeId === emp.id && l.year === year)
+        .reduce((sum: number, l: any) => sum + (l.totalDays || 0), 0);
+      empLimitTotal.set(emp.id, total);
+      const used = this.absences
+        .filter((a: any) => a.employeeId === emp.id)
+        .reduce((sum: number, a: any) => sum + (a.workDays || 0), 0);
+      empUsedTotal.set(emp.id, used);
+    });
+
+    // Employee header columns (horizontal with avatar)
+    const avatarColors = ['#0097AC', '#e74c3c', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#e67e22', '#3498db'];
+    const empHeaders = employees.map(emp => {
+      const initials = `${(emp.firstName || '?')[0]}${(emp.lastName || '?')[0]}`.toUpperCase();
+      const ci = (emp.firstName || '').charCodeAt(0) % avatarColors.length;
+      return `<th class="atl-emp-col-header" data-employee-id="${emp.id}">
+        <div class="atl-emp-avatar" style="background: ${avatarColors[ci]}">${initials}</div>
+        <div class="atl-emp-col-name">${emp.firstName} ${emp.lastName}</div>
+      </th>`;
+    }).join('');
+
+    // Summary rows per absence type - collapsible
+    const summaryRows = activeTypes.map(t => {
+      const empMap = typeUsage.get(t.id) || new Map();
+      const totalForType = Array.from(empMap.values()).reduce((s, v) => s + v, 0);
+      const cells = employees.map(emp => {
+        const val = empMap.get(emp.id) || 0;
+        return `<td class="atl-summary-cell${val > 0 ? ' has-value' : ''}">${val}</td>`;
+      }).join('');
+      return `<tr class="atl-summary-type-row atl-type-detail-row">
+        <td colspan="3" class="atl-summary-type-label"><span class="atl-type-badge" style="background: ${t.color}">${t.icon}</span> ${t.name} <span class="atl-type-total">(${totalForType}d)</span></td>
+        ${cells}
+        <td class="atl-summary-cell atl-summary-count-cell"></td>
+      </tr>`;
+    }).join('');
+
+    // Toggle header for type breakdown
+    const typeToggleRow = `<tr class="atl-summary-toggle-row" id="atlTypeToggle">
+      <td colspan="${3 + employees.length + 1}" class="atl-summary-toggle-cell">
+        <button class="atl-summary-toggle-btn">
+          <svg class="atl-toggle-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          ${i18n.t('schedule.absenceTimelineByType')} (${activeTypes.length})
+        </button>
+      </td>
+    </tr>`;
+
+    // Entitled days row
+    const entitledCells = employees.map(emp => {
+      const val = empLimitTotal.get(emp.id) || 0;
+      return `<td class="atl-entitled-cell">${val}</td>`;
+    }).join('');
+
+    // Used days total row
+    const usedCells = employees.map(emp => {
+      const val = empUsedTotal.get(emp.id) || 0;
+      return `<td class="atl-used-cell">${val}</td>`;
+    }).join('');
+
+    // Remaining days row
+    const remainingCells = employees.map(emp => {
+      const total = empLimitTotal.get(emp.id) || 0;
+      const used = empUsedTotal.get(emp.id) || 0;
+      const remaining = total - used;
+      const cls = remaining < 0 ? ' negative' : remaining === 0 ? ' zero' : '';
+      return `<td class="atl-remaining-cell${cls}">${remaining}</td>`;
+    }).join('');
+
+    // Utilization % row
+    const utilizationCells = employees.map(emp => {
+      const total = empLimitTotal.get(emp.id) || 0;
+      const used = empUsedTotal.get(emp.id) || 0;
+      const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+      const barColor = pct > 90 ? '#ef4444' : pct > 70 ? '#eab308' : '#22c55e';
+      return `<td class="atl-utilization-cell">
+        <div class="atl-utilization-bar-bg"><div class="atl-utilization-bar" style="width: ${pct}%; background: ${barColor}"></div></div>
+        <span class="atl-utilization-pct">${pct}%</span>
+      </td>`;
+    }).join('');
+
+    // Build calendar rows - all days of the year
+    const calendarRows: string[] = [];
+    const startDate = new Date(year, 0, 1);
+    const endDate = new Date(year, 11, 31);
+    let currentMonth = -1;
+
+    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().split('T')[0];
+      const dayOfWeek = d.getDay();
+      const isWkend = isWeekend(d);
+      const isHoliday = holidayDates.has(dateStr);
+      const isToday = dateStr === new Date().toISOString().split('T')[0];
+
+      // ISO week number
+      const tempDate = new Date(d.getTime());
+      tempDate.setDate(tempDate.getDate() + 3 - ((tempDate.getDay() + 6) % 7));
+      const week1 = new Date(tempDate.getFullYear(), 0, 4);
+      const weekNum = 1 + Math.round(((tempDate.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+
+      // Month separator
+      if (d.getMonth() !== currentMonth) {
+        currentMonth = d.getMonth();
+        const monthName = d.toLocaleDateString(locale, { month: 'long' });
+        calendarRows.push(`<tr class="atl-month-separator">
+          <td colspan="${3 + employees.length + 1}" class="atl-month-separator-cell">
+            <span class="atl-month-separator-name">${monthName} ${year}</span>
+          </td>
+        </tr>`);
+      }
+
+      // Show week number only on Mondays (or first day of year)
+      const showWeek = dayOfWeek === 1 || (d.getMonth() === 0 && d.getDate() === 1);
+
+      const dayName = d.toLocaleDateString(locale, { weekday: 'long' });
+      const dateDisplay = `${d.getDate()}.${d.toLocaleDateString(locale, { month: 'short' }).replace('.', '')}`;
+
+      const rowClass = [
+        'atl-day-row',
+        isWkend ? 'weekend' : '',
+        isHoliday ? 'holiday' : '',
+        isToday ? 'today' : ''
+      ].filter(Boolean).join(' ');
+
+      // Employee cells for this day
+      const empCells = employees.map(emp => {
+        const empAbsMap = absenceMap.get(dateStr);
+        const absence = empAbsMap?.get(emp.id);
+        if (absence && !isWkend) {
+          const type = this.absenceTypes.find((t: any) => t.id === absence.absenceTypeId);
+          return `<td class="atl-day-cell has-absence" style="--abs-color: ${type?.color || '#64748b'}" 
+            data-absence-id="${absence.id}" data-employee-id="${emp.id}" data-date="${dateStr}" title="${type?.icon || ''} ${type?.name || ''} (${absence.workDays}d)">
+            <span class="atl-absence-marker">${type?.icon || '1'}</span>
+          </td>`;
+        }
+        if (isWkend || isHoliday) {
+          return `<td class="atl-day-cell off-day"></td>`;
+        }
+        return `<td class="atl-day-cell empty-cell" data-employee-id="${emp.id}" data-date="${dateStr}"></td>`;
+      }).join('');
+
+      // Count total absent on this day
+      const absMap = absenceMap.get(dateStr);
+      const totalAbsent = absMap ? absMap.size : 0;
+      const commentCell = totalAbsent > 0 && !isWkend
+        ? `<td class="atl-count-cell"><span class="atl-count-badge ${totalAbsent >= 4 ? 'high' : totalAbsent >= 2 ? 'med' : 'low'}">${totalAbsent}</span></td>`
+        : `<td class="atl-count-cell"></td>`;
+
+      calendarRows.push(`<tr class="${rowClass}">
+        <td class="atl-week-cell">${showWeek ? weekNum : ''}</td>
+        <td class="atl-date-cell">${dateDisplay}</td>
+        <td class="atl-dayname-cell">${dayName}</td>
+        ${empCells}
+        ${commentCell}
+      </tr>`);
+    }
+
+    // Bottom sticky footer cells
+    const bottomEntitled = employees.map(emp => {
+      const val = empLimitTotal.get(emp.id) || 0;
+      return `<td>${val}</td>`;
+    }).join('');
+    const bottomUsed = employees.map(emp => {
+      const val = empUsedTotal.get(emp.id) || 0;
+      return `<td>${val}</td>`;
+    }).join('');
+    const bottomRemaining = employees.map(emp => {
+      const total = empLimitTotal.get(emp.id) || 0;
+      const used = empUsedTotal.get(emp.id) || 0;
+      const rem = total - used;
+      const cls = rem < 0 ? 'rem-negative' : rem === 0 ? 'rem-zero' : 'rem-positive';
+      return `<td class="${cls}">${rem}</td>`;
+    }).join('');
+
+    // Colgroup + dynamic min-width
+    const fixedColsWidth = 42 + 84 + 100 + 62; // week + date + day + count
+    const minEmpColWidth = 100;
+    const minTableWidth = fixedColsWidth + employees.length * minEmpColWidth;
+    const colgroup = `<colgroup>
+      <col class="atl-col-week">
+      <col class="atl-col-date">
+      <col class="atl-col-day">
+      ${employees.map(() => '<col class="atl-col-emp">').join('')}
+      <col class="atl-col-count">
+    </colgroup>`;
+
+    container.innerHTML = `
+      <div class="atl-container">
+        <div class="atl-table-wrapper">
+          <table class="atl-table" style="min-width: ${minTableWidth}px">
+            ${colgroup}
+            <thead>
+              <tr class="atl-main-header">
+                <th class="atl-header-fixed" colspan="3">${i18n.t('schedule.absenceTimelineYearReport')} ${year}</th>
+                ${empHeaders}
+                <th class="atl-header-count">${i18n.t('schedule.absenceTimelineOverlap')}</th>
+              </tr>
+            </thead>
+            <tbody class="atl-summary-body">
+              ${typeToggleRow}
+              ${summaryRows}
+              <tr class="atl-total-row atl-entitled-row">
+                <td colspan="3" class="atl-total-label">📋 ${i18n.t('schedule.absenceEntitledDays')}</td>
+                ${entitledCells}
+                <td class="atl-entitled-cell atl-total-count-cell"></td>
+              </tr>
+              <tr class="atl-total-row atl-used-row">
+                <td colspan="3" class="atl-total-label">📊 ${i18n.t('schedule.absenceUsedDays')}</td>
+                ${usedCells}
+                <td class="atl-used-cell atl-total-count-cell"></td>
+              </tr>
+              <tr class="atl-total-row atl-remaining-row">
+                <td colspan="3" class="atl-total-label">✅ ${i18n.t('schedule.absenceRemainingDays')}</td>
+                ${remainingCells}
+                <td class="atl-remaining-cell atl-total-count-cell"></td>
+              </tr>
+              <tr class="atl-total-row atl-utilization-row">
+                <td colspan="3" class="atl-total-label">📈 ${i18n.t('utilization')}</td>
+                ${utilizationCells}
+                <td class="atl-utilization-cell atl-total-count-cell"></td>
+              </tr>
+            </tbody>
+            <tbody class="atl-calendar-body">
+              ${calendarRows.join('')}
+            </tbody>
+            <tfoot class="atl-bottom-summary">
+              <tr class="atl-bottom-entitled">
+                <td colspan="3" class="atl-bottom-footer-label">📋 ${i18n.t('schedule.absenceEntitledDays')}</td>
+                ${bottomEntitled}
+                <td class="atl-bottom-count-cell"></td>
+              </tr>
+              <tr class="atl-bottom-used">
+                <td colspan="3" class="atl-bottom-footer-label">📊 ${i18n.t('schedule.absenceUsedDays')}</td>
+                ${bottomUsed}
+                <td class="atl-bottom-count-cell"></td>
+              </tr>
+              <tr class="atl-bottom-remaining">
+                <td colspan="3" class="atl-bottom-footer-label">✅ ${i18n.t('schedule.absenceRemainingDays')}</td>
+                ${bottomRemaining}
+                <td class="atl-bottom-count-cell"></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <div class="atl-legend">
+          ${activeTypes.map((t: any) => `
+            <div class="atl-legend-item">
+              <div class="atl-legend-color" style="background: ${t.color}"></div>
+              <span>${t.icon} ${t.name}</span>
+            </div>
+          `).join('')}
+          <div class="atl-legend-divider"></div>
+          <div class="atl-legend-item"><div class="atl-legend-color" style="background: var(--color-bg-tertiary)"></div><span>🔒 ${i18n.t('schedule.absenceWeekend')}</span></div>
+        </div>
+      </div>
+    `;
+
+    // Event handlers
+    // Toggle type breakdown rows
+    const toggleBtn = container.querySelector('#atlTypeToggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        const detailRows = container.querySelectorAll('.atl-type-detail-row');
+        const chevron = toggleBtn.querySelector('.atl-toggle-chevron');
+        const isCollapsed = toggleBtn.classList.toggle('collapsed');
+        detailRows.forEach(row => {
+          (row as HTMLElement).style.display = isCollapsed ? 'none' : '';
+        });
+        if (chevron) {
+          (chevron as HTMLElement).style.transform = isCollapsed ? 'rotate(-90deg)' : '';
+        }
+      });
+    }
+
+    // Click absence cell to edit
+    container.querySelectorAll('.atl-day-cell.has-absence').forEach(cell => {
+      (cell as HTMLElement).style.cursor = 'pointer';
+      cell.addEventListener('click', () => {
+        const absId = (cell as HTMLElement).dataset.absenceId;
+        if (absId) this.showEditAbsenceModal(absId);
+      });
+    });
+
+    // Click empty cell to add absence
+    container.querySelectorAll('.atl-day-cell.empty-cell').forEach(cell => {
+      cell.addEventListener('click', () => {
+        const empId = (cell as HTMLElement).dataset.employeeId || '';
+        const dateStr = (cell as HTMLElement).dataset.date || '';
+        this.showAddAbsenceWizardForTimeline(empId, dateStr);
+      });
+    });
+
+    // Scroll to today on load
+    setTimeout(() => {
+      const todayRow = container.querySelector('.atl-day-row.today');
+      if (todayRow) {
+        todayRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  }
+
+  // Quick add from timeline
+  private async showAddAbsenceWizardForTimeline(employeeId: string, preselectedDate: string): Promise<void> {
+    if (this.absenceTypes.length === 0) {
+      try { this.absenceTypes = await api.getAbsenceTypes(); } catch { this.absenceTypes = []; }
+    }
+
+    const emp = this.state.employees.find(e => e.id === employeeId);
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 480px;">
+        <div class="absence-modal-header">
+          <h2>➕ ${i18n.t('schedule.addAbsence')}${emp ? ` – ${emp.firstName} ${emp.lastName}` : ''}</h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          ${!emp ? `
+          <div class="absence-form-group">
+            <label class="absence-form-label">${i18n.t('schedule.absenceListEmployee')}</label>
+            <select class="absence-form-select" id="tlWizardEmployee">
+              <option value="">${i18n.t('schedule.selectOption')}</option>
+              ${this.state.employees.filter(e => !e.status || e.status === 'available').map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('')}
+            </select>
+          </div>
+          ` : ''}
+          <div class="absence-form-group">
+            <label class="absence-form-label">${i18n.t('schedule.absenceTypeLabel')}</label>
+            <div class="atl-type-grid" id="tlTypeGrid">
+              ${this.absenceTypes.filter((t: any) => t.isActive).map((t: any) => `
+                <button class="atl-type-btn" data-type-id="${t.id}" style="--type-color: ${t.color}">
+                  <span class="atl-type-icon">${t.icon}</span>
+                  <span class="atl-type-name">${t.name}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+          <div class="absence-form-row">
+            <div class="absence-form-group">
+              <label class="absence-form-label">${i18n.t('schedule.dateFrom')}</label>
+              <input type="date" class="absence-form-input" id="tlStartDate" value="${preselectedDate}">
+            </div>
+            <div class="absence-form-group">
+              <label class="absence-form-label">${i18n.t('schedule.dateTo')}</label>
+              <input type="date" class="absence-form-input" id="tlEndDate" value="${preselectedDate}">
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <div class="atl-workdays-preview" id="tlWorkDaysPreview">
+              <span class="atl-workdays-count">1</span>
+              <span class="atl-workdays-label">${i18n.t('schedule.absenceListDays')}</span>
+            </div>
+          </div>
+          <div class="absence-form-group">
+            <label class="absence-form-label">${i18n.t('schedule.noteOptional')}</label>
+            <input type="text" class="absence-form-input" id="tlNote" placeholder="${i18n.t('schedule.additionalInfo')}">
+          </div>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="tlCancel">${i18n.t('schedule.cancel')}</button>
+          <button class="absence-modal-btn primary" id="tlSave" disabled>${i18n.t('schedule.save')}</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(overlay);
+
+    let selectedType = '';
+    const saveBtn = overlay.querySelector('#tlSave') as HTMLButtonElement;
+
+    const updatePreview = () => {
+      const start = (overlay.querySelector('#tlStartDate') as HTMLInputElement)?.value;
+      const end = (overlay.querySelector('#tlEndDate') as HTMLInputElement)?.value;
+      if (start && end) {
+        const wd = this.calculateWorkDays(start, end);
+        const preview = overlay.querySelector('#tlWorkDaysPreview');
+        if (preview) {
+          preview.querySelector('.atl-workdays-count')!.textContent = String(wd);
+        }
+      }
+    };
+
+    const checkValid = () => {
+      const empVal = emp ? employeeId : (overlay.querySelector('#tlWizardEmployee') as HTMLSelectElement)?.value || '';
+      const start = (overlay.querySelector('#tlStartDate') as HTMLInputElement)?.value;
+      const end = (overlay.querySelector('#tlEndDate') as HTMLInputElement)?.value;
+      saveBtn.disabled = !selectedType || !empVal || !start || !end;
+    };
+
+    // Type buttons
+    overlay.querySelectorAll('.atl-type-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        overlay.querySelectorAll('.atl-type-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        selectedType = (btn as HTMLElement).dataset.typeId || '';
+        checkValid();
+      });
+    });
+
+    overlay.querySelector('#tlStartDate')?.addEventListener('change', () => { updatePreview(); checkValid(); });
+    overlay.querySelector('#tlEndDate')?.addEventListener('change', () => { updatePreview(); checkValid(); });
+    overlay.querySelector('#tlWizardEmployee')?.addEventListener('change', checkValid);
+
+    saveBtn.addEventListener('click', async () => {
+      const empVal = emp ? employeeId : (overlay.querySelector('#tlWizardEmployee') as HTMLSelectElement)?.value || '';
+      const startDate = (overlay.querySelector('#tlStartDate') as HTMLInputElement).value;
+      const endDate = (overlay.querySelector('#tlEndDate') as HTMLInputElement).value;
+      const note = (overlay.querySelector('#tlNote') as HTMLInputElement).value;
+      const workDays = this.calculateWorkDays(startDate, endDate);
+
+      await api.addAbsence({
+        id: `abs-${Date.now()}`,
+        employeeId: empVal,
+        absenceTypeId: selectedType,
+        startDate, endDate, workDays,
+        status: 'approved',
+        note
+      });
+
+      overlay.remove();
+      await this.loadAbsenceData();
+      this.renderAbsenceContent();
+      this.renderAbsenceYearStats();
+      this.renderAbsenceUpcoming();
+      this.renderAbsenceEmployeesSidebar();
+    });
+
+    overlay.querySelector('#tlCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    updatePreview();
+  }
+
   // ========== ABSENCE MODALS ==========
   
   private async showAddAbsenceWizard(preselectedDate?: string): Promise<void> {
@@ -16765,7 +20267,7 @@ END:VEVENT
     overlay.innerHTML = `
       <div class="absence-modal" style="max-width: 550px;">
         <div class="absence-modal-header">
-          <h2>➕ Dodaj nieobecność</h2>
+          <h2>➕ ${i18n.t('schedule.addAbsenceWizardTitle')}</h2>
           <button class="absence-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -16775,17 +20277,17 @@ END:VEVENT
         <div class="absence-wizard-steps">
           <div class="absence-wizard-step active" data-step="1">
             <span class="absence-wizard-step-number">1</span>
-            <span class="absence-wizard-step-label">Pracownik</span>
+            <span class="absence-wizard-step-label">${i18n.t('schedule.wizardStepEmployee')}</span>
           </div>
           <div class="absence-wizard-step-connector"></div>
           <div class="absence-wizard-step" data-step="2">
             <span class="absence-wizard-step-number">2</span>
-            <span class="absence-wizard-step-label">Szczegóły</span>
+            <span class="absence-wizard-step-label">${i18n.t('schedule.wizardStepDetails')}</span>
           </div>
           <div class="absence-wizard-step-connector"></div>
           <div class="absence-wizard-step" data-step="3">
             <span class="absence-wizard-step-number">3</span>
-            <span class="absence-wizard-step-label">Podsumowanie</span>
+            <span class="absence-wizard-step-label">${i18n.t('schedule.wizardStepSummary')}</span>
           </div>
         </div>
         <div class="absence-modal-body" id="absenceWizardContent">
@@ -16793,7 +20295,7 @@ END:VEVENT
           <div class="absence-form-group">
             <label class="absence-form-label">Wybierz pracownika</label>
             <select class="absence-form-select" id="wizardEmployee">
-              <option value="">-- Wybierz --</option>
+              <option value="">${i18n.t('schedule.selectOption')}</option>
               ${employees.map(e => `<option value="${e.id}">${e.firstName} ${e.lastName}</option>`).join('')}
             </select>
           </div>
@@ -16844,12 +20346,12 @@ END:VEVENT
           <div class="absence-form-group">
             <label class="absence-form-label">Wybierz pracownika</label>
             <select class="absence-form-select" id="wizardEmployee">
-              <option value="">-- Wybierz --</option>
+              <option value="">${i18n.t('schedule.selectOption')}</option>
               ${employees.map(e => `<option value="${e.id}" ${e.id === selectedEmployee ? 'selected' : ''}>${e.firstName} ${e.lastName}</option>`).join('')}
             </select>
           </div>
         `;
-        nextBtn.textContent = 'Dalej';
+        nextBtn.textContent = i18n.t('schedule.next');
         nextBtn.disabled = !selectedEmployee;
         
         overlay.querySelector('#wizardEmployee')?.addEventListener('change', (e) => {
@@ -16860,28 +20362,28 @@ END:VEVENT
       } else if (step === 2) {
         content!.innerHTML = `
           <div class="absence-form-group">
-            <label class="absence-form-label">Typ nieobecności</label>
+            <label class="absence-form-label">${i18n.t('schedule.absenceTypeLabel')}</label>
             <select class="absence-form-select" id="wizardType">
-              <option value="">-- Wybierz --</option>
+              <option value="">${i18n.t('schedule.selectOption')}</option>
               ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === selectedType ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
             </select>
           </div>
           <div class="absence-form-row">
             <div class="absence-form-group">
-              <label class="absence-form-label">Data od</label>
+              <label class="absence-form-label">${i18n.t('schedule.dateFrom')}</label>
               <input type="date" class="absence-form-input" id="wizardStartDate" value="${startDate}">
             </div>
             <div class="absence-form-group">
-              <label class="absence-form-label">Data do</label>
+              <label class="absence-form-label">${i18n.t('schedule.dateTo')}</label>
               <input type="date" class="absence-form-input" id="wizardEndDate" value="${endDate}">
             </div>
           </div>
           <div class="absence-form-group">
-            <label class="absence-form-label">Notatka (opcjonalnie)</label>
-            <textarea class="absence-form-textarea" id="wizardNote" rows="2" placeholder="Dodatkowe informacje...">${note}</textarea>
+            <label class="absence-form-label">${i18n.t('schedule.noteOptional')}</label>
+            <textarea class="absence-form-textarea" id="wizardNote" rows="2" placeholder="${i18n.t('schedule.additionalInfo')}">${note}</textarea>
           </div>
         `;
-        nextBtn.textContent = 'Dalej';
+        nextBtn.textContent = i18n.t('schedule.next');
         
         const checkValid = () => {
           selectedType = (overlay.querySelector('#wizardType') as HTMLSelectElement)?.value || '';
@@ -16911,11 +20413,11 @@ END:VEVENT
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: left; background: var(--color-bg-secondary); padding: 16px; border-radius: 8px;">
               <div>
                 <div style="font-size: 0.75rem; color: var(--color-text-muted);">Od</div>
-                <div style="font-weight: 500;">${new Date(startDate).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: 'long' })}</div>
+                <div style="font-weight: 500;">${new Date(startDate).toLocaleDateString(i18n.getDateLocale(), { weekday: 'short', day: '2-digit', month: 'long' })}</div>
               </div>
               <div>
                 <div style="font-size: 0.75rem; color: var(--color-text-muted);">Do</div>
-                <div style="font-weight: 500;">${new Date(endDate).toLocaleDateString('pl-PL', { weekday: 'short', day: '2-digit', month: 'long' })}</div>
+                <div style="font-weight: 500;">${new Date(endDate).toLocaleDateString(i18n.getDateLocale(), { weekday: 'short', day: '2-digit', month: 'long' })}</div>
               </div>
             </div>
             <div style="margin-top: 16px; padding: 12px; background: ${type?.color}20; border-radius: 8px; border-left: 4px solid ${type?.color};">
@@ -17032,7 +20534,7 @@ END:VEVENT
     overlay.innerHTML = `
       <div class="absence-modal" style="max-width: 700px;">
         <div class="absence-modal-header">
-          <h2>⚙️ Ustawienia urlopów</h2>
+          <h2>⚙️ ${i18n.t('schedule.absenceSettingsTitle')}</h2>
           <button class="absence-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -17041,38 +20543,38 @@ END:VEVENT
         </div>
         <div class="absence-modal-body">
           <div class="absence-settings-section">
-            <h3>Typy nieobecności</h3>
+            <h3>${i18n.t('schedule.absenceTypesTitle')}</h3>
             <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
-              Skonfiguruj typy nieobecności, ich domyślne limity i kolory.
+              ${i18n.t('schedule.absenceTypesDesc')}
             </p>
             <div style="display: grid; grid-template-columns: 40px 1fr 80px 50px 50px; gap: 12px; padding: 8px 10px; background: var(--color-bg-tertiary); border-radius: 6px; font-size: 0.7rem; color: var(--color-text-secondary); text-transform: uppercase; margin-bottom: 8px;">
-              <span>Ikona</span>
-              <span>Nazwa</span>
-              <span>Domyślne dni</span>
-              <span>Kolor</span>
-              <span>Aktywny</span>
+              <span>${i18n.t('schedule.absenceSettingsIcon')}</span>
+              <span>${i18n.t('schedule.absenceSettingsName')}</span>
+              <span>${i18n.t('schedule.absenceSettingsDefaultDays')}</span>
+              <span>${i18n.t('schedule.absenceSettingsColor')}</span>
+              <span>${i18n.t('schedule.absenceSettingsActive')}</span>
             </div>
-            ${typesHtml || '<p style="color: var(--color-text-muted);">Brak typów nieobecności</p>'}
+            ${typesHtml || '<p style="color: var(--color-text-muted);">' + i18n.t('schedule.noAbsenceTypes') + '</p>'}
           </div>
           
           <div class="absence-settings-section" style="margin-top: 24px;">
-            <h3>Święta ${this.absenceYear}</h3>
+            <h3>${i18n.t('schedule.holidaysTitle').replace('{0}', String(this.absenceYear))}</h3>
             <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
-              Dni wolne od pracy nie są wliczane do urlopów. ${this.holidays.length} dni ustawionych.
+              ${i18n.t('schedule.holidaysDesc').replace('{0}', String(this.holidays.length))}
             </p>
             <div style="display: flex; flex-wrap: wrap; gap: 8px;">
               ${this.holidays.slice(0, 8).map(h => `
                 <span style="padding: 4px 10px; background: var(--color-warning-bg); color: var(--color-warning); border-radius: 4px; font-size: 0.75rem;">
-                  🎉 ${new Date(h.date).toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' })} - ${h.name}
+                  🎉 ${new Date(h.date).toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit' })} - ${h.name}
                 </span>
               `).join('')}
-              ${this.holidays.length > 8 ? `<span style="padding: 4px 10px; color: var(--color-text-muted); font-size: 0.75rem;">+${this.holidays.length - 8} więcej</span>` : ''}
+              ${this.holidays.length > 8 ? `<span style="padding: 4px 10px; color: var(--color-text-muted); font-size: 0.75rem;">+${this.holidays.length - 8} ${i18n.t('schedule.more')}</span>` : ''}
             </div>
           </div>
         </div>
         <div class="absence-modal-footer">
-          <button class="absence-modal-btn secondary" id="settingsCancel">Anuluj</button>
-          <button class="absence-modal-btn primary" id="settingsSave">Zapisz zmiany</button>
+          <button class="absence-modal-btn secondary" id="settingsCancel">${i18n.t('schedule.cancel')}</button>
+          <button class="absence-modal-btn primary" id="settingsSave">${i18n.t('schedule.saveChanges')}</button>
         </div>
       </div>
     `;
@@ -17131,7 +20633,7 @@ END:VEVENT
     } catch (e) {
       console.error('Failed to load absence types:', e);
       if (this.absenceTypes.length === 0) {
-        alert('Nie można załadować typów nieobecności. Sprawdź połączenie z serwerem.');
+        alert(i18n.t('schedule.cannotLoadTypes'));
         return;
       }
     }
@@ -17162,7 +20664,7 @@ END:VEVENT
           <span style="flex: 1; font-size: 0.85rem;">${type.name}</span>
           <input type="number" class="absence-type-days-input" value="${totalDays}" data-field="totalDays" min="0" style="width: 70px;">
           <span style="font-size: 0.8rem; color: var(--color-text-secondary); min-width: 70px; text-align: right;">
-            Użyte: ${usedDays}
+            ${i18n.t('schedule.used')}: ${usedDays}
           </span>
         </div>
       `;
@@ -17175,7 +20677,7 @@ END:VEVENT
             <span style="width: 32px; height: 32px; border-radius: 50%; background: ${emp.color}; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 0.8rem; margin-right: 8px;">
               ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
             </span>
-            Limity urlopowe - ${emp.firstName} ${emp.lastName}
+            ${i18n.t('schedule.absenceLimitsTitle').replace('{0}', emp.firstName + ' ' + emp.lastName)}
           </h2>
           <button class="absence-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -17185,13 +20687,13 @@ END:VEVENT
         </div>
         <div class="absence-modal-body">
           <p style="font-size: 0.85rem; color: var(--color-text-secondary); margin-bottom: 16px;">
-            Ustaw indywidualne limity nieobecności dla roku <strong>${this.absenceYear}</strong>
+            ${i18n.t('schedule.setIndividualLimits')} <strong>${this.absenceYear}</strong>
           </p>
           ${limitsHtml}
         </div>
         <div class="absence-modal-footer">
-          <button class="absence-modal-btn secondary" id="limitsCancel">Anuluj</button>
-          <button class="absence-modal-btn primary" id="limitsSave">Zapisz limity</button>
+          <button class="absence-modal-btn secondary" id="limitsCancel">${i18n.t('schedule.cancel')}</button>
+          <button class="absence-modal-btn primary" id="limitsSave">${i18n.t('schedule.saveLimits')}</button>
         </div>
       </div>
     `;
@@ -17260,21 +20762,21 @@ END:VEVENT
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1rem;">📱</span>
           <div>
-            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Telefon</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('schedule.phone')}</div>
             <div style="font-size: 0.8rem;">${empDetails?.phone || '-'}</div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1rem;">📍</span>
           <div>
-            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Stanowisko</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('schedule.position')}</div>
             <div style="font-size: 0.8rem;">${empDetails?.position || '-'}</div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1rem;">🏢</span>
           <div>
-            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Dział</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('schedule.department')}</div>
             <div style="font-size: 0.8rem;">${empDetails?.department || '-'}</div>
           </div>
         </div>
@@ -17310,7 +20812,7 @@ END:VEVENT
           <div style="flex: 1;">
             <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
               <span>${type.name}</span>
-              <span style="color: ${remaining <= 0 ? 'var(--color-danger)' : 'var(--color-text-secondary)'};">${remaining} pozostało</span>
+              <span style="color: ${remaining <= 0 ? 'var(--color-danger)' : 'var(--color-text-secondary)'};">${i18n.t('schedule.remainingLabel').replace('{0}', String(remaining))}</span>
             </div>
             <div style="height: 4px; background: var(--color-bg-tertiary); border-radius: 2px;">
               <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${type.color}; border-radius: 2px;"></div>
@@ -17328,15 +20830,15 @@ END:VEVENT
         <div style="display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--color-border-light);">
           <span style="font-size: 1.1rem;">${type?.icon || '📅'}</span>
           <div style="flex: 1;">
-            <div style="font-size: 0.8rem; font-weight: 500;">${type?.name || 'Nieobecność'}</div>
+            <div style="font-size: 0.8rem; font-weight: 500;">${type?.name || i18n.t('schedule.absenceDefault')}</div>
             <div style="font-size: 0.7rem; color: var(--color-text-muted);">
-              ${new Date(a.startDate).toLocaleDateString('pl-PL')} - ${new Date(a.endDate).toLocaleDateString('pl-PL')}
+              ${new Date(a.startDate).toLocaleDateString(i18n.getDateLocale())} - ${new Date(a.endDate).toLocaleDateString(i18n.getDateLocale())}
             </div>
           </div>
-          <span style="font-size: 0.8rem; font-weight: 600;">${a.workDays} dni</span>
+          <span style="font-size: 0.8rem; font-weight: 600;">${a.workDays} ${i18n.t('schedule.days')}</span>
         </div>
       `;
-    }).join('') : '<p style="text-align: center; color: var(--color-text-muted); padding: 20px;">Brak nieobecności w tym roku</p>';
+    }).join('') : '<p style="text-align: center; color: var(--color-text-muted); padding: 20px;">' + i18n.t('schedule.noAbsencesThisYear') + '</p>';
     
     overlay.innerHTML = `
       <div class="absence-modal" style="max-width: 550px;">
@@ -17347,7 +20849,7 @@ END:VEVENT
             </span>
             <div>
               <div>${emp.firstName} ${emp.lastName}</div>
-              <div style="font-size: 0.75rem; font-weight: 400; color: var(--color-text-secondary);">${empDetails?.position || 'Pracownik'}</div>
+              <div style="font-size: 0.75rem; font-weight: 400; color: var(--color-text-secondary);">${empDetails?.position || i18n.t('schedule.employeeDefault')}</div>
             </div>
           </h2>
           <button class="absence-modal-close">
@@ -17358,16 +20860,16 @@ END:VEVENT
         </div>
         <div class="absence-modal-body">
           ${contactHtml}
-          ${empQualifications.length > 0 ? `<h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 8px 0;">🎓 Kwalifikacje</h4>` + qualificationsHtml : ''}
-          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 12px 0;">📊 Limity ${this.absenceYear}</h4>
-          ${limitsHtml || '<p style="color: var(--color-text-muted); font-size: 0.8rem;">Brak ustawionych limitów</p>'}
-          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">📅 Historia nieobecności</h4>
+          ${empQualifications.length > 0 ? `<h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 8px 0;">🎓 ${i18n.t('schedule.qualifications')}</h4>` + qualificationsHtml : ''}
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 12px 0;">📊 ${i18n.t('schedule.limitsYear').replace('{0}', String(this.absenceYear))}</h4>
+          ${limitsHtml || '<p style="color: var(--color-text-muted); font-size: 0.8rem;">' + i18n.t('schedule.noLimitsSet') + '</p>'}
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">📅 ${i18n.t('schedule.absenceHistory')}</h4>
           ${absencesHtml}
         </div>
         <div class="absence-modal-footer">
-          <button class="absence-modal-btn secondary" id="empEditDetails">✏️ Edytuj profil</button>
-          <button class="absence-modal-btn secondary" id="empEditLimits">Edytuj limity</button>
-          <button class="absence-modal-btn primary" id="empAddAbsence">Dodaj nieobecność</button>
+          <button class="absence-modal-btn secondary" id="empEditDetails">✏️ ${i18n.t('schedule.editProfile')}</button>
+          <button class="absence-modal-btn secondary" id="empEditLimits">${i18n.t('schedule.editLimits')}</button>
+          <button class="absence-modal-btn primary" id="empAddAbsence">${i18n.t('schedule.addAbsence')}</button>
         </div>
       </div>
     `;
@@ -17424,43 +20926,43 @@ END:VEVENT
           <div class="absence-form-row">
             <div class="absence-form-group">
               <label class="absence-form-label">📧 Email</label>
-              <input type="email" class="absence-form-input" id="editEmpEmail" value="${currentDetails?.email || ''}" placeholder="jan.kowalski@firma.pl">
+              <input type="email" class="absence-form-input" id="editEmpEmail" value="${currentDetails?.email || ''}" placeholder="${i18n.t('schedule.emailPlaceholder')}">
             </div>
             <div class="absence-form-group">
               <label class="absence-form-label">📱 Telefon</label>
-              <input type="tel" class="absence-form-input" id="editEmpPhone" value="${currentDetails?.phone || ''}" placeholder="+48 123 456 789">
+              <input type="tel" class="absence-form-input" id="editEmpPhone" value="${currentDetails?.phone || ''}" placeholder="${i18n.t('schedule.phonePlaceholder')}">
             </div>
           </div>
           <div class="absence-form-row">
             <div class="absence-form-group">
-              <label class="absence-form-label">📍 Stanowisko</label>
-              <input type="text" class="absence-form-input" id="editEmpPosition" value="${currentDetails?.position || ''}" placeholder="np. Specjalista ds. testów">
+              <label class="absence-form-label">📍 ${i18n.t('schedule.position')}</label>
+              <input type="text" class="absence-form-input" id="editEmpPosition" value="${currentDetails?.position || ''}" placeholder="${i18n.t('schedule.positionPlaceholder')}">
             </div>
             <div class="absence-form-group">
-              <label class="absence-form-label">🏢 Dział</label>
-              <input type="text" class="absence-form-input" id="editEmpDepartment" value="${currentDetails?.department || ''}" placeholder="np. Kontrola jakości">
+              <label class="absence-form-label">🏢 ${i18n.t('schedule.department')}</label>
+              <input type="text" class="absence-form-input" id="editEmpDepartment" value="${currentDetails?.department || ''}" placeholder="${i18n.t('schedule.departmentPlaceholder')}">
             </div>
           </div>
           <div class="absence-form-group">
             <label class="absence-form-label">📝 Notatki</label>
-            <textarea class="absence-form-textarea" id="editEmpNotes" rows="3" placeholder="Dodatkowe informacje o pracowniku...">${currentDetails?.notes || ''}</textarea>
+            <textarea class="absence-form-textarea" id="editEmpNotes" rows="3" placeholder="${i18n.t('schedule.notesPlaceholder')}">${currentDetails?.notes || ''}</textarea>
           </div>
           
-          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">🎓 Kwalifikacje</h4>
+          <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">🎓 ${i18n.t('schedule.qualifications')}</h4>
           <div id="qualificationsList" style="margin-bottom: 12px;"></div>
           <div style="display: flex; gap: 8px;">
-            <input type="text" class="absence-form-input" id="newQualName" placeholder="Nazwa kwalifikacji" style="flex: 1;">
+            <input type="text" class="absence-form-input" id="newQualName" placeholder="${i18n.t('schedule.qualificationName')}" style="flex: 1;">
             <select class="absence-form-select" id="newQualLevel" style="width: 120px;">
-              <option value="basic">Podstawowy</option>
-              <option value="advanced">Zaawansowany</option>
-              <option value="expert">Ekspert</option>
+              <option value="basic">${i18n.t('schedule.levelBasic')}</option>
+              <option value="advanced">${i18n.t('schedule.levelAdvanced')}</option>
+              <option value="expert">${i18n.t('schedule.levelExpert')}</option>
             </select>
             <button class="absence-modal-btn primary" id="addQualBtn" style="padding: 8px 12px;">+</button>
           </div>
         </div>
         <div class="absence-modal-footer">
-          <button class="absence-modal-btn secondary" id="editDetailsCancel">Anuluj</button>
-          <button class="absence-modal-btn primary" id="editDetailsSave">Zapisz zmiany</button>
+          <button class="absence-modal-btn secondary" id="editDetailsCancel">${i18n.t('schedule.cancel')}</button>
+          <button class="absence-modal-btn primary" id="editDetailsSave">${i18n.t('schedule.saveChanges')}</button>
         </div>
       </div>
     `;
@@ -17545,7 +21047,7 @@ END:VEVENT
     overlay.innerHTML = `
       <div class="absence-modal" style="max-width: 450px;">
         <div class="absence-modal-header">
-          <h2>✏️ Edytuj nieobecność</h2>
+          <h2>✏️ ${i18n.t('schedule.editAbsenceTitle')}</h2>
           <button class="absence-modal-close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -17554,42 +21056,34 @@ END:VEVENT
         </div>
         <div class="absence-modal-body">
           <div class="absence-form-group">
-            <label class="absence-form-label">Pracownik</label>
+            <label class="absence-form-label">${i18n.t('schedule.absenceListEmployee')}</label>
             <input type="text" class="absence-form-input" value="${emp?.firstName} ${emp?.lastName}" disabled>
           </div>
           <div class="absence-form-group">
-            <label class="absence-form-label">Typ nieobecności</label>
+            <label class="absence-form-label">${i18n.t('schedule.absenceTypeLabel')}</label>
             <select class="absence-form-select" id="editType">
               ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === absence.absenceTypeId ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
             </select>
           </div>
           <div class="absence-form-row">
             <div class="absence-form-group">
-              <label class="absence-form-label">Data od</label>
+              <label class="absence-form-label">${i18n.t('schedule.dateFrom')}</label>
               <input type="date" class="absence-form-input" id="editStartDate" value="${absence.startDate}">
             </div>
             <div class="absence-form-group">
-              <label class="absence-form-label">Data do</label>
+              <label class="absence-form-label">${i18n.t('schedule.dateTo')}</label>
               <input type="date" class="absence-form-input" id="editEndDate" value="${absence.endDate}">
             </div>
           </div>
           <div class="absence-form-group">
-            <label class="absence-form-label">Status</label>
-            <select class="absence-form-select" id="editStatus">
-              <option value="approved" ${absence.status === 'approved' ? 'selected' : ''}>Zatwierdzona</option>
-              <option value="pending" ${absence.status === 'pending' ? 'selected' : ''}>Oczekuje</option>
-              <option value="rejected" ${absence.status === 'rejected' ? 'selected' : ''}>Odrzucona</option>
-            </select>
-          </div>
-          <div class="absence-form-group">
-            <label class="absence-form-label">Notatka</label>
+            <label class="absence-form-label">${i18n.t('schedule.noteLabel')}</label>
             <textarea class="absence-form-textarea" id="editNote" rows="2">${absence.note || ''}</textarea>
           </div>
         </div>
         <div class="absence-modal-footer">
-          <button class="absence-modal-btn danger" id="editDelete">Usuń</button>
-          <button class="absence-modal-btn secondary" id="editCancel">Anuluj</button>
-          <button class="absence-modal-btn primary" id="editSave">Zapisz</button>
+          <button class="absence-modal-btn danger" id="editDelete">${i18n.t('schedule.deleteBtn')}</button>
+          <button class="absence-modal-btn secondary" id="editCancel">${i18n.t('schedule.cancel')}</button>
+          <button class="absence-modal-btn primary" id="editSave">${i18n.t('schedule.save')}</button>
         </div>
       </div>
     `;
@@ -17601,7 +21095,6 @@ END:VEVENT
       const absenceTypeId = (document.getElementById('editType') as HTMLSelectElement).value;
       const startDate = (document.getElementById('editStartDate') as HTMLInputElement).value;
       const endDate = (document.getElementById('editEndDate') as HTMLInputElement).value;
-      const status = (document.getElementById('editStatus') as HTMLSelectElement).value;
       const note = (document.getElementById('editNote') as HTMLTextAreaElement).value;
       const workDays = this.calculateWorkDays(startDate, endDate);
       
@@ -17611,7 +21104,7 @@ END:VEVENT
         startDate,
         endDate,
         workDays,
-        status,
+        status: 'approved',
         note
       });
       
@@ -17625,7 +21118,7 @@ END:VEVENT
     
     // Delete handler
     document.getElementById('editDelete')?.addEventListener('click', async () => {
-      if (confirm('Czy na pewno chcesz usunąć tę nieobecność?')) {
+      if (confirm(i18n.t('schedule.confirmDeleteAbsence'))) {
         await api.deleteAbsence(absenceId);
         overlay.remove();
         await this.loadAbsenceData();
@@ -17645,22 +21138,636 @@ END:VEVENT
   }
   
   private exportAbsences(): void {
-    // Create CSV
-    let csv = 'Pracownik,Typ,Od,Do,Dni robocze,Status,Notatka\n';
-    
-    this.absences.forEach(a => {
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
-      csv += `"${emp?.firstName} ${emp?.lastName}","${type?.name}","${a.startDate}","${a.endDate}",${a.workDays},"${a.status}","${a.note || ''}"\n`;
+    // Show export dropdown
+    const existing = document.querySelector('.absence-export-dropdown');
+    if (existing) { existing.remove(); return; }
+
+    const btn = document.getElementById('absenceExportBtn');
+    if (!btn) return;
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'absence-export-dropdown';
+    dropdown.innerHTML = `
+      <button class="absence-export-option" data-format="pdf">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        <div>
+          <span class="absence-export-option-title">PDF</span>
+          <span class="absence-export-option-desc">${i18n.t('schedule.exportPdfDesc')}</span>
+        </div>
+      </button>
+      <button class="absence-export-option" data-format="excel">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        <div>
+          <span class="absence-export-option-title">Excel</span>
+          <span class="absence-export-option-desc">${i18n.t('schedule.exportExcelDesc')}</span>
+        </div>
+      </button>
+    `;
+
+    const rect = btn.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${rect.bottom + 4}px`;
+    dropdown.style.right = `${window.innerWidth - rect.right}px`;
+    dropdown.style.zIndex = '1000';
+    document.body.appendChild(dropdown);
+
+    dropdown.querySelector('[data-format="pdf"]')?.addEventListener('click', () => {
+      dropdown.remove();
+      this.exportAbsencesToPdf();
     });
-    
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `nieobecnosci-${this.absenceYear}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    dropdown.querySelector('[data-format="excel"]')?.addEventListener('click', () => {
+      dropdown.remove();
+      this.exportAbsencesToExcel();
+    });
+
+    setTimeout(() => {
+      document.addEventListener('click', function handler(e) {
+        if (!dropdown.contains(e.target as Node)) {
+          dropdown.remove();
+          document.removeEventListener('click', handler);
+        }
+      });
+    }, 10);
+  }
+
+  // ==================== ABSENCE PDF EXPORT ====================
+  private async exportAbsencesToPdf(): Promise<void> {
+    try {
+      const dateLocale = i18n.getDateLocale();
+      const dateStr = new Date().toLocaleDateString(dateLocale);
+      const timeStr = new Date().toLocaleTimeString(dateLocale);
+      const year = this.absenceYear;
+      const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+      const months = [
+        i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
+        i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
+        i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
+        i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+      ];
+
+      this.showToast(i18n.t('schedule.exportGenerating'), 'success');
+
+      // A4 landscape: 297mm x 210mm at 96dpi ~ 1123 x 794
+      const pageWidth = 1123;
+      const pageHeight = 794;
+      const padding = 28;
+      const contentWidth = pageWidth - padding * 2;
+      const pages: HTMLDivElement[] = [];
+
+      // Load employee details for HR data
+      const empDetailsMap = new Map<string, any>();
+      for (const emp of employees) {
+        try {
+          const details = await api.getEmployeeDetails(emp.id);
+          if (details) empDetailsMap.set(emp.id, details);
+        } catch { /* ignore */ }
+      }
+
+      const headerHtml = `
+        <div style="background: #1a1a2e; color: #fff; padding: 16px ${padding}px; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h1 style="margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 1px;">DRÄXLMAIER Group</h1>
+            <p style="margin: 3px 0 0 0; font-size: 11px; opacity: 0.7;">Kappa Planning – ${i18n.t('schedule.absences')}</p>
+          </div>
+          <div style="text-align: right;">
+            <p style="margin: 0; font-size: 13px; font-weight: 600;">${i18n.t('schedule.absences')} ${year}</p>
+            <p style="margin: 2px 0 0 0; font-size: 10px; opacity: 0.7;">${i18n.t('schedule.absenceTimelineYearReport')}</p>
+          </div>
+        </div>
+        <div style="background: #0097AC; color: #fff; padding: 6px ${padding}px; display: flex; justify-content: space-between; font-size: 9px;">
+          <span><strong>${i18n.t('export.generatedAt')}:</strong> ${dateStr} ${timeStr}</span>
+          <span><strong>${i18n.t('export.user')}:</strong> ${this.state.settings.userName || 'System'}</span>
+        </div>
+      `;
+
+      const footerHtml = (pageNum: number, total: number) => `
+        <div style="position: absolute; bottom: 8px; left: ${padding}px; right: ${padding}px; display: flex; justify-content: space-between; font-size: 8px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 6px;">
+          <span>DRÄXLMAIER Group – Kappa Planning | ${i18n.t('schedule.absences')} ${year}</span>
+          <span>${i18n.t('schedule.absenceTimelineYearReport')} | ${dateStr} | ${pageNum}/${total}</span>
+        </div>
+      `;
+
+      // ---- PAGE 1: Statistics Overview ----
+      const totalAbsences = this.absences.length;
+      const totalDays = this.absences.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+      const affectedEmployees = new Set(this.absences.map((a: any) => a.employeeId)).size;
+      const avgPerEmp = employees.length > 0 ? (totalDays / employees.length).toFixed(1) : '0';
+      const activeTypes = this.absenceTypes.filter((t: any) => t.isActive);
+
+      // Per-type breakdown with more data
+      const typeBreakdown = activeTypes.map((t: any) => {
+        const typeAbs = this.absences.filter((a: any) => a.absenceTypeId === t.id);
+        const typeDays = typeAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+        const typeEmps = new Set(typeAbs.map((a: any) => a.employeeId)).size;
+        const avgDays = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
+        return `<tr>
+          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 10px; height: 10px; border-radius: 3px; background: ${t.color}; flex-shrink: 0;"></div>
+              ${t.icon} ${t.name}
+            </div>
+          </td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${typeDays}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeAbs.length}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeEmps}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${avgDays}</td>
+        </tr>`;
+      }).join('');
+
+      // Per-employee summary table with HR data
+      const empSummaryRows = employees.map((emp) => {
+        const details = empDetailsMap.get(emp.id);
+        const empAbs = this.absences.filter((a: any) => a.employeeId === emp.id);
+        const usedDays = empAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+        const limitTotal = this.absenceLimits
+          .filter((l: any) => l.employeeId === emp.id && l.year === year)
+          .reduce((sum: number, l: any) => sum + (l.totalDays || 0), 0);
+        const remaining = limitTotal - usedDays;
+        const remColor = remaining < 0 ? '#dc2626' : remaining === 0 ? '#d97706' : '#16a34a';
+        const percent = limitTotal > 0 ? Math.round((usedDays / limitTotal) * 100) : 0;
+        
+        return `<tr>
+          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+            <div style="display: flex; align-items: center; gap: 5px;">
+              <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp.firstName?.charAt(0) || ''}${emp.lastName?.charAt(0) || ''}</div>
+              <span style="font-weight: 500;">${emp.firstName} ${emp.lastName}</span>
+            </div>
+          </td>
+          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.department || '–'}</td>
+          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.position || '–'}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #3b82f6; font-weight: 600;">${limitTotal}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${usedDays}</td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: ${remColor}; font-weight: 700;">${remaining}</td>
+          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9;">
+            <div style="display: flex; align-items: center; gap: 4px;">
+              <div style="flex: 1; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
+                <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${percent > 90 ? '#dc2626' : percent > 70 ? '#d97706' : '#0097AC'}; border-radius: 2px;"></div>
+              </div>
+              <span style="font-size: 8px; color: #64748b; min-width: 24px;">${percent}%</span>
+            </div>
+          </td>
+          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${empAbs.length}</td>
+        </tr>`;
+      }).join('');
+
+      const page1 = document.createElement('div');
+      page1.style.cssText = `width: ${pageWidth}px; height: ${pageHeight}px; background: white; padding: 0; font-family: Inter, system-ui, sans-serif; position: relative; overflow: hidden;`;
+      page1.innerHTML = `
+        ${headerHtml}
+        <div style="padding: ${padding}px;">
+          <h2 style="margin: 0 0 14px 0; font-size: 16px; color: #1e293b;">${i18n.t('schedule.absenceTimelineYearReport')} ${year}</h2>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;">
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #0097AC;">
+              <div style="font-size: 24px; font-weight: 700; color: #0097AC;">${totalAbsences}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</div>
+            </div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #3b82f6;">
+              <div style="font-size: 24px; font-weight: 700; color: #3b82f6;">${totalDays}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatTotalDays')}</div>
+            </div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #8b5cf6;">
+              <div style="font-size: 24px; font-weight: 700; color: #8b5cf6;">${affectedEmployees}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatEmployees')}</div>
+            </div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #f59e0b;">
+              <div style="font-size: 24px; font-weight: 700; color: #f59e0b;">${avgPerEmp}</div>
+              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceTimelineAvgPerEmp')}</div>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <!-- Left: Type breakdown -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+              <div style="padding: 8px 12px; background: #1e293b; color: white;">
+                <h3 style="margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceTimelineByType')}</h3>
+              </div>
+              <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: #f1f5f9;">
+                    <th style="padding: 5px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListType')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListDays')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatAbsences')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatEmployees')}</th>
+                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">Ø ${i18n.t('schedule.absenceListDays')}</th>
+                  </tr>
+                </thead>
+                <tbody>${typeBreakdown}</tbody>
+              </table>
+            </div>
+
+            <!-- Right: Monthly distribution -->
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+              <div style="padding: 8px 12px; background: #1e293b; color: white;">
+                <h3 style="margin: 0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.monthlyDistribution') || 'Rozkład miesięczny'}</h3>
+              </div>
+              <div style="padding: 10px 12px;">
+                ${months.map((m, idx) => {
+                  const monthStart = new Date(year, idx, 1);
+                  const monthEnd = new Date(year, idx + 1, 0);
+                  let monthDays = 0;
+                  this.absences.forEach((a: any) => {
+                    const s = new Date(a.startDate);
+                    const e = new Date(a.endDate);
+                    const os = s > monthStart ? s : monthStart;
+                    const oe = e < monthEnd ? e : monthEnd;
+                    if (os <= oe) {
+                      const cur = new Date(os);
+                      while (cur <= oe) { if (cur.getDay() !== 0 && cur.getDay() !== 6) monthDays++; cur.setDate(cur.getDate() + 1); }
+                    }
+                  });
+                  const barWidth = totalDays > 0 ? Math.round((monthDays / totalDays) * 100) : 0;
+                  return `<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
+                    <span style="font-size: 8px; color: #64748b; width: 24px; text-align: right;">${m.substring(0, 3)}</span>
+                    <div style="flex: 1; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden;">
+                      <div style="height: 100%; width: ${barWidth}%; background: #0097AC; border-radius: 3px;"></div>
+                    </div>
+                    <span style="font-size: 8px; color: #334155; font-weight: 600; min-width: 16px; text-align: right;">${monthDays}</span>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>
+          </div>
+        </div>
+        FOOTER_PLACEHOLDER_1
+      `;
+      pages.push(page1);
+
+      // ---- PAGE 2: Employee Summary (VDA / HR compliant) ----
+      const page2 = document.createElement('div');
+      page2.style.cssText = `width: ${pageWidth}px; height: ${pageHeight}px; background: white; padding: 0; font-family: Inter, system-ui, sans-serif; position: relative; overflow: hidden;`;
+      page2.innerHTML = `
+        ${headerHtml}
+        <div style="padding: ${padding}px;">
+          <h2 style="margin: 0 0 14px 0; font-size: 16px; color: #1e293b;">👥 ${i18n.t('schedule.employeeSummary') || 'Podsumowanie pracowników'} – ${year}</h2>
+          <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="background: #1e293b;">
+                <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.department') || 'Dział'}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.position') || 'Stanowisko'}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceEntitledDays')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceUsedDays')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceRemainingDays')}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.utilization') || 'Wykorzystanie'}</th>
+                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</th>
+              </tr>
+            </thead>
+            <tbody>${empSummaryRows}</tbody>
+          </table>
+
+          <div style="margin-top: 16px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; font-size: 9px; color: #92400e;">
+            <strong>⚠️ ${i18n.t('schedule.vdaNotice') || 'Uwaga VDA/HR'}:</strong> 
+            ${i18n.t('schedule.vdaNoticeText') || 'Dane dotyczące urlopów zgodne z wymogami VDA 6.3 (P6.3.2) – ewidencja czasu pracy. Urlop wypoczynkowy powinien być planowany równomiernie w ciągu roku. Pracownicy z pozostałym urlopem >5 dni powinni zaplanować wykorzystanie do końca Q4.'}
+          </div>
+        </div>
+        FOOTER_PLACEHOLDER_2
+      `;
+      pages.push(page2);
+
+      // ---- PAGE 3: Absence List (detailed) ----
+      const page3 = document.createElement('div');
+      page3.style.cssText = `width: ${pageWidth}px; min-height: ${pageHeight}px; background: white; padding: 0; font-family: Inter, system-ui, sans-serif; position: relative; overflow: hidden;`;
+      page3.innerHTML = `
+        ${headerHtml}
+        <div style="padding: ${padding}px;">
+          ${this.buildPdfListSection(employees, year)}
+        </div>
+        FOOTER_PLACEHOLDER_3
+      `;
+      pages.push(page3);
+
+      // Render pages to PDF
+      const totalPages = pages.length;
+      pages.forEach((page, i) => {
+        page.innerHTML = page.innerHTML.replace(`FOOTER_PLACEHOLDER_${i + 1}`, footerHtml(i + 1, totalPages));
+        document.body.appendChild(page);
+      });
+
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [pageWidth, pageHeight] });
+
+      for (let p = 0; p < pages.length; p++) {
+        const canvas = await html2canvas(pages[p], { scale: 2, useCORS: true, logging: false, backgroundColor: '#ffffff' });
+        const imgData = canvas.toDataURL('image/png');
+        if (p > 0) pdf.addPage([pageWidth, pageHeight], 'landscape');
+        pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, pageHeight);
+      }
+
+      pages.forEach(p => p.remove());
+      pdf.save(`Absences_${year}_${dateStr.replace(/\./g, '-')}.pdf`);
+      this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+    } catch (e) {
+      console.error('PDF export error:', e);
+      this.showToast('Export failed', 'error');
+    }
+  }
+
+  private buildPdfListSection(employees: any[], year: number): string {
+    if (this.absences.length === 0) return `<p style="color: #94a3b8; text-align: center; padding: 20px;">${i18n.t('schedule.noAbsencesFound')}</p>`;
+
+    const sorted = [...this.absences].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+    const rows = sorted.map((a: any, idx: number) => {
+      const emp = employees.find(e => e.id === a.employeeId) || this.state.employees.find(e => e.id === a.employeeId);
+      const type = this.absenceTypes.find((t: any) => t.id === a.absenceTypeId);
+      const startD = new Date(a.startDate);
+      const endD = new Date(a.endDate);
+      const start = startD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
+      const end = endD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
+      const weekday = startD.toLocaleDateString(i18n.getDateLocale(), { weekday: 'short' });
+      const bg = idx % 2 === 0 ? '#f8fafc' : 'white';
+      return `<tr style="background: ${bg};">
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+          <div style="display: flex; align-items: center; gap: 5px;">
+            <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp?.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}</div>
+            <span style="font-weight: 500;">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
+          </div>
+        </td>
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <div style="width: 8px; height: 8px; border-radius: 2px; background: ${type?.color || '#64748b'}; flex-shrink: 0;"></div>
+            ${type?.icon || ''} ${type?.name || ''}
+          </div>
+        </td>
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${weekday}, ${start}</td>
+        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${end}</td>
+        <td style="padding: 5px 8px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 700; color: #0097AC;">${a.workDays}</td>
+        <td style="padding: 5px 8px; font-size: 9px; border-bottom: 1px solid #f1f5f9; color: #64748b; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${a.note || '–'}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <h3 style="margin: 0 0 10px 0; font-size: 14px; color: #1e293b;">📋 ${i18n.t('schedule.absenceHistory')} (${sorted.length})</h3>
+      <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+          <tr style="background: #1e293b;">
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListType')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateFrom')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateTo')}</th>
+            <th style="padding: 6px 8px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListDays')}</th>
+            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.noteLabel')}</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
+
+  // ==================== ABSENCE EXCEL EXPORT ====================
+  private async exportAbsencesToExcel(): Promise<void> {
+    try {
+      const year = this.absenceYear;
+      const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
+      const months = [
+        i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
+        i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
+        i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
+        i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+      ];
+
+      this.showToast(i18n.t('schedule.exportGenerating'), 'success');
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = 'Kappa Planning';
+      workbook.created = new Date();
+
+      const brandColor = 'FF0097AC';
+      const black = 'FF000000';
+      const white = 'FFFFFFFF';
+      const lightGray = 'FFF1F5F9';
+      const headerFont = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
+      const subFont = { name: 'Calibri', size: 10, color: { argb: 'FF334155' } };
+      const thinBorder: Partial<ExcelJS.Borders> = {
+        top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+      };
+
+      // ==================== SHEET 1: Overview ====================
+      const overviewSheet = workbook.addWorksheet(i18n.t('schedule.absences'), {
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
+      });
+
+      // Header - DRÄXLMAIER branding
+      overviewSheet.mergeCells('A1:G1');
+      const titleCell = overviewSheet.getCell('A1');
+      titleCell.value = 'DRÄXLMAIER Group';
+      titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: white } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      overviewSheet.getRow(1).height = 35;
+
+      overviewSheet.mergeCells('A2:G2');
+      const subCell = overviewSheet.getCell('A2');
+      subCell.value = `Kappa Planning – ${i18n.t('schedule.absences')} ${year}`;
+      subCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: white } };
+      subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+      subCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      overviewSheet.getRow(2).height = 28;
+
+      overviewSheet.mergeCells('A3:G3');
+      const infoCell = overviewSheet.getCell('A3');
+      infoCell.value = `${i18n.t('export.generatedAt')}: ${new Date().toLocaleDateString(i18n.getDateLocale())} ${new Date().toLocaleTimeString(i18n.getDateLocale())} | ${i18n.t('export.user')}: ${this.state.settings.userName || 'System'}`;
+      infoCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
+      infoCell.alignment = { horizontal: 'center' };
+      overviewSheet.getRow(3).height = 20;
+
+      // Column headers
+      const headers = [
+        i18n.t('schedule.absenceListEmployee'),
+        i18n.t('schedule.absenceListType'),
+        i18n.t('schedule.dateFrom'),
+        i18n.t('schedule.dateTo'),
+        i18n.t('schedule.absenceListDays'),
+        i18n.t('schedule.noteLabel'),
+        i18n.t('schedule.absenceTypeLabel')
+      ];
+      overviewSheet.columns = [
+        { width: 25 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 10 }, { width: 30 }, { width: 15 }
+      ];
+
+      const headerRow = overviewSheet.getRow(4);
+      headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = headerFont;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = thinBorder;
+      });
+      headerRow.height = 24;
+
+      // Data rows
+      const sorted = [...this.absences].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
+      sorted.forEach((a: any, idx: number) => {
+        const emp = this.state.employees.find(e => e.id === a.employeeId);
+        const type = this.absenceTypes.find((t: any) => t.id === a.absenceTypeId);
+        const row = overviewSheet.getRow(idx + 5);
+        row.getCell(1).value = `${emp?.firstName || ''} ${emp?.lastName || ''}`;
+        row.getCell(2).value = `${type?.icon || ''} ${type?.name || ''}`;
+        row.getCell(3).value = a.startDate;
+        row.getCell(4).value = a.endDate;
+        row.getCell(5).value = a.workDays;
+        row.getCell(6).value = a.note || '';
+        row.getCell(7).value = type?.name || '';
+
+        for (let c = 1; c <= 7; c++) {
+          const cell = row.getCell(c);
+          cell.font = subFont;
+          cell.border = thinBorder;
+          if (idx % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+        }
+        row.getCell(5).alignment = { horizontal: 'center' };
+      });
+
+      // ==================== SHEET 2: Per Employee Summary ====================
+      const empSheet = workbook.addWorksheet(i18n.t('schedule.absenceListEmployee'), {
+        views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }]
+      });
+
+      empSheet.mergeCells('A1:N1');
+      empSheet.getCell('A1').value = 'DRÄXLMAIER Group';
+      empSheet.getCell('A1').font = { name: 'Calibri', size: 16, bold: true, color: { argb: white } };
+      empSheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+      empSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+      empSheet.getRow(1).height = 30;
+
+      empSheet.mergeCells('A2:N2');
+      empSheet.getCell('A2').value = `${i18n.t('schedule.absenceListEmployee')} – ${i18n.t('schedule.absences')} ${year}`;
+      empSheet.getCell('A2').font = { name: 'Calibri', size: 12, bold: true, color: { argb: white } };
+      empSheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+      empSheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
+      empSheet.getRow(2).height = 26;
+
+      // Headers: Employee, Jan, Feb, ... Dec, Total
+      const empHeaders = [i18n.t('schedule.absenceListEmployee'), ...months, i18n.t('schedule.total')];
+      empSheet.columns = [
+        { width: 25 }, ...months.map(() => ({ width: 10 })), { width: 12 }
+      ];
+      const empHeaderRow = empSheet.getRow(3);
+      empHeaders.forEach((h, i) => {
+        const cell = empHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = headerFont;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = thinBorder;
+      });
+      empHeaderRow.height = 22;
+
+      employees.forEach((emp, idx) => {
+        const row = empSheet.getRow(idx + 4);
+        row.getCell(1).value = `${emp.firstName} ${emp.lastName}`;
+        row.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+        row.getCell(1).border = thinBorder;
+
+        let empTotal = 0;
+        for (let m = 0; m < 12; m++) {
+          const monthStart = new Date(year, m, 1);
+          const monthEnd = new Date(year, m + 1, 0);
+          let days = 0;
+          this.absences.filter((a: any) => a.employeeId === emp.id).forEach((a: any) => {
+            const s = new Date(a.startDate);
+            const e = new Date(a.endDate);
+            const os = s > monthStart ? s : monthStart;
+            const oe = e < monthEnd ? e : monthEnd;
+            if (os <= oe) {
+              const cur = new Date(os);
+              while (cur <= oe) {
+                if (cur.getDay() !== 0 && cur.getDay() !== 6) days++;
+                cur.setDate(cur.getDate() + 1);
+              }
+            }
+          });
+          
+          const cell = row.getCell(m + 2);
+          cell.value = days || '';
+          cell.font = subFont;
+          cell.alignment = { horizontal: 'center' };
+          cell.border = thinBorder;
+          
+          // Color coding
+          if (days > 0) {
+            const intensity = Math.min(days * 10, 80);
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${Math.round(255 - intensity * 0.6).toString(16).padStart(2, '0')}${Math.round(255 - intensity * 0.2).toString(16).padStart(2, '0')}${Math.round(255 - intensity * 0.6).toString(16).padStart(2, '0')}` } };
+          } else if (idx % 2 === 0) {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          }
+          empTotal += days;
+        }
+
+        const totalCell = row.getCell(14);
+        totalCell.value = empTotal;
+        totalCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0097AC' } };
+        totalCell.alignment = { horizontal: 'center' };
+        totalCell.border = thinBorder;
+        if (idx % 2 === 0) {
+          row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+        }
+      });
+
+      // ==================== SHEET 3: Per Type Breakdown ====================
+      const typeSheet = workbook.addWorksheet(i18n.t('schedule.absenceTypeLabel'), {
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 3 }]
+      });
+
+      typeSheet.mergeCells('A1:E1');
+      typeSheet.getCell('A1').value = 'DRÄXLMAIER Group';
+      typeSheet.getCell('A1').font = { name: 'Calibri', size: 16, bold: true, color: { argb: white } };
+      typeSheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+      typeSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+      typeSheet.getRow(1).height = 30;
+
+      typeSheet.mergeCells('A2:E2');
+      typeSheet.getCell('A2').value = `${i18n.t('schedule.absenceTypeLabel')} – ${year}`;
+      typeSheet.getCell('A2').font = { name: 'Calibri', size: 12, bold: true, color: { argb: white } };
+      typeSheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+      typeSheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
+      typeSheet.getRow(2).height = 26;
+
+      const typeHeaders = [i18n.t('schedule.absenceTypeLabel'), i18n.t('schedule.absenceStatAbsences'), i18n.t('schedule.absenceListDays'), i18n.t('schedule.absenceStatEmployees'), `Ø ${i18n.t('schedule.absenceListDays')}`];
+      typeSheet.columns = [{ width: 25 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 14 }];
+      const typeHeaderRow = typeSheet.getRow(3);
+      typeHeaders.forEach((h, i) => {
+        const cell = typeHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = headerFont;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = thinBorder;
+      });
+
+      this.absenceTypes.filter((t: any) => t.isActive).forEach((t: any, idx: number) => {
+        const typeAbs = this.absences.filter((a: any) => a.absenceTypeId === t.id);
+        const typeDays = typeAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+        const typeEmps = new Set(typeAbs.map((a: any) => a.employeeId)).size;
+        const avg = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
+
+        const row = typeSheet.getRow(idx + 4);
+        row.getCell(1).value = `${t.icon} ${t.name}`;
+        row.getCell(2).value = typeAbs.length;
+        row.getCell(3).value = typeDays;
+        row.getCell(4).value = typeEmps;
+        row.getCell(5).value = parseFloat(avg);
+
+        for (let c = 1; c <= 5; c++) {
+          const cell = row.getCell(c);
+          cell.font = subFont;
+          cell.alignment = { horizontal: c === 1 ? 'left' : 'center' };
+          cell.border = thinBorder;
+          if (idx % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+        }
+      });
+
+      // Save
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `Absences_${year}.xlsx`);
+      this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+    } catch (e) {
+      console.error('Excel export error:', e);
+      this.showToast('Export failed', 'error');
+    }
   }
 }
 

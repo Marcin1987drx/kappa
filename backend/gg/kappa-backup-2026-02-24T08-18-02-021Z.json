@@ -1,0 +1,1148 @@
+{
+  "backupDate": "2026-02-24T08:18:02.021Z",
+  "version": "2.0",
+  "customers": [
+    {
+      "id": "c1",
+      "name": "Porsche",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c2",
+      "name": "Tesla",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c3",
+      "name": "VW",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c4",
+      "name": "Mercedes",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "c5",
+      "name": "BMW",
+      "created_at": 1737972000000
+    }
+  ],
+  "types": [
+    {
+      "id": "t1",
+      "name": "G3",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t2",
+      "name": "Model Y",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t3",
+      "name": "310",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t4",
+      "name": "E-Class",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "t5",
+      "name": "iX",
+      "created_at": 1737972000000
+    }
+  ],
+  "parts": [
+    {
+      "id": "p1",
+      "name": "Abdeckung HUD / non HUD",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p2",
+      "name": "Front Door",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p3",
+      "name": "Rear Door",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p4",
+      "name": "Z Blenda FS LL",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p5",
+      "name": "Z Blenda BFS LL",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p6",
+      "name": "Außenschale HSK",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p7",
+      "name": "Beflockung Innendeckel HSK",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p8",
+      "name": "Abdeckung ISK",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p9",
+      "name": "D-Träger",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "p10",
+      "name": "Außenschale FS",
+      "created_at": 1737972000000
+    }
+  ],
+  "tests": [
+    {
+      "id": "te1",
+      "name": "Produkt Audit",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "te2",
+      "name": "Peel off machine test",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "te3",
+      "name": "Messlehre",
+      "created_at": 1737972000000
+    },
+    {
+      "id": "te4",
+      "name": "Passeinlage",
+      "created_at": 1737972000000
+    }
+  ],
+  "projects": [
+    {
+      "id": "pr1",
+      "customer_id": "c1",
+      "type_id": "t1",
+      "part_id": "p1",
+      "test_id": "te1",
+      "created_at": 1737972000000,
+      "updated_at": 1770901317928,
+      "time_per_unit": 4,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 20,
+          "soll": 28,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 25,
+          "soll": 26,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW03": {
+          "ist": 32,
+          "soll": 32,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW04": {
+          "ist": 18,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 15,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr2",
+      "customer_id": "c2",
+      "type_id": "t2",
+      "part_id": "p2",
+      "test_id": "te2",
+      "created_at": 1737972000000,
+      "updated_at": 1770901318206,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 10,
+          "soll": 25,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 22,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW03": {
+          "ist": 25,
+          "soll": 20,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr3",
+      "customer_id": "c3",
+      "type_id": "t3",
+      "part_id": "p4",
+      "test_id": "te1",
+      "created_at": 1737972000000,
+      "updated_at": 1770901318494,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 1,
+          "soll": 1,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 1,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr4",
+      "customer_id": "c1",
+      "type_id": "t1",
+      "part_id": "p6",
+      "test_id": "te1",
+      "created_at": 1737972000000,
+      "updated_at": 1770901407455,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 32,
+          "soll": 32,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW02": {
+          "ist": 0,
+          "soll": 32,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": true,
+          "productionLack": false
+        },
+        "2026-KW07": {
+          "ist": 1,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    },
+    {
+      "id": "pr5",
+      "customer_id": "c4",
+      "type_id": "t4",
+      "part_id": "p3",
+      "test_id": "te3",
+      "created_at": 1737972000000,
+      "updated_at": 1770901400928,
+      "time_per_unit": 0,
+      "weeks": {
+        "2026-KW01": {
+          "ist": 5,
+          "soll": 10,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW06": {
+          "ist": 0,
+          "soll": 2,
+          "stoppage": false,
+          "productionLack": true
+        },
+        "2026-KW07": {
+          "ist": 9,
+          "soll": 9,
+          "stoppage": false,
+          "productionLack": false
+        },
+        "2026-KW05": {
+          "ist": 6,
+          "soll": 6,
+          "stoppage": false,
+          "productionLack": false
+        }
+      }
+    }
+  ],
+  "employees": [
+    {
+      "id": "test-emp",
+      "firstName": "Test",
+      "lastName": "User",
+      "color": "#E91E63",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1770147873947,
+      "role": "manager",
+      "email": null,
+      "phone": null,
+      "department": null
+    },
+    {
+      "id": "emp1",
+      "firstName": "Jan",
+      "lastName": "Kowalski",
+      "color": "#E91E63",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null
+    },
+    {
+      "id": "emp2",
+      "firstName": "Anna",
+      "lastName": "Nowak",
+      "color": "#9C27B0",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null
+    },
+    {
+      "id": "emp3",
+      "firstName": "Piotr",
+      "lastName": "Wiśniewski",
+      "color": "#673AB7",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null
+    },
+    {
+      "id": "emp4",
+      "firstName": "Maria",
+      "lastName": "Wójcik",
+      "color": "#3F51B5",
+      "status": "available",
+      "suggestedShift": null,
+      "created_at": 1737972000000,
+      "role": "worker",
+      "email": null,
+      "phone": null,
+      "department": null
+    }
+  ],
+  "scheduleAssignments": [
+    {
+      "id": "test-999",
+      "employeeId": "emp-1",
+      "projectId": "proj-1",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770238650956
+    },
+    {
+      "id": "4f79f4d5-26db-40f9-9504-06e2802aed1f",
+      "employeeId": "emp1",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW05",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770238749421
+    },
+    {
+      "id": "06b4bc89-261b-4e68-a237-6fd8044bf3a5",
+      "employeeId": "emp4",
+      "projectId": "c2-t2",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 1,
+      "scope": "project",
+      "note": "---REPLIES---[{\"text\":\"vdfvfd\",\"date\":\"5.02.2026\",\"author\":\"Użytkownik\"},{\"text\":\"vjmhvjhbg\",\"date\":\"12.02.2026, 14:09:10\",\"author\":\"Użytkownik\"}]",
+      "created_at": 1770246730625
+    },
+    {
+      "id": "d33fccb7-04af-45f1-952a-b55ea4e4bc32",
+      "employeeId": "emp2",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 1,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770247759909
+    },
+    {
+      "id": "026351b3-01d6-4e88-a65b-0352cb943940",
+      "employeeId": "test-emp",
+      "projectId": "c3-t3",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770250349309
+    },
+    {
+      "id": "44ea7224-5254-4e2f-9c7e-8d91e4a4a5d5",
+      "employeeId": "emp2",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW06",
+      "shift": 1,
+      "scope": "specific",
+      "note": null,
+      "created_at": 1770404795960
+    },
+    {
+      "id": "ea3f9658-771d-47da-aaf2-3cdc990177df",
+      "employeeId": "emp3",
+      "projectId": "c2-t2",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770901642956
+    },
+    {
+      "id": "8deeaa10-b417-4390-a0a3-50d1e5b68aff",
+      "employeeId": "test-emp",
+      "projectId": "c4-t4",
+      "testId": "te3",
+      "week": "2026-KW07",
+      "shift": 1,
+      "scope": "specific",
+      "note": null,
+      "created_at": 1770901651411
+    },
+    {
+      "id": "2ab226ed-255e-49d9-9c09-c8a4717f7eaa",
+      "employeeId": "emp4",
+      "projectId": "c1-t1",
+      "testId": null,
+      "week": "2026-KW07",
+      "shift": 2,
+      "scope": "project",
+      "note": null,
+      "created_at": 1770901719509
+    }
+  ],
+  "absenceTypes": [
+    {
+      "id": "vacation",
+      "name": "Urlop wypoczynkowy",
+      "icon": "🏖️",
+      "color": "#10b981",
+      "defaultDays": 26,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 1
+    },
+    {
+      "id": "vacation-force",
+      "name": "Urlop siła wyższa 50%",
+      "icon": "⚡",
+      "color": "#f59e0b",
+      "defaultDays": 2,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 2
+    },
+    {
+      "id": "vacation-overdue",
+      "name": "Zaległy urlop",
+      "icon": "📅",
+      "color": "#6366f1",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 3
+    },
+    {
+      "id": "paternity",
+      "name": "Urlop ojcowski",
+      "icon": "👶",
+      "color": "#3b82f6",
+      "defaultDays": 14,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 4
+    },
+    {
+      "id": "parental",
+      "name": "Urlop macierzyński/rodzicielski",
+      "icon": "👨‍👩‍👧",
+      "color": "#ec4899",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 5
+    },
+    {
+      "id": "childcare",
+      "name": "Opieka nad dzieckiem",
+      "icon": "👨‍👧",
+      "color": "#8b5cf6",
+      "defaultDays": 2,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 6
+    },
+    {
+      "id": "occasional",
+      "name": "Urlop okolicznościowy",
+      "icon": "🎭",
+      "color": "#14b8a6",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 7
+    },
+    {
+      "id": "sick",
+      "name": "Chorobowe",
+      "icon": "🤒",
+      "color": "#ef4444",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 8
+    },
+    {
+      "id": "medical",
+      "name": "Badania okresowe",
+      "icon": "🏥",
+      "color": "#06b6d4",
+      "defaultDays": 1,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 9
+    },
+    {
+      "id": "unpaid",
+      "name": "Urlop bezpłatny",
+      "icon": "💼",
+      "color": "#64748b",
+      "defaultDays": 0,
+      "isPaid": 0,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 10
+    },
+    {
+      "id": "occasional-env",
+      "name": "Urlop okolicznościowy",
+      "icon": "🎭",
+      "color": "#14b8a6",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 11
+    },
+    {
+      "id": "delegation",
+      "name": "Delegacja",
+      "icon": "✈️",
+      "color": "#0ea5e9",
+      "defaultDays": 0,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 12
+    },
+    {
+      "id": "home-office",
+      "name": "Home Office",
+      "icon": "🏠",
+      "color": "#a855f7",
+      "defaultDays": 12,
+      "isPaid": 1,
+      "requiresApproval": 1,
+      "isActive": 1,
+      "sortOrder": 13
+    }
+  ],
+  "absences": [
+    {
+      "id": "abs-1770145956332",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-10",
+      "workDays": 1,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770145956389,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770146079006",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-17",
+      "workDays": 6,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770146079271,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "test-123",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-12",
+      "workDays": 3,
+      "status": "approved",
+      "note": "test",
+      "createdAt": 1770146405029,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770146450649",
+      "employeeId": "1770146270412-d7uxpk4kf",
+      "absenceTypeId": "vacation-force",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-10",
+      "workDays": 1,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770146450993,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "test-456",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-12",
+      "workDays": 3,
+      "status": "approved",
+      "note": "test2",
+      "createdAt": 1770146621764,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770147146789",
+      "employeeId": "1770141758070-xh6aq7g4g",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-09",
+      "endDate": "2026-02-25",
+      "workDays": 13,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770147146998,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770151739179",
+      "employeeId": "emp1",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-10",
+      "endDate": "2026-02-17",
+      "workDays": 6,
+      "status": "rejected",
+      "note": "",
+      "createdAt": 1770151739370,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770224456038",
+      "employeeId": "emp2",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-17",
+      "endDate": "2026-02-19",
+      "workDays": 3,
+      "status": "pending",
+      "note": "",
+      "createdAt": 1770224456100,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770246771933",
+      "employeeId": "emp2",
+      "absenceTypeId": "vacation",
+      "startDate": "2026-02-23",
+      "endDate": "2026-02-26",
+      "workDays": 4,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770246769360,
+      "approvedAt": null,
+      "approvedBy": null
+    },
+    {
+      "id": "abs-1770901879065",
+      "employeeId": "emp4",
+      "absenceTypeId": "vacation-force",
+      "startDate": "2026-03-09",
+      "endDate": "2026-03-12",
+      "workDays": 4,
+      "status": "approved",
+      "note": "",
+      "createdAt": 1770901879116,
+      "approvedAt": null,
+      "approvedBy": null
+    }
+  ],
+  "absenceLimits": [
+    {
+      "id": "emp1-vacation-2026",
+      "employeeId": "emp1",
+      "absenceTypeId": "vacation",
+      "year": 2026,
+      "totalDays": 30,
+      "usedDays": 6
+    }
+  ],
+  "employeeDetails": [],
+  "qualifications": [],
+  "holidays": [
+    {
+      "id": "2025-01-01",
+      "date": "2025-01-01",
+      "name": "Nowy Rok",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-01-06",
+      "date": "2025-01-06",
+      "name": "Trzech Króli",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-04-20",
+      "date": "2025-04-20",
+      "name": "Wielkanoc",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-04-21",
+      "date": "2025-04-21",
+      "name": "Poniedziałek Wielkanocny",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-05-01",
+      "date": "2025-05-01",
+      "name": "Święto Pracy",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-05-03",
+      "date": "2025-05-03",
+      "name": "Święto Konstytucji 3 Maja",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-06-08",
+      "date": "2025-06-08",
+      "name": "Zielone Świątki",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-06-19",
+      "date": "2025-06-19",
+      "name": "Boże Ciało",
+      "isMovable": 1
+    },
+    {
+      "id": "2025-08-15",
+      "date": "2025-08-15",
+      "name": "Wniebowzięcie NMP",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-11-01",
+      "date": "2025-11-01",
+      "name": "Wszystkich Świętych",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-11-11",
+      "date": "2025-11-11",
+      "name": "Święto Niepodległości",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-12-25",
+      "date": "2025-12-25",
+      "name": "Boże Narodzenie",
+      "isMovable": 0
+    },
+    {
+      "id": "2025-12-26",
+      "date": "2025-12-26",
+      "name": "Drugi dzień Bożego Narodzenia",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-01-01",
+      "date": "2026-01-01",
+      "name": "Nowy Rok",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-01-06",
+      "date": "2026-01-06",
+      "name": "Trzech Króli",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-04-05",
+      "date": "2026-04-05",
+      "name": "Wielkanoc",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-04-06",
+      "date": "2026-04-06",
+      "name": "Poniedziałek Wielkanocny",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-05-01",
+      "date": "2026-05-01",
+      "name": "Święto Pracy",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-05-03",
+      "date": "2026-05-03",
+      "name": "Święto Konstytucji 3 Maja",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-05-24",
+      "date": "2026-05-24",
+      "name": "Zielone Świątki",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-06-04",
+      "date": "2026-06-04",
+      "name": "Boże Ciało",
+      "isMovable": 1
+    },
+    {
+      "id": "2026-08-15",
+      "date": "2026-08-15",
+      "name": "Wniebowzięcie NMP",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-11-01",
+      "date": "2026-11-01",
+      "name": "Wszystkich Świętych",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-11-11",
+      "date": "2026-11-11",
+      "name": "Święto Niepodległości",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-12-25",
+      "date": "2026-12-25",
+      "name": "Boże Narodzenie",
+      "isMovable": 0
+    },
+    {
+      "id": "2026-12-26",
+      "date": "2026-12-26",
+      "name": "Drugi dzień Bożego Narodzenia",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-01-01",
+      "date": "2027-01-01",
+      "name": "Nowy Rok",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-01-06",
+      "date": "2027-01-06",
+      "name": "Trzech Króli",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-03-28",
+      "date": "2027-03-28",
+      "name": "Wielkanoc",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-03-29",
+      "date": "2027-03-29",
+      "name": "Poniedziałek Wielkanocny",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-05-01",
+      "date": "2027-05-01",
+      "name": "Święto Pracy",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-05-03",
+      "date": "2027-05-03",
+      "name": "Święto Konstytucji 3 Maja",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-05-16",
+      "date": "2027-05-16",
+      "name": "Zielone Świątki",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-05-27",
+      "date": "2027-05-27",
+      "name": "Boże Ciało",
+      "isMovable": 1
+    },
+    {
+      "id": "2027-08-15",
+      "date": "2027-08-15",
+      "name": "Wniebowzięcie NMP",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-11-01",
+      "date": "2027-11-01",
+      "name": "Wszystkich Świętych",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-11-11",
+      "date": "2027-11-11",
+      "name": "Święto Niepodległości",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-12-25",
+      "date": "2027-12-25",
+      "name": "Boże Narodzenie",
+      "isMovable": 0
+    },
+    {
+      "id": "2027-12-26",
+      "date": "2027-12-26",
+      "name": "Drugi dzień Bożego Narodzenia",
+      "isMovable": 0
+    }
+  ],
+  "comments": [
+    {
+      "id": "1770247850298-yvn4nsivm",
+      "projectId": "pr3",
+      "week": "2026-KW06",
+      "text": "dffvdvd",
+      "createdAt": 1770247850298
+    },
+    {
+      "id": "1770248418352-uopnxy0b8",
+      "projectId": "c2-t2",
+      "week": "2026-KW06",
+      "text": "vsfvsvs",
+      "createdAt": 1770248418352
+    },
+    {
+      "id": "1770901410949-t3pkbqy09",
+      "projectId": "pr4",
+      "week": "2026-KW07",
+      "text": "hjvf",
+      "createdAt": 1770901410949
+    }
+  ],
+  "logs": [
+    {
+      "id": "1770237861235-ls6ag1khv",
+      "userId": "1770237861235-j9e8hccvv",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Anna Nowak ← Mercedes",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1770237861235
+    },
+    {
+      "id": "1770237893160-1awtyn37h",
+      "userId": "1770237893160-csliwpmxp",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Anna Nowak ← VW",
+      "details": "Z2, Projekt",
+      "timestamp": 1770237893160
+    },
+    {
+      "id": "1770246728646-8qsuuglsw",
+      "userId": "1770246728646-387nc0og0",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1770246728646
+    },
+    {
+      "id": "1770250159357-d2h1x8yo1",
+      "userId": "1770250159357-5zy2t1oi2",
+      "userName": "Anonymous",
+      "action": "updated",
+      "entityType": "Employee",
+      "entityName": "Test User",
+      "details": "",
+      "timestamp": 1770250159357
+    },
+    {
+      "id": "1770250346481-6uba2b8hy",
+      "userId": "1770250346481-03hlayw6u",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Test User ← Mercedes",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1770250346481
+    },
+    {
+      "id": "1770901680906-yp81v2d91",
+      "userId": "1770901680906-w46os02u3",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Anna Nowak ← Porsche",
+      "details": "Z1, Specyficzne",
+      "timestamp": 1770901680906
+    },
+    {
+      "id": "1770901718612-xowm6iz27",
+      "userId": "1770901718612-dwyj75dv9",
+      "userName": "Anonymous",
+      "action": "deleted",
+      "entityType": "Assignment",
+      "entityName": "Maria Wójcik ← VW",
+      "details": "Z2, Specyficzne",
+      "timestamp": 1770901718612
+    }
+  ],
+  "templates": [],
+  "settings": {
+    "language": "pl",
+    "darkMode": false,
+    "animations": true,
+    "highlightMissing": true,
+    "blinkAlerts": true,
+    "deletePassword": "",
+    "editMode": false,
+    "userName": "",
+    "zoomLevel": 100,
+    "shiftSystem": 2,
+    "backupPath": "gg",
+    "backupFrequency": "none",
+    "lastBackupDate": ""
+  }
+}
