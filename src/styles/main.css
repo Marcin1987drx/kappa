@@ -3817,7 +3817,8 @@ body.dark-theme .btn-toolbar .icon-moon {
   border: 1px solid var(--color-border);
   margin-bottom: 12px;
   box-shadow: 0 1px 2px rgba(0,0,0,0.03);
-  overflow: visible;
+  overflow: hidden;
+  min-width: 0;
 }
 
 .analytics-section.compact {
@@ -4418,27 +4419,31 @@ body.dark-theme .btn-toolbar .icon-moon {
 
 /* Weekly Comparison Grid */
 .weekly-comparison-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+  display: flex;
   gap: 6px;
   padding: 12px;
-  max-height: 280px;
-  overflow-y: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
 }
 
 .week-comparison-cell {
-  aspect-ratio: 1;
+  min-width: 64px;
+  max-width: 64px;
+  height: 72px;
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 3px;
   font-size: 0.7rem;
   cursor: pointer;
   transition: var(--transition);
   border: 1px solid var(--color-border);
   position: relative;
+  flex-shrink: 0;
 }
 
 .week-comparison-cell:hover {
@@ -8333,31 +8338,66 @@ textarea.form-control {
 
 /* Heatmap */
 .heatmap-container {
-  display: grid;
-  gap: 3px;
   padding: 12px;
   background: var(--color-bg-elevated);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-sm);
 }
 
-.heatmap-row {
+.heatmap-wrapper {
   display: flex;
-  gap: 4px;
-  align-items: center;
+  gap: 0;
+}
+
+.heatmap-labels {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 2;
+}
+
+.heatmap-label-spacer {
+  height: 20px;
+  margin-bottom: 6px;
 }
 
 .heatmap-label {
-  width: 100px;
-  font-size: 0.7rem;
+  min-width: 90px;
+  max-width: 90px;
+  height: 28px;
+  font-size: 0.68rem;
   font-weight: 500;
   color: var(--color-text-secondary);
   text-align: right;
   padding-right: 8px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-bottom: 3px;
+}
+
+.heatmap-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.heatmap-row {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+  margin-bottom: 3px;
 }
 
 .heatmap-cell {
-  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
   height: 28px;
   border-radius: var(--radius-sm);
   display: flex;
@@ -8368,6 +8408,7 @@ textarea.form-control {
   color: white;
   cursor: pointer;
   transition: var(--transition);
+  flex-shrink: 0;
 }
 
 .heatmap-cell:hover {
@@ -8395,17 +8436,18 @@ textarea.form-control {
 
 .heatmap-header {
   display: flex;
-  gap: 4px;
-  margin-left: 132px;
-  margin-bottom: 8px;
+  gap: 3px;
+  margin-bottom: 6px;
 }
 
 .heatmap-header-cell {
-  width: 36px;
+  min-width: 28px;
+  max-width: 28px;
   text-align: center;
-  font-size: 0.7rem;
+  font-size: 0.6rem;
   color: var(--color-text-muted);
   font-weight: 500;
+  flex-shrink: 0;
 }
 
 /* Employee Management Modal */
@@ -20562,6 +20604,244 @@ body.dark-theme .sched-alert.success {
   font-size: 0.78rem;
   font-weight: 600;
   color: var(--color-success);
+}
+
+.planner-extra-employees {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-primary);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.planner-extra-employees svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+/* ===================== Planning Summary / Totals Row ===================== */
+
+.planner-summary-separator {
+  display: block;
+  padding: 0;
+  margin-top: 4px;
+  border-top: 2px solid var(--color-primary);
+  background: var(--color-bg-secondary);
+  position: relative;
+  z-index: 120;
+}
+
+.planner-summary-sep-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: sticky;
+  left: 0;
+  width: fit-content;
+  padding: 6px 14px;
+}
+
+.planner-summary-sep-icon {
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--color-primary);
+}
+
+.planner-summary-sep-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Total row cells */
+.planner-total-row-cell {
+  background: var(--color-bg-secondary) !important;
+  border-bottom: 1px solid rgba(59, 130, 246, 0.12);
+}
+
+.grid-cell.fixed-cell.planner-total-row-cell {
+  position: sticky !important;
+  background: var(--color-bg-secondary) !important;
+}
+
+.grid-cell.fixed-cell.col-customer.planner-total-row-cell { z-index: 115 !important; }
+.grid-cell.fixed-cell.col-type.planner-total-row-cell { z-index: 114 !important; }
+.grid-cell.fixed-cell.col-part.planner-total-row-cell { z-index: 114 !important; }
+.grid-cell.fixed-cell.col-test.planner-total-row-cell { z-index: 113 !important; }
+.grid-cell.fixed-cell.col-time.planner-total-row-cell { z-index: 112 !important; }
+
+.grid-cell.actions-cell.planner-total-row-cell,
+.grid-cell.actions-cell.col-actions.planner-total-row-cell {
+  position: sticky !important;
+  z-index: 111 !important;
+  background: var(--color-bg-secondary) !important;
+}
+
+/* Total label cell (first column) */
+.planner-total-label-cell {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.planner-total-icon {
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: var(--color-primary);
+}
+
+.planner-total-text {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Grand time in the time column */
+.planner-total-grand-time {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+}
+
+.planner-total-time-val {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  white-space: nowrap;
+}
+
+/* Total week cells - IST and SOLL */
+.planner-total-week-ist,
+.planner-total-week-soll {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 2px;
+  min-height: 38px;
+}
+
+.planner-total-val {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1.1;
+}
+
+.planner-total-week-ist .planner-total-val {
+  color: var(--color-primary);
+}
+
+.planner-total-week-soll .planner-total-val {
+  color: var(--color-success);
+}
+
+.planner-total-time {
+  font-size: 0.58rem;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+/* Grand total row */
+.planner-grand-total-cell {
+  background: var(--color-bg-secondary) !important;
+  border-top: 2px solid var(--color-primary);
+  border-bottom: none;
+  box-shadow: inset 0 2px 4px rgba(59, 130, 246, 0.06);
+}
+
+.grid-cell.fixed-cell.planner-grand-total-cell {
+  background: var(--color-bg-secondary) !important;
+}
+
+.grid-cell.fixed-cell.col-customer.planner-grand-total-cell { z-index: 115 !important; }
+.grid-cell.fixed-cell.col-type.planner-grand-total-cell { z-index: 114 !important; }
+.grid-cell.fixed-cell.col-part.planner-grand-total-cell { z-index: 114 !important; }
+.grid-cell.fixed-cell.col-test.planner-grand-total-cell { z-index: 113 !important; }
+.grid-cell.fixed-cell.col-time.planner-grand-total-cell { z-index: 112 !important; }
+.grid-cell.actions-cell.col-actions.planner-grand-total-cell { z-index: 111 !important; }
+
+.planner-grand-total-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+
+.planner-grand-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.planner-grand-stats {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.planner-grand-pct {
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-size: 0.68rem;
+}
+
+.planner-grand-pct.complete {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+}
+
+.planner-grand-pct.good {
+  color: #059669;
+  background: rgba(5, 150, 105, 0.08);
+}
+
+.planner-grand-pct.medium {
+  color: var(--color-warning);
+  background: var(--color-warning-bg);
+}
+
+.planner-grand-pct.low {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+/* Stacked time in the time column */
+.planner-grand-time-stack {
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px 4px;
+}
+
+.planner-grand-time-ist {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--color-primary);
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.planner-grand-time-soll {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--color-success);
+  white-space: nowrap;
+  line-height: 1.2;
 }
 
 /* ===================== Scope picker divider for tests ===================== */

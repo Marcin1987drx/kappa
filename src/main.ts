@@ -284,9 +284,21 @@ class KappaApp {
       validProjectIds.add(`extra-${t.id}`);
     });
     
+    // Zbierz prawidłowe employee IDs
+    const validEmployeeIds = new Set<string>();
+    this.state.employees.forEach(e => {
+      validEmployeeIds.add(e.id);
+    });
+    
     for (const a of this.state.scheduleAssignments) {
       // Usuń przypisania do nieistniejących projektów (osierocone)
       if (!validProjectIds.has(a.projectId)) {
+        toRemove.push(a.id);
+        continue;
+      }
+      
+      // Usuń przypisania do nieistniejących pracowników (duchy)
+      if (!validEmployeeIds.has(a.employeeId)) {
         toRemove.push(a.id);
         continue;
       }
@@ -1466,6 +1478,9 @@ class KappaApp {
     // ==================== EXTRA TASKS IN PLANNER ====================
     this.renderExtraTasksInPlanner(container, headerContainer, currentWeek, currentYear);
 
+    // ==================== PLANNING SUMMARY ====================
+    this.renderPlanningSummary(container, filteredProjects, currentWeek, currentYear);
+
     this.updateFilterOptions();
     
     // Add row hover effect
@@ -1623,29 +1638,29 @@ class KappaApp {
         
         const weekTask = tasks.find(t => t.week === yearWeekKey);
         
-        // IST cell - pokaż liczbę przypisanych pracowników
+        // IST cell - pokaż jednostki zadania (to co jest do zrobienia)
         const istCell = document.createElement('div');
         istCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
+        if (weekTask) {
+          istCell.innerHTML = `<span class="cell-value planner-extra-ist">${weekTask.units}</span>`;
+          istCell.classList.add('planner-extra-active-cell');
+          istCell.title = `${weekTask.units} × ${weekTask.timePerUnit}min`;
+        }
+        container.appendChild(istCell);
+        
+        // SOLL cell - pokaż liczbę przypisanych pracowników z ikoną
+        const sollCell = document.createElement('div');
+        sollCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
         if (weekTask) {
           const extraProjectId = `extra-${weekTask.id}`;
           const assignments = this.state.scheduleAssignments.filter(
             (a: ScheduleAssignment) => a.projectId === extraProjectId && a.week === yearWeekKey
           );
-          istCell.innerHTML = assignments.length > 0 
-            ? `<span class="cell-value planner-extra-ist">${assignments.length}</span>` 
-            : '';
-          istCell.classList.add('planner-extra-active-cell');
-          istCell.title = `${name} - ${yearWeekKey}: ${assignments.length} ${i18n.t('schedule.employeesAssigned')}`;
-        }
-        container.appendChild(istCell);
-        
-        // SOLL cell - pokaż jednostki zadania
-        const sollCell = document.createElement('div');
-        sollCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
-        if (weekTask) {
-          sollCell.innerHTML = `<span class="cell-value planner-extra-soll">${weekTask.units}</span>`;
+          if (assignments.length > 0) {
+            sollCell.innerHTML = `<span class="cell-value planner-extra-soll planner-extra-employees"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>${assignments.length}</span>`;
+          }
           sollCell.classList.add('planner-extra-active-cell');
-          sollCell.title = `${weekTask.units} × ${weekTask.timePerUnit}min`;
+          sollCell.title = `${assignments.length} ${i18n.t('schedule.employeesAssigned')}`;
           
           // Kliknięcie na cell otwiera modal edycji
           sollCell.style.cursor = 'pointer';
@@ -1671,6 +1686,130 @@ class KappaApp {
         container.appendChild(sollCell);
       }
     });
+  }
+
+  // ==================== PLANNING SUMMARY ====================
+  private renderPlanningSummary(
+    container: HTMLElement,
+    filteredProjects: Project[],
+    currentWeek: number,
+    currentYear: number
+  ): void {
+    // Build per-week totals (projects + extra tasks)
+    const weekTotals: { ist: number; soll: number; timeIst: number; timeSoll: number }[] = [];
+    for (let w = 1; w <= 52; w++) {
+      weekTotals[w] = { ist: 0, soll: 0, timeIst: 0, timeSoll: 0 };
+    }
+
+    // Sum projects
+    filteredProjects.forEach(project => {
+      const tpu = project.timePerUnit || 0;
+      for (let w = 1; w <= 52; w++) {
+        const yearWeekKey = `${this.state.selectedYear}-KW${w.toString().padStart(2, '0')}`;
+        const weekData = project.weeks[yearWeekKey] || { ist: 0, soll: 0 };
+        weekTotals[w].ist += weekData.ist;
+        weekTotals[w].soll += weekData.soll;
+        weekTotals[w].timeIst += weekData.ist * tpu;
+        weekTotals[w].timeSoll += weekData.soll * tpu;
+      }
+    });
+
+    // Sum extra tasks (units go to IST, since extra tasks are work done)
+    const yearTasks = this.state.extraTasks.filter(t => {
+      const match = t.week.match(/^(\d{4})-KW/);
+      return match && parseInt(match[1]) === this.state.selectedYear;
+    });
+    yearTasks.forEach(t => {
+      const wMatch = t.week.match(/KW(\d{2})/);
+      if (wMatch) {
+        const w = parseInt(wMatch[1]);
+        if (w >= 1 && w <= 52) {
+          weekTotals[w].ist += t.units;
+          weekTotals[w].timeIst += t.units * t.timePerUnit;
+        }
+      }
+    });
+
+    // Grand totals
+    let grandIst = 0, grandSoll = 0, grandTimeIst = 0, grandTimeSoll = 0;
+    for (let w = 1; w <= 52; w++) {
+      grandIst += weekTotals[w].ist;
+      grandSoll += weekTotals[w].soll;
+      grandTimeIst += weekTotals[w].timeIst;
+      grandTimeSoll += weekTotals[w].timeSoll;
+    }
+
+    // Helper: format minutes to compact string
+    const fmtTime = (mins: number): string => {
+      if (mins === 0) return '';
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      if (h > 0 && m > 0) return `${h}h${m}m`;
+      if (h > 0) return `${h}h`;
+      return `${mins}m`;
+    };
+
+    // --- Separator row ---
+    const sepCell = document.createElement('div');
+    sepCell.className = 'grid-cell planner-summary-separator';
+    sepCell.style.gridColumn = '1 / -1';
+    sepCell.innerHTML = `
+      <div class="planner-summary-sep-content">
+        <span class="planner-summary-sep-icon">Σ</span>
+        <span class="planner-summary-sep-label">${i18n.t('planning.summaryTitle')}</span>
+      </div>
+    `;
+    container.appendChild(sepCell);
+
+    // --- TOTALS ROW (IST) ---
+    // Fixed cells: label spanning customer column
+    const labelCellIst = document.createElement('div');
+    labelCellIst.className = 'grid-cell fixed-cell col-customer planner-total-row-cell planner-total-label-cell';
+    labelCellIst.innerHTML = `<span class="planner-total-icon">Σ</span> <span class="planner-total-text">IST</span>`;
+    container.appendChild(labelCellIst);
+
+    // Empty fixed cells for type, part, test
+    ['type', 'part', 'test'].forEach(col => {
+      const emptyCell = document.createElement('div');
+      emptyCell.className = `grid-cell fixed-cell col-${col} planner-total-row-cell`;
+      container.appendChild(emptyCell);
+    });
+
+    // Grand total time IST in time column
+    const grandTimeIstCell = document.createElement('div');
+    grandTimeIstCell.className = 'grid-cell fixed-cell col-time planner-total-row-cell planner-total-grand-time';
+    grandTimeIstCell.innerHTML = `<span class="planner-total-time-val">${fmtTime(grandTimeIst)}</span>`;
+    grandTimeIstCell.title = `${i18n.t('planning.summaryTotalTime')} IST: ${grandIst} ${i18n.t('planning.summaryPieces')} = ${fmtTime(grandTimeIst)}`;
+    container.appendChild(grandTimeIstCell);
+
+    // Empty actions cell
+    const actionsEmpty1 = document.createElement('div');
+    actionsEmpty1.className = 'grid-cell actions-cell col-actions planner-total-row-cell';
+    container.appendChild(actionsEmpty1);
+
+    // Week cells - IST totals
+    for (let w = 1; w <= 52; w++) {
+      const totals = weekTotals[w];
+      const isCurrentWeek = w === currentWeek && this.state.selectedYear === currentYear;
+
+      // IST total
+      const istCell = document.createElement('div');
+      istCell.className = `grid-cell week-cell planner-total-row-cell planner-total-week-ist ${isCurrentWeek ? 'current-week' : ''}`;
+      if (totals.ist > 0) {
+        istCell.innerHTML = `<span class="planner-total-val">${totals.ist}</span>${totals.timeIst > 0 ? `<span class="planner-total-time">${fmtTime(totals.timeIst)}</span>` : ''}`;
+      }
+      istCell.title = totals.ist > 0 ? `IST: ${totals.ist} (${fmtTime(totals.timeIst)})` : '';
+      container.appendChild(istCell);
+
+      // SOLL total
+      const sollCell = document.createElement('div');
+      sollCell.className = `grid-cell week-cell planner-total-row-cell planner-total-week-soll ${isCurrentWeek ? 'current-week' : ''}`;
+      if (totals.soll > 0) {
+        sollCell.innerHTML = `<span class="planner-total-val">${totals.soll}</span>${totals.timeSoll > 0 ? `<span class="planner-total-time">${fmtTime(totals.timeSoll)}</span>` : ''}`;
+      }
+      sollCell.title = totals.soll > 0 ? `SOLL: ${totals.soll} (${fmtTime(totals.timeSoll)})` : '';
+      container.appendChild(sollCell);
+    }
   }
 
   private initYearSelector(): void {
@@ -3963,13 +4102,13 @@ class KappaApp {
     grid.innerHTML = '';
 
     const weeklyData: { [week: string]: { ist: number; soll: number } } = {};
-    for (let i = 1; i <= 52; i++) {
+    for (let i = this.analyticsWeekFrom; i <= this.analyticsWeekTo; i++) {
       weeklyData[`KW${i.toString().padStart(2, '0')}`] = { ist: 0, soll: 0 };
     }
 
     // Use year-aware week data lookup
     this.state.projects.forEach((project) => {
-      for (let i = 1; i <= 52; i++) {
+      for (let i = this.analyticsWeekFrom; i <= this.analyticsWeekTo; i++) {
         const weekKey = `KW${i.toString().padStart(2, '0')}`;
         const data = this.getWeekData(project, weekKey);
         weeklyData[weekKey].ist += data.ist;
@@ -15245,9 +15384,11 @@ class KappaApp {
     projectsContainer.innerHTML = '';
     
     // Build employee multi-shift map for the current week
+    const validEmpIds = new Set(this.state.employees.map(e => e.id));
     const allWeekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const empShiftsInWeek = new Map<string, Set<number>>();
     allWeekAssignments.forEach((a: ScheduleAssignment) => {
+      if (!validEmpIds.has(a.employeeId)) return; // Ignoruj przypisania duchów
       if (!empShiftsInWeek.has(a.employeeId)) empShiftsInWeek.set(a.employeeId, new Set());
       empShiftsInWeek.get(a.employeeId)!.add(a.shift);
     });
@@ -18488,6 +18629,20 @@ class KappaApp {
       const emp = this.state.employees[idx];
       this.state.employees.splice(idx, 1);
       await db.delete('employees', id);
+      
+      // Usuń wszystkie przypisania grafiku tego pracownika (zapobiega duchom)
+      const orphanedAssignments = this.state.scheduleAssignments.filter(
+        (a: ScheduleAssignment) => a.employeeId === id
+      );
+      for (const a of orphanedAssignments) {
+        const aIdx = this.state.scheduleAssignments.indexOf(a);
+        if (aIdx !== -1) this.state.scheduleAssignments.splice(aIdx, 1);
+        await db.delete('scheduleAssignments', a.id);
+      }
+      if (orphanedAssignments.length > 0) {
+        console.log(`[Kappa] Cleaned up ${orphanedAssignments.length} assignment(s) for deleted employee ${emp.firstName} ${emp.lastName}`);
+      }
+      
       await this.addLog('deleted', 'Employee', `${emp.firstName} ${emp.lastName}`);
       this.showToast(i18n.t('messages.deletedSuccessfully'), 'success');
       this.showManageEmployeesModal();
@@ -18876,17 +19031,26 @@ class KappaApp {
       weeks.push(w);
     }
     
-    // Header
-    let html = `<div class="heatmap-header">`;
+    // Build two-column layout: labels (fixed) | scrollable cells
+    let labelsHtml = `<div class="heatmap-labels">`;
+    labelsHtml += `<div class="heatmap-label-spacer"></div>`; // spacer for header row
+    
+    let scrollHtml = `<div class="heatmap-scroll">`;
+    
+    // Header row (inside scroll area)
+    scrollHtml += `<div class="heatmap-header">`;
     weeks.forEach(w => {
-      html += `<div class="heatmap-header-cell">KW${w.toString().padStart(2, '0')}</div>`;
+      scrollHtml += `<div class="heatmap-header-cell">KW${w.toString().padStart(2, '0')}</div>`;
     });
-    html += `</div>`;
+    scrollHtml += `</div>`;
     
     // Rows by test type
     this.state.tests.forEach(test => {
-      html += `<div class="heatmap-row">`;
-      html += `<div class="heatmap-label">${test.name}</div>`;
+      // Label (fixed left column)
+      labelsHtml += `<div class="heatmap-label" title="${test.name}">${test.name}</div>`;
+      
+      // Cells (scrollable right column)
+      scrollHtml += `<div class="heatmap-row">`;
       
       weeks.forEach(week => {
         const weekKey = `KW${week.toString().padStart(2, '0')}`;
@@ -18908,13 +19072,16 @@ class KappaApp {
         const level = remaining === 0 ? 0 : remaining <= 2 ? 1 : remaining <= 5 ? 2 : remaining <= 10 ? 3 : 4;
         const cellClass = isComplete ? 'level-complete' : `level-${level}`;
         const tooltip = i18n.t('schedule.heatmapTooltip').replace('{0}', String(week)).replace('{1}', String(ist)).replace('{2}', String(soll)).replace('{3}', String(remaining));
-        html += `<div class="heatmap-cell ${cellClass}" title="${tooltip}">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</div>`;
+        scrollHtml += `<div class="heatmap-cell ${cellClass}" title="${tooltip}">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</div>`;
       });
       
-      html += `</div>`;
+      scrollHtml += `</div>`;
     });
     
-    container.innerHTML = html;
+    labelsHtml += `</div>`;
+    scrollHtml += `</div>`;
+    
+    container.innerHTML = `<div class="heatmap-wrapper">${labelsHtml}${scrollHtml}</div>`;
   }
 
   private renderTrendChart(): void {
