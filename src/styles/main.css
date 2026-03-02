@@ -76,6 +76,7 @@
 
 /* ==================== Dark Theme ==================== */
 body.dark-theme {
+  color-scheme: dark;
   --color-bg: #0d1117;
   --color-bg-elevated: #161b22;
   --color-bg-secondary: #21262d;
@@ -18263,6 +18264,83 @@ body.dark-theme .sched-alert.success {
   overflow-y: auto;
   padding: 16px;
   background: var(--color-bg-elevated);
+}
+
+/* Dark mode - Absence Employees Sidebar */
+body.dark-theme .absence-employees-sidebar {
+  background: var(--color-bg-elevated);
+  border-color: var(--color-border);
+  box-shadow: -4px 0 20px rgba(0,0,0,0.4);
+}
+
+body.dark-theme .absence-sidebar-header {
+  background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+}
+
+body.dark-theme .absence-sidebar-toggle {
+  background: linear-gradient(135deg, #238636 0%, #2ea043 100%);
+}
+
+body.dark-theme .absence-sidebar-toggle:hover {
+  background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%);
+}
+
+body.dark-theme .absence-employees-content {
+  background: var(--color-bg-elevated);
+}
+
+body.dark-theme .absence-sidebar-close {
+  background: rgba(255,255,255,0.15);
+}
+
+body.dark-theme .absence-sidebar-close:hover {
+  background: rgba(255,255,255,0.25);
+}
+
+body.dark-theme .absence-employee-card {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+}
+
+body.dark-theme .absence-employee-card:hover {
+  background: var(--color-bg-tertiary);
+}
+
+body.dark-theme .absence-employee-stat-bar {
+  background: var(--color-bg-tertiary);
+}
+
+/* Dark mode scrollbars for absence view */
+body.dark-theme .absence-content::-webkit-scrollbar,
+body.dark-theme .absence-employees-content::-webkit-scrollbar,
+body.dark-theme .absence-sidebar-left::-webkit-scrollbar {
+  width: 8px;
+}
+
+body.dark-theme .absence-content::-webkit-scrollbar-track,
+body.dark-theme .absence-employees-content::-webkit-scrollbar-track,
+body.dark-theme .absence-sidebar-left::-webkit-scrollbar-track {
+  background: #161b22;
+  border-radius: 4px;
+}
+
+body.dark-theme .absence-content::-webkit-scrollbar-thumb,
+body.dark-theme .absence-employees-content::-webkit-scrollbar-thumb,
+body.dark-theme .absence-sidebar-left::-webkit-scrollbar-thumb {
+  background: #30363d;
+  border-radius: 4px;
+}
+
+body.dark-theme .absence-content::-webkit-scrollbar-thumb:hover,
+body.dark-theme .absence-employees-content::-webkit-scrollbar-thumb:hover,
+body.dark-theme .absence-sidebar-left::-webkit-scrollbar-thumb:hover {
+  background: #484f58;
+}
+
+body.dark-theme .absence-content,
+body.dark-theme .absence-employees-content,
+body.dark-theme .absence-sidebar-left {
+  scrollbar-color: #30363d #161b22;
 }
 
 /* Year Selector */

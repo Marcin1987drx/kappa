@@ -4082,32 +4082,11 @@ class KappaApp {
       this.toggleAnalyticsOptions();
     });
 
-    // Export dropdown toggle
+    // Export modal for analytics
     const exportBtn = document.getElementById('exportAnalyticsBtn');
-    const exportDropdownContainer = exportBtn?.closest('.export-dropdown-container');
     
-    exportBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      exportDropdownContainer?.classList.toggle('open');
-    });
-    
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-      if (exportDropdownContainer && !exportDropdownContainer.contains(e.target as Node)) {
-        exportDropdownContainer.classList.remove('open');
-      }
-    });
-    
-    // Export to PDF button
-    document.getElementById('exportToPdf')?.addEventListener('click', () => {
-      exportDropdownContainer?.classList.remove('open');
-      this.exportAnalyticsToPdf();
-    });
-    
-    // Export to Excel button
-    document.getElementById('exportToExcel')?.addEventListener('click', () => {
-      exportDropdownContainer?.classList.remove('open');
-      this.exportAnalyticsToExcel();
+    exportBtn?.addEventListener('click', () => {
+      this.showAnalyticsExportModal();
     });
 
     // Legacy export analytics button (fallback)
@@ -7493,6 +7472,66 @@ class KappaApp {
     return { year, weekFrom, weekTo, rangeText };
   }
 
+  private showAnalyticsExportModal(): void {
+    const t = (key: string) => i18n.t(key);
+    const { rangeText } = this.getFilterInfo();
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal" style="max-width: 450px;">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📥 ${t('export.exportAnalytics')}</h2>
+            <div class="employee-modal-stats">
+              <span class="employee-modal-stat">${rangeText}</span>
+            </div>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="employee-modal-body">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button class="sched-export-btn" data-format="pdf">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2v2z"/></svg>
+              <div>
+                <strong>PDF</strong>
+                <span>${t('export.pdfDescription')}</span>
+              </div>
+            </button>
+            <button class="sched-export-btn" data-format="excel">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              <div>
+                <strong>Excel</strong>
+                <span>${t('export.excelDescription')}</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    
+    overlay.querySelectorAll('.sched-export-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const format = (btn as HTMLElement).dataset.format;
+        if (format === 'pdf') {
+          this.exportAnalyticsToPdf();
+        } else if (format === 'excel') {
+          this.exportAnalyticsToExcel();
+        }
+        overlay.remove();
+      });
+    });
+  }
+
   private async exportAnalyticsToPdf(): Promise<void> {
     try {
       const t = (key: string) => i18n.t(key);
@@ -7957,7 +7996,8 @@ class KappaApp {
           const remaining = Math.max(0, soll - ist);
           const isComplete = soll > 0 && ist >= soll;
           const cellBg = soll === 0 ? '#f8fafc' : isComplete ? '#bbf7d0' : remaining <= 2 ? '#fef3c7' : remaining <= 5 ? '#fed7aa' : '#fecaca';
-          analyticsHtml += `<td style="padding: 2px; text-align: center; background: ${cellBg}; font-size: 7px; font-weight: 600;">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</td>`;
+          const cellColor = soll === 0 ? '#94a3b8' : isComplete ? '#15803d' : remaining <= 2 ? '#92400e' : remaining <= 5 ? '#9a3412' : '#991b1b';
+          analyticsHtml += `<td style="padding: 2px; text-align: center; background: ${cellBg}; font-size: 7px; font-weight: 700; color: ${cellColor};">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</td>`;
         });
         analyticsHtml += `</tr>`;
       });
@@ -10263,10 +10303,10 @@ class KappaApp {
     if (!dropdown) return;
     
     const months = [
-      i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-      i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-      i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-      i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+      i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+      i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+      i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+      i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
     ];
     const monthsFull = [
       i18n.t('schedule.monthFullJan'), i18n.t('schedule.monthFullFeb'), i18n.t('schedule.monthFullMar'),
@@ -11703,7 +11743,7 @@ class KappaApp {
     headerContainer.innerHTML = `
       <div class="header-cell project-col">${i18n.t('schedule.project')}</div>
       <div class="header-cell months-row">
-        ${[i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'), i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'), i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'), i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')].map((m, i) => 
+        ${[i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'), i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'), i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'), i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')].map((m, i) => 
           `<span class="month-label" style="left: ${(i / 12) * 100}%">${m}</span>`
         ).join('')}
       </div>
@@ -21173,6 +21213,7 @@ class KappaApp {
         sidebar.classList.add('open');
         layout.classList.add('sidebar-open');
         localStorage.setItem('absenceEmployeesSidebarOpen', '1');
+        sounds.play('swoosh');
       }
     });
     
@@ -21184,6 +21225,7 @@ class KappaApp {
         sidebar.classList.remove('open');
         layout.classList.remove('sidebar-open');
         localStorage.setItem('absenceEmployeesSidebarOpen', '0');
+        sounds.play('swoosh');
       }
     });
     
@@ -21641,10 +21683,10 @@ class KappaApp {
     if (!container) return;
     
     const months = [
-      i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-      i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-      i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-      i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+      i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+      i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+      i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+      i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
     ];
     const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
     
@@ -23201,56 +23243,62 @@ class KappaApp {
   }
   
   private exportAbsences(): void {
-    // Show export dropdown
-    const existing = document.querySelector('.absence-export-dropdown');
-    if (existing) { existing.remove(); return; }
-
-    const btn = document.getElementById('absenceExportBtn');
-    if (!btn) return;
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'absence-export-dropdown';
-    dropdown.innerHTML = `
-      <button class="absence-export-option" data-format="pdf">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        <div>
-          <span class="absence-export-option-title">PDF</span>
-          <span class="absence-export-option-desc">${i18n.t('schedule.exportPdfDesc')}</span>
+    const t = (key: string) => i18n.t(key);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal" style="max-width: 450px;">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📥 ${t('export.exportAbsences')}</h2>
+            <div class="employee-modal-stats">
+              <span class="employee-modal-stat">${this.absenceYear}</span>
+            </div>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
-      </button>
-      <button class="absence-export-option" data-format="excel">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        <div>
-          <span class="absence-export-option-title">Excel</span>
-          <span class="absence-export-option-desc">${i18n.t('schedule.exportExcelDesc')}</span>
+        <div class="employee-modal-body">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button class="sched-export-btn" data-format="pdf">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2v2z"/></svg>
+              <div>
+                <strong>PDF</strong>
+                <span>${t('export.pdfDescription')}</span>
+              </div>
+            </button>
+            <button class="sched-export-btn" data-format="excel">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              <div>
+                <strong>Excel</strong>
+                <span>${t('export.excelDescription')}</span>
+              </div>
+            </button>
+          </div>
         </div>
-      </button>
+      </div>
     `;
-
-    const rect = btn.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.top = `${rect.bottom + 4}px`;
-    dropdown.style.right = `${window.innerWidth - rect.right}px`;
-    dropdown.style.zIndex = '1000';
-    document.body.appendChild(dropdown);
-
-    dropdown.querySelector('[data-format="pdf"]')?.addEventListener('click', () => {
-      dropdown.remove();
-      this.exportAbsencesToPdf();
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
     });
-    dropdown.querySelector('[data-format="excel"]')?.addEventListener('click', () => {
-      dropdown.remove();
-      this.exportAbsencesToExcel();
-    });
-
-    setTimeout(() => {
-      document.addEventListener('click', function handler(e) {
-        if (!dropdown.contains(e.target as Node)) {
-          dropdown.remove();
-          document.removeEventListener('click', handler);
+    
+    overlay.querySelectorAll('.sched-export-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const format = (btn as HTMLElement).dataset.format;
+        if (format === 'pdf') {
+          this.exportAbsencesToPdf();
+        } else if (format === 'excel') {
+          this.exportAbsencesToExcel();
         }
+        overlay.remove();
       });
-    }, 10);
+    });
   }
 
   // ==================== ABSENCE PDF EXPORT ====================
@@ -23262,10 +23310,10 @@ class KappaApp {
       const year = this.absenceYear;
       const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
       const months = [
-        i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-        i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-        i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-        i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+        i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+        i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+        i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+        i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
       ];
 
       this.showToast(i18n.t('schedule.exportGenerating'), 'success', 'notification');
@@ -23581,10 +23629,10 @@ class KappaApp {
       const year = this.absenceYear;
       const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
       const months = [
-        i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-        i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-        i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-        i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+        i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+        i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+        i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+        i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
       ];
 
       this.showToast(i18n.t('schedule.exportGenerating'), 'success', 'notification');
