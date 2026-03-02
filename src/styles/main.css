@@ -4664,7 +4664,9 @@ body.dark-theme .btn-toolbar .icon-moon {
 
 /* ==================== Settings View ==================== */
 .settings-container {
-  max-width: 640px;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
 .setting-group {
@@ -4713,6 +4715,165 @@ body.dark-theme .btn-toolbar .icon-moon {
   height: 20px;
   accent-color: var(--color-primary);
   cursor: pointer;
+}
+
+/* ==================== Modern Setting Items ==================== */
+.setting-item-modern {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--color-border-light, #f1f5f9);
+}
+
+.setting-item-modern:last-child {
+  border-bottom: none;
+  padding-bottom: 4px;
+}
+
+.setting-item-modern:first-of-type {
+  padding-top: 4px;
+}
+
+.setting-item-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.setting-item-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.setting-item-text label {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text, #0f172a);
+  margin-bottom: 2px;
+}
+
+.setting-item-text .setting-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--color-text-secondary, #64748b);
+  line-height: 1.4;
+}
+
+/* Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  inset: 0;
+  background: #cbd5e1;
+  border-radius: 26px;
+  transition: background 0.25s ease;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  left: 3px;
+  bottom: 3px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.25s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: #0097AC;
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(22px);
+}
+
+.toggle-switch input:focus + .toggle-slider {
+  box-shadow: 0 0 0 3px rgba(0, 151, 172, 0.15);
+}
+
+/* Zoom control in settings */
+.setting-zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.setting-zoom-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  background: var(--color-surface, white);
+  color: var(--color-text, #0f172a);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+}
+
+.setting-zoom-btn:hover {
+  background: #0097AC;
+  color: white;
+  border-color: #0097AC;
+}
+
+.setting-zoom-value {
+  min-width: 48px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text, #0f172a);
+}
+
+/* Modern select in settings */
+.setting-select-modern {
+  padding: 8px 32px 8px 12px;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text, #0f172a);
+  background: var(--color-surface, white);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  flex-shrink: 0;
+}
+
+.setting-select-modern:focus {
+  border-color: #0097AC;
+  box-shadow: 0 0 0 3px rgba(0, 151, 172, 0.12);
 }
 
 .setting-hint {
@@ -9654,11 +9815,14 @@ textarea.form-control {
 }
 
 .btn-import {
-  background: var(--color-success) !important;
+  background: transparent !important;
+  border: 1px solid var(--color-success) !important;
+  color: var(--color-success) !important;
 }
 
 .btn-import:hover {
-  background: #059669 !important;
+  background: var(--color-success) !important;
+  color: white !important;
 }
 
 /* ====================================================
@@ -14955,6 +15119,118 @@ body.dark-theme .sched-history-readonly-badge {
   vertical-align: middle;
   line-height: 1.4;
   border: 1px solid var(--color-border);
+}
+
+/* Partial absence badge — shows "3/5 dni" for employees partially absent in a week */
+.emp-partial-badge {
+  display: inline-block;
+  font-size: 0.55rem;
+  font-weight: 700;
+  background: #fef3c7;
+  color: #d97706;
+  border-radius: 3px;
+  padding: 0 4px;
+  margin-left: 4px;
+  vertical-align: middle;
+  line-height: 1.4;
+  border: 1px solid #fcd34d;
+}
+.dark .emp-partial-badge {
+  background: #44360d;
+  color: #fbbf24;
+  border-color: #78621b;
+}
+
+/* ===== Qualifications Grid & Star Ratings ===== */
+.qualifications-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--color-bg-secondary);
+  border-radius: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+}
+.qual-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 0;
+}
+.qual-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text);
+}
+.qual-stars {
+  display: flex;
+  gap: 2px;
+  cursor: pointer;
+}
+.qual-star {
+  font-size: 20px;
+  color: #d1d5db;
+  transition: color 0.12s, transform 0.12s;
+  user-select: none;
+  line-height: 1;
+}
+.qual-star.active {
+  color: #f59e0b;
+}
+.qual-star.hover {
+  color: #fbbf24;
+  transform: scale(1.15);
+}
+.qual-star:hover {
+  transform: scale(1.2);
+}
+.dark .qual-star {
+  color: #4b5563;
+}
+.dark .qual-star.active {
+  color: #f59e0b;
+}
+.dark .qual-star.hover {
+  color: #fbbf24;
+}
+
+/* Toggle switch for schedulable */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: #cbd5e1;
+  transition: 0.2s;
+  border-radius: 22px;
+}
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: 0.2s;
+  border-radius: 50%;
+}
+.toggle-switch input:checked + .toggle-slider {
+  background-color: #0097AC;
+}
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(18px);
 }
 
 .emp-shift-system-badge {
@@ -20864,4 +21140,287 @@ body.dark-theme .sched-alert.success {
   .projects-slide-panel {
     width: 100%;
   }
+}
+
+/* ==================== Settings Password Gate ==================== */
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(6px); }
+}
+
+/* ===================== Settings Tiles Navigation ===================== */
+.settings-tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  padding: 8px 0;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.settings-tile {
+  background: var(--color-surface, #ffffff);
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 16px;
+  padding: 28px 24px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+  overflow: hidden;
+}
+
+.settings-tile:hover {
+  border-color: #0097AC;
+  box-shadow: 0 4px 16px rgba(0, 151, 172, 0.12);
+  transform: translateY(-2px);
+}
+
+.settings-tile:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0, 151, 172, 0.08);
+}
+
+.settings-tile-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.settings-tile-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-tile-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text, #0f172a);
+  letter-spacing: -0.01em;
+}
+
+.settings-tile-desc {
+  font-size: 12.5px;
+  color: var(--color-text-secondary, #64748b);
+  line-height: 1.4;
+}
+
+.settings-tile-arrow {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #cbd5e1;
+  transition: color 0.2s, transform 0.2s;
+}
+
+.settings-tile:hover .settings-tile-arrow {
+  color: #0097AC;
+  transform: translateY(-50%) translateX(3px);
+}
+
+/* Settings section back button */
+.settings-section-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  background: none;
+  border: 1px solid var(--color-border, #e2e8f0);
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary, #64748b);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.settings-section-back:hover {
+  background: var(--color-surface, #f8fafc);
+  color: #0097AC;
+  border-color: #0097AC;
+}
+
+.settings-gate-backdrop {
+  position: fixed;
+  top: 52px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  box-sizing: border-box;
+  z-index: 50;
+}
+
+.settings-gate-card {
+  background: var(--color-surface, white);
+  border-radius: 20px;
+  padding: 52px 44px 44px;
+  box-shadow: 
+    0 1px 3px rgba(0, 0, 0, 0.04),
+    0 6px 16px rgba(0, 0, 0, 0.06),
+    0 24px 56px rgba(0, 0, 0, 0.08);
+  max-width: 420px;
+  width: 100%;
+  text-align: center;
+  border: 1px solid var(--color-border, #e2e8f0);
+}
+
+.settings-gate-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0097AC 0%, #007A8A 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 28px;
+  box-shadow: 0 8px 32px rgba(0, 151, 172, 0.35);
+}
+
+.settings-gate-title {
+  margin: 0 0 8px;
+  font-size: 23px;
+  font-weight: 700;
+  color: var(--color-text, #0f172a);
+  letter-spacing: -0.02em;
+}
+
+.settings-gate-subtitle {
+  margin: 0 0 32px;
+  color: var(--color-text-secondary, #64748b);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.settings-gate-input-wrap {
+  position: relative;
+  margin-bottom: 16px;
+}
+
+.settings-gate-input {
+  width: 100%;
+  padding: 14px 48px 14px 16px;
+  font-size: 15px;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  box-sizing: border-box;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.settings-gate-input:focus {
+  border-color: #0097AC;
+  box-shadow: 0 0 0 3px rgba(0, 151, 172, 0.12);
+  background: white;
+}
+
+.settings-gate-toggle-pwd {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: #94a3b8;
+  transition: color 0.2s;
+}
+
+.settings-gate-toggle-pwd:hover {
+  color: #64748b;
+}
+
+.settings-gate-error {
+  color: #ef4444;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.settings-gate-submit {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, #0097AC 0%, #007A8A 100%);
+  color: white;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s, transform 0.1s, box-shadow 0.2s;
+  box-shadow: 0 4px 16px rgba(0, 151, 172, 0.3);
+}
+
+.settings-gate-submit:hover {
+  opacity: 0.92;
+  box-shadow: 0 6px 20px rgba(0, 151, 172, 0.4);
+}
+
+.settings-gate-submit:active {
+  transform: scale(0.98);
+}
+
+.settings-gate-divider {
+  margin-top: 24px;
+  border-top: 1px solid #e2e8f0;
+  padding-top: 18px;
+}
+
+.settings-gate-forgot {
+  background: none;
+  border: none;
+  color: #0097AC;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.2s;
+}
+
+.settings-gate-forgot:hover {
+  color: #007A8A;
+  text-decoration: underline;
+}
+
+/* Dark mode password gate */
+[data-theme="dark"] .settings-gate-card {
+  background: var(--color-surface, #1e293b);
+  box-shadow: 
+    0 1px 3px rgba(0, 0, 0, 0.1),
+    0 6px 16px rgba(0, 0, 0, 0.2),
+    0 24px 56px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .settings-gate-input {
+  background: var(--color-bg, #0f172a);
+  color: var(--color-text, #f1f5f9);
+  border-color: var(--color-border, #334155);
+}
+
+[data-theme="dark"] .settings-gate-input:focus {
+  border-color: #0097AC;
+  background: #1a2332;
+}
+
+[data-theme="dark"] .settings-gate-divider {
+  border-color: var(--color-border, #334155);
 }

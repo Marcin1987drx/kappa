@@ -1,5 +1,9 @@
 import { Router } from 'express';
 import { runQuery, getAll, getOne, saveDatabase } from '../database/db.js';
+import nodemailer from 'nodemailer';
+
+// In-memory store for recovery codes (code -> { code, expiresAt })
+const recoveryCodes = new Map<string, { code: string; expiresAt: number }>();
 
 // ==================== EMPLOYEES ====================
 export const employeesRouter = Router();
@@ -803,5 +807,152 @@ extraTasksRouter.delete('/:id', (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete extra task' });
+  }
+});
+
+// ==================== PASSWORD RECOVERY ====================
+export const recoveryRouter = Router();
+
+// Send recovery code to email
+recoveryRouter.post('/send-code', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required' });
+    }
+    
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Store code with 15min expiry
+    recoveryCodes.set(email.toLowerCase(), {
+      code,
+      expiresAt: Date.now() + 15 * 60 * 1000
+    });
+    
+    // Clean expired codes
+    for (const [key, val] of recoveryCodes.entries()) {
+      if (val.expiresAt < Date.now()) recoveryCodes.delete(key);
+    }
+    
+    // Try to send email via nodemailer
+    // Use ethereal test account as fallback if no SMTP configured
+    try {
+      // Check if SMTP settings exist in app settings
+      const settingRow = getOne('SELECT value FROM settings WHERE key = ?', ['app-settings']) as any;
+      let smtpConfig: any = null;
+      
+      if (settingRow) {
+        const settings = JSON.parse(settingRow.value);
+        if (settings.smtpHost) {
+          smtpConfig = {
+            host: settings.smtpHost,
+            port: parseInt(settings.smtpPort || '587'),
+            secure: settings.smtpSecure === true || settings.smtpPort === '465',
+            auth: settings.smtpUser ? {
+              user: settings.smtpUser,
+              pass: settings.smtpPass || ''
+            } : undefined
+          };
+        }
+      }
+      
+      let transporter;
+      if (smtpConfig) {
+        transporter = nodemailer.createTransport(smtpConfig);
+      } else {
+        // Fallback: use Ethereal test account (emails go to ethereal.email inbox)
+        const testAccount = await nodemailer.createTestAccount();
+        transporter = nodemailer.createTransport({
+          host: 'smtp.ethereal.email',
+          port: 587,
+          secure: false,
+          auth: {
+            user: testAccount.user,
+            pass: testAccount.pass
+          }
+        });
+      }
+      
+      const info = await transporter.sendMail({
+        from: '"DRÄXLMAIER Kappa" <noreply@kappa.draexlmaier.com>',
+        to: email,
+        subject: `🔐 Kod odzyskiwania hasła Kappa – ${code}`,
+        text: `Twój kod odzyskiwania hasła: ${code}\n\nKod jest ważny przez 15 minut.\n\nJeśli nie prosiłeś o reset hasła, zignoruj tę wiadomość.\n\n– DRÄXLMAIER Kappa Planning`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+            <div style="background: #1a1a1a; padding: 20px 24px; border-radius: 12px 12px 0 0;">
+              <h2 style="color: white; margin: 0; font-size: 16px;">DRÄXLMAIER <span style="color: #0097AC;">Kappa</span></h2>
+            </div>
+            <div style="background: #0097AC; height: 4px;"></div>
+            <div style="background: #f8fafc; padding: 32px 24px; border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 12px 12px;">
+              <h3 style="margin: 0 0 8px; color: #0f172a;">Odzyskiwanie hasła</h3>
+              <p style="color: #64748b; font-size: 14px; margin: 0 0 24px;">Użyj poniższego kodu, aby zresetować hasło do ustawień aplikacji Kappa.</p>
+              <div style="background: white; border: 2px dashed #0097AC; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                <div style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #0097AC; font-family: 'Courier New', monospace;">${code}</div>
+              </div>
+              <p style="color: #94a3b8; font-size: 12px; margin: 0;">Kod jest ważny przez 15 minut. Jeśli nie prosiłeś o reset hasła, zignoruj tę wiadomość.</p>
+            </div>
+          </div>
+        `
+      });
+      
+      // Log preview URL for Ethereal
+      if (!smtpConfig) {
+        const previewUrl = nodemailer.getTestMessageUrl(info as any);
+        console.log('📧 Recovery email preview URL:', previewUrl);
+        return res.json({ 
+          success: true, 
+          message: 'Recovery code sent',
+          previewUrl: previewUrl || undefined // Only for dev/test
+        });
+      }
+      
+      res.json({ success: true, message: 'Recovery code sent' });
+    } catch (emailErr) {
+      console.error('Failed to send email:', emailErr);
+      // Even if email fails, we still have the code stored
+      // In production you'd return an error; for now, log code to console
+      console.log(`🔐 Recovery code for ${email}: ${code}`);
+      res.json({ success: true, message: 'Recovery code generated' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to send recovery code' });
+  }
+});
+
+// Verify recovery code
+recoveryRouter.post('/verify-code', (req, res) => {
+  try {
+    const { email, code } = req.body;
+    
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and code are required' });
+    }
+    
+    const stored = recoveryCodes.get(email.toLowerCase());
+    
+    if (!stored) {
+      return res.status(400).json({ error: 'No recovery code found for this email', valid: false });
+    }
+    
+    if (stored.expiresAt < Date.now()) {
+      recoveryCodes.delete(email.toLowerCase());
+      return res.status(400).json({ error: 'Recovery code has expired', valid: false });
+    }
+    
+    if (stored.code !== code.trim()) {
+      return res.status(400).json({ error: 'Invalid recovery code', valid: false });
+    }
+    
+    // Code is valid - remove it so it can't be reused
+    recoveryCodes.delete(email.toLowerCase());
+    
+    res.json({ valid: true, message: 'Code verified successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to verify code' });
   }
 });

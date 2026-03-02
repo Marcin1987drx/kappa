@@ -15,7 +15,8 @@ import {
   employeeDetailsRouter,
   qualificationsRouter,
   holidaysRouter,
-  extraTasksRouter
+  extraTasksRouter,
+  recoveryRouter
 } from './routes/schedule.js';
 import { initDatabase } from './database/db.js';
 
@@ -57,6 +58,7 @@ app.use('/api/employee-details', employeeDetailsRouter);
 app.use('/api/qualifications', qualificationsRouter);
 app.use('/api/holidays', holidaysRouter);
 app.use('/api/extra-tasks', extraTasksRouter);
+app.use('/api/recovery', recoveryRouter);
 
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
