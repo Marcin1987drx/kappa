@@ -2,6 +2,7 @@ import { i18n } from './i18n';
 import { api } from './api/client';
 import { db } from './database';
 import { sounds, SoundName } from './sounds';
+import { renderAbsenceIcon, getAbsenceIcon, getAbsenceEmoji } from './icons/absence-icons';
 import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus, EmployeeRole, ExtraTask } from './types';
 import { Chart, registerables } from 'chart.js';
 import ExcelJS from 'exceljs';
@@ -14014,7 +14015,7 @@ class KappaApp {
           let badgeClass: string;
           
           if (absenceType) {
-            icon = `<span style="font-size: 1.1rem;">${absenceType.icon}</span>`;
+            icon = renderAbsenceIcon(absenceType.id, absenceType.color, 18);
             label = absenceType.name.length > 15 ? absenceType.name.substring(0, 12) + '...' : absenceType.name;
             badgeClass = isVacation ? 'vacation' : isSick ? 'sick' : 'vacation';
           } else {
@@ -21261,7 +21262,7 @@ class KappaApp {
     if (typeFilter) {
       typeFilter.innerHTML = `<option value="">${i18n.t('absence.allTypes')}</option>` +
         this.absenceTypes
-          .map(t => `<option value="${t.id}" ${t.id === this.absenceFilterType ? 'selected' : ''}>${t.icon} ${t.name}</option>`)
+          .map(t => `<option value="${t.id}" ${t.id === this.absenceFilterType ? 'selected' : ''}>${getAbsenceEmoji(t.id)} ${t.name}</option>`)
           .join('');
     }
   }
@@ -21322,7 +21323,7 @@ class KappaApp {
       
       return `
         <div class="absence-upcoming-item">
-          <span class="absence-upcoming-icon">${type?.icon || '📅'}</span>
+          <span class="absence-upcoming-icon">${type ? renderAbsenceIcon(type.id, type.color, 16) : renderAbsenceIcon('', '#64748b', 16)}</span>
           <div class="absence-upcoming-info">
             <div class="absence-upcoming-name">${emp?.firstName || ''} ${emp?.lastName || ''}</div>
             <div class="absence-upcoming-date">${startDate} - ${a.workDays} ${i18n.t('absence.days')}</div>
@@ -21477,7 +21478,7 @@ class KappaApp {
         const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
         return `
           <div class="absence-calendar-event" style="background: ${type?.color || '#64748b'}" title="${emp?.firstName} ${emp?.lastName} - ${type?.name}">
-            ${type?.icon || ''} ${emp?.firstName || ''}
+            ${type ? getAbsenceIcon(type.id, 12, '#fff') : ''} ${emp?.firstName || ''}
           </div>
         `;
       }).join('');
@@ -21615,7 +21616,7 @@ class KappaApp {
             <span class="absence-list-name">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
           </div>
           <div class="absence-list-type">
-            <span class="absence-list-type-icon">${type?.icon || '📅'}</span>
+            <span class="absence-list-type-icon">${type ? renderAbsenceIcon(type.id, type.color, 16) : renderAbsenceIcon('', '#64748b', 16)}</span>
             <span class="absence-list-type-name">${type?.name || i18n.t('schedule.absenceDefault')}</span>
           </div>
           <div class="absence-list-dates">${startDate} - ${endDate}</div>
@@ -21786,7 +21787,7 @@ class KappaApp {
         
         return `
           <div class="absence-employee-limit-row">
-            <span class="absence-employee-limit-icon">${type.icon}</span>
+            <span class="absence-employee-limit-icon">${renderAbsenceIcon(type.id, type.color, 16)}</span>
             <div class="absence-employee-limit-info">
               <div class="absence-employee-limit-name">${type.name}</div>
               <div class="absence-employee-limit-bar">
@@ -21857,8 +21858,8 @@ class KappaApp {
     const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
     const locale = i18n.getDateLocale();
 
-    // Get holidays set
-    const holidayDates = new Set(this.holidays.map((h: any) => h.date));
+    // Get holidays map (date -> name)
+    const holidayDates = new Map(this.holidays.map((h: any) => [h.date, h.name]));
 
     const isWeekend = (d: Date): boolean => {
       const day = d.getDay();
@@ -21920,7 +21921,7 @@ class KappaApp {
         return `<td class="atl-summary-cell${val > 0 ? ' has-value' : ''}">${val}</td>`;
       }).join('');
       return `<tr class="atl-summary-type-row atl-type-detail-row">
-        <td colspan="3" class="atl-summary-type-label"><span class="atl-type-badge" style="background: ${t.color}">${t.icon}</span> ${t.name} <span class="atl-type-total">(${totalForType}d)</span></td>
+        <td colspan="3" class="atl-summary-type-label"><span class="atl-type-badge" style="background: ${t.color}">${getAbsenceIcon(t.id, 14, '#fff')}</span> ${t.name} <span class="atl-type-total">(${totalForType}d)</span></td>
         ${cells}
         <td class="atl-summary-cell atl-summary-count-cell"></td>
       </tr>`;
@@ -21980,6 +21981,7 @@ class KappaApp {
       const dayOfWeek = d.getDay();
       const isWkend = isWeekend(d);
       const isHoliday = holidayDates.has(dateStr);
+      const holidayName = holidayDates.get(dateStr) || '';
       const isToday = dateStr === new Date().toISOString().split('T')[0];
 
       // ISO week number
@@ -22013,21 +22015,29 @@ class KappaApp {
       ].filter(Boolean).join(' ');
 
       // Employee cells for this day
-      const empCells = employees.map(emp => {
-        const empAbsMap = absenceMap.get(dateStr);
-        const absence = empAbsMap?.get(emp.id);
-        if (absence && !isWkend) {
-          const type = this.absenceTypes.find((t: any) => t.id === absence.absenceTypeId);
-          return `<td class="atl-day-cell has-absence" style="--abs-color: ${type?.color || '#64748b'}" 
-            data-absence-id="${absence.id}" data-employee-id="${emp.id}" data-date="${dateStr}" title="${type?.icon || ''} ${type?.name || ''} (${absence.workDays}d)">
-            <span class="atl-absence-marker">${type?.icon || '1'}</span>
-          </td>`;
-        }
-        if (isWkend || isHoliday) {
-          return `<td class="atl-day-cell off-day"></td>`;
-        }
-        return `<td class="atl-day-cell empty-cell" data-employee-id="${emp.id}" data-date="${dateStr}"></td>`;
-      }).join('');
+      let empCells: string;
+      if (isHoliday && !isWkend) {
+        // Holiday: show name spanning across all employee columns
+        empCells = `<td class="atl-day-cell off-day atl-holiday-banner" colspan="${employees.length}">
+          <span class="atl-holiday-name">${holidayName}</span>
+        </td>`;
+      } else {
+        empCells = employees.map(emp => {
+          const empAbsMap = absenceMap.get(dateStr);
+          const absence = empAbsMap?.get(emp.id);
+          if (absence && !isWkend) {
+            const type = this.absenceTypes.find((t: any) => t.id === absence.absenceTypeId);
+            return `<td class="atl-day-cell has-absence" style="--abs-color: ${type?.color || '#64748b'}" 
+              data-absence-id="${absence.id}" data-employee-id="${emp.id}" data-date="${dateStr}" title="${type?.name || ''} (${absence.workDays}d)">
+              <span class="atl-absence-marker">${type ? getAbsenceIcon(type.id, 15, '#fff') : ''}</span>
+            </td>`;
+          }
+          if (isWkend || isHoliday) {
+            return `<td class="atl-day-cell off-day"></td>`;
+          }
+          return `<td class="atl-day-cell empty-cell" data-employee-id="${emp.id}" data-date="${dateStr}"></td>`;
+        }).join('');
+      }
 
       // Count total absent on this day
       const absMap = absenceMap.get(dateStr);
@@ -22136,7 +22146,7 @@ class KappaApp {
           ${activeTypes.map((t: any) => `
             <div class="atl-legend-item">
               <div class="atl-legend-color" style="background: ${t.color}"></div>
-              <span>${t.icon} ${t.name}</span>
+              ${renderAbsenceIcon(t.id, t.color, 14)}<span>${t.name}</span>
             </div>
           `).join('')}
           <div class="atl-legend-divider"></div>
@@ -22224,7 +22234,7 @@ class KappaApp {
             <div class="atl-type-grid" id="tlTypeGrid">
               ${this.absenceTypes.filter((t: any) => t.isActive).map((t: any) => `
                 <button class="atl-type-btn" data-type-id="${t.id}" style="--type-color: ${t.color}">
-                  <span class="atl-type-icon">${t.icon}</span>
+                  <span class="atl-type-icon">${renderAbsenceIcon(t.id, t.color, 20)}</span>
                   <span class="atl-type-name">${t.name}</span>
                 </button>
               `).join('')}
@@ -22445,7 +22455,7 @@ class KappaApp {
             <label class="absence-form-label">${i18n.t('schedule.absenceTypeLabel')}</label>
             <select class="absence-form-select" id="wizardType">
               <option value="">${i18n.t('schedule.selectOption')}</option>
-              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === selectedType ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === selectedType ? 'selected' : ''}>${getAbsenceEmoji(t.id)} ${t.name}</option>`).join('')}
             </select>
           </div>
           <div class="absence-form-row">
@@ -22487,7 +22497,7 @@ class KappaApp {
         
         content!.innerHTML = `
           <div style="text-align: center; padding: 20px;">
-            <div style="font-size: 3rem; margin-bottom: 16px;">${type?.icon || '📅'}</div>
+            <div style="font-size: 3rem; margin-bottom: 16px;">${type ? renderAbsenceIcon(type.id, type.color, 48) : renderAbsenceIcon('', '#64748b', 48)}</div>
             <h3 style="margin: 0 0 8px 0;">${emp?.firstName} ${emp?.lastName}</h3>
             <p style="color: var(--color-text-secondary); margin: 0 0 20px 0;">${type?.name}</p>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: left; background: var(--color-bg-secondary); padding: 16px; border-radius: 8px;">
@@ -22600,7 +22610,7 @@ class KappaApp {
     const typesHtml = this.absenceTypes.map(type => `
       <div class="absence-type-row" data-type-id="${type.id}">
         <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
-          ${type.icon}
+          ${renderAbsenceIcon(type.id, type.color, 20)}
         </div>
         <input type="text" class="absence-type-name-input" value="${type.name}" data-field="name">
         <input type="number" class="absence-type-days-input" value="${type.defaultDays}" data-field="defaultDays" min="0" placeholder="Dni">
@@ -22612,7 +22622,7 @@ class KappaApp {
     `).join('');
     
     overlay.innerHTML = `
-      <div class="absence-modal" style="max-width: 700px;">
+      <div class="absence-modal" style="max-width: 760px;">
         <div class="absence-modal-header">
           <h2>⚙️ ${i18n.t('schedule.absenceSettingsTitle')}</h2>
           <button class="absence-modal-close">
@@ -22638,17 +22648,57 @@ class KappaApp {
           </div>
           
           <div class="absence-settings-section" style="margin-top: 24px;">
-            <h3>${i18n.t('schedule.holidaysTitle').replace('{0}', String(this.absenceYear))}</h3>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <h3>${i18n.t('schedule.holidaysTitle').replace('{0}', String(this.absenceYear))}</h3>
+              <span style="font-size: 0.75rem; color: var(--color-text-muted); background: var(--color-bg-tertiary); padding: 2px 8px; border-radius: 4px;" id="holidayCount">${this.holidays.length}</span>
+            </div>
             <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
               ${i18n.t('schedule.holidaysDesc').replace('{0}', String(this.holidays.length))}
             </p>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-              ${this.holidays.slice(0, 8).map(h => `
-                <span style="padding: 4px 10px; background: var(--color-warning-bg); color: var(--color-warning); border-radius: 4px; font-size: 0.75rem;">
-                  🎉 ${new Date(h.date).toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit' })} - ${h.name}
-                </span>
-              `).join('')}
-              ${this.holidays.length > 8 ? `<span style="padding: 4px 10px; color: var(--color-text-muted); font-size: 0.75rem;">+${this.holidays.length - 8} ${i18n.t('schedule.more')}</span>` : ''}
+            
+            <!-- Add holiday form -->
+            <div style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center;" id="holidayAddForm">
+              <input type="date" id="holidayNewDate" class="absence-form-input" style="flex: 0 0 160px; padding: 6px 10px; font-size: 0.8rem;" value="${this.absenceYear}-01-01" min="${this.absenceYear}-01-01" max="${this.absenceYear}-12-31">
+              <input type="text" id="holidayNewName" class="absence-form-input" style="flex: 1; padding: 6px 10px; font-size: 0.8rem;" placeholder="${i18n.t('schedule.holidayNamePlaceholder')}">
+              <button id="holidayAddBtn" class="absence-modal-btn primary" style="padding: 6px 14px; font-size: 0.8rem; white-space: nowrap;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: -2px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                ${i18n.t('schedule.holidayAddBtn')}
+              </button>
+            </div>
+            
+            <!-- Holiday list -->
+            <div id="holidayList" style="max-height: 280px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: 8px;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: var(--color-bg-tertiary); position: sticky; top: 0; z-index: 1;">
+                    <th style="padding: 6px 12px; text-align: left; font-size: 0.7rem; color: var(--color-text-secondary); text-transform: uppercase; font-weight: 600;">${i18n.t('schedule.holidayDate')}</th>
+                    <th style="padding: 6px 12px; text-align: left; font-size: 0.7rem; color: var(--color-text-secondary); text-transform: uppercase; font-weight: 600;">${i18n.t('schedule.holidayName')}</th>
+                    <th style="padding: 6px 12px; width: 40px;"></th>
+                  </tr>
+                </thead>
+                <tbody id="holidayTableBody">
+                  ${this.holidays.map(h => {
+                    const d = new Date(h.date);
+                    const dayNames = ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'];
+                    const dayName = dayNames[d.getDay()];
+                    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                    return `<tr class="holiday-row" data-date="${h.date}" style="border-bottom: 1px solid var(--color-border);">
+                      <td style="padding: 7px 12px; font-size: 0.8rem; white-space: nowrap;">
+                        <span style="color: var(--color-text-secondary);">${dayName}</span>
+                        <span style="font-weight: 500; margin-left: 4px;">${d.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                        ${isWeekend ? '<span style="font-size: 0.65rem; background: var(--color-warning-bg); color: var(--color-warning); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">weekend</span>' : ''}
+                      </td>
+                      <td style="padding: 7px 12px; font-size: 0.8rem;">${h.name}</td>
+                      <td style="padding: 7px 6px; text-align: center;">
+                        <button class="holiday-delete-btn" data-date="${h.date}" title="${i18n.t('schedule.deleteBtn')}" style="background: none; border: none; cursor: pointer; color: var(--color-text-muted); padding: 4px; border-radius: 4px; transition: all 0.15s;">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+              ${this.holidays.length === 0 ? '<p style="padding: 20px; text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">—</p>' : ''}
             </div>
           </div>
         </div>
@@ -22660,6 +22710,128 @@ class KappaApp {
     `;
     
     document.body.appendChild(overlay);
+    
+    // === Holiday management ===
+    const holidayTableBody = overlay.querySelector('#holidayTableBody') as HTMLElement;
+    const holidayCountEl = overlay.querySelector('#holidayCount') as HTMLElement;
+    
+    const updateHolidayCount = () => {
+      const count = holidayTableBody?.querySelectorAll('.holiday-row').length || 0;
+      if (holidayCountEl) holidayCountEl.textContent = String(count);
+    };
+    
+    const addHolidayRow = (date: string, name: string) => {
+      const d = new Date(date + 'T00:00:00');
+      const dayNames = ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'];
+      const dayName = dayNames[d.getDay()];
+      const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+      const tr = document.createElement('tr');
+      tr.className = 'holiday-row';
+      tr.dataset.date = date;
+      tr.style.borderBottom = '1px solid var(--color-border)';
+      tr.innerHTML = `
+        <td style="padding: 7px 12px; font-size: 0.8rem; white-space: nowrap;">
+          <span style="color: var(--color-text-secondary);">${dayName}</span>
+          <span style="font-weight: 500; margin-left: 4px;">${d.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+          ${isWeekend ? '<span style="font-size: 0.65rem; background: var(--color-warning-bg); color: var(--color-warning); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">weekend</span>' : ''}
+        </td>
+        <td style="padding: 7px 12px; font-size: 0.8rem;">${name}</td>
+        <td style="padding: 7px 6px; text-align: center;">
+          <button class="holiday-delete-btn" data-date="${date}" title="${i18n.t('schedule.deleteBtn')}" style="background: none; border: none; cursor: pointer; color: var(--color-text-muted); padding: 4px; border-radius: 4px; transition: all 0.15s;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </td>
+      `;
+      // Insert sorted by date
+      const rows = Array.from(holidayTableBody.querySelectorAll('.holiday-row'));
+      const insertBefore = rows.find(r => (r as HTMLElement).dataset.date! > date);
+      if (insertBefore) {
+        holidayTableBody.insertBefore(tr, insertBefore);
+      } else {
+        holidayTableBody.appendChild(tr);
+      }
+      // Remove empty message if present
+      const emptyMsg = overlay.querySelector('#holidayList p');
+      if (emptyMsg) emptyMsg.remove();
+    };
+    
+    // Add holiday button
+    overlay.querySelector('#holidayAddBtn')?.addEventListener('click', async () => {
+      const dateInput = overlay.querySelector('#holidayNewDate') as HTMLInputElement;
+      const nameInput = overlay.querySelector('#holidayNewName') as HTMLInputElement;
+      const date = dateInput.value;
+      const name = nameInput.value.trim();
+      
+      if (!date || !name) {
+        nameInput.style.border = '1px solid var(--color-danger)';
+        nameInput.focus();
+        setTimeout(() => nameInput.style.border = '', 2000);
+        return;
+      }
+      
+      // Check if already exists
+      const existing = holidayTableBody.querySelector(`.holiday-row[data-date="${date}"]`);
+      if (existing) {
+        dateInput.style.border = '1px solid var(--color-danger)';
+        setTimeout(() => dateInput.style.border = '', 2000);
+        return;
+      }
+      
+      try {
+        await api.addHoliday({ date, name, isMovable: false });
+        this.holidays.push({ id: date, date, name, isMovable: false } as any);
+        this.holidays.sort((a: any, b: any) => a.date.localeCompare(b.date));
+        addHolidayRow(date, name);
+        updateHolidayCount();
+        nameInput.value = '';
+        // Advance date by 1 day
+        const nextDate = new Date(date + 'T00:00:00');
+        nextDate.setDate(nextDate.getDate() + 1);
+        dateInput.value = nextDate.toISOString().split('T')[0];
+        nameInput.focus();
+      } catch (e) {
+        console.error('Failed to add holiday:', e);
+      }
+    });
+    
+    // Delete holiday buttons (event delegation)
+    overlay.querySelector('#holidayList')?.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest('.holiday-delete-btn') as HTMLElement;
+      if (!btn) return;
+      
+      const date = btn.dataset.date;
+      if (!date) return;
+      
+      try {
+        await api.deleteHoliday(date);
+        this.holidays = this.holidays.filter((h: any) => h.date !== date);
+        const row = holidayTableBody.querySelector(`.holiday-row[data-date="${date}"]`);
+        if (row) {
+          (row as HTMLElement).style.transition = 'opacity 0.2s';
+          (row as HTMLElement).style.opacity = '0';
+          setTimeout(() => {
+            row.remove();
+            updateHolidayCount();
+            if (!holidayTableBody.querySelector('.holiday-row')) {
+              const holidayListDiv = overlay.querySelector('#holidayList') as HTMLElement;
+              if (holidayListDiv) {
+                const table = holidayListDiv.querySelector('table');
+                if (table) table.insertAdjacentHTML('afterend', '<p style="padding: 20px; text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">—</p>');
+              }
+            }
+          }, 200);
+        }
+      } catch (e) {
+        console.error('Failed to delete holiday:', e);
+      }
+    });
+    
+    // Enter key in name field
+    overlay.querySelector('#holidayNewName')?.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') {
+        (overlay.querySelector('#holidayAddBtn') as HTMLElement)?.click();
+      }
+    });
     
     // Save handler
     overlay.querySelector('#settingsSave')?.addEventListener('click', async () => {
@@ -22746,7 +22918,7 @@ class KappaApp {
       return `
         <div class="absence-type-row" data-type-id="${type.id}">
           <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
-            ${type.icon}
+            ${renderAbsenceIcon(type.id, type.color, 20)}
           </div>
           <span style="flex: 1; font-size: 0.85rem;">${type.name}</span>
           <input type="number" class="absence-type-days-input" value="${totalDays}" data-field="totalDays" min="0" style="width: 70px;">
@@ -22919,7 +23091,7 @@ class KappaApp {
       
       return `
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-          <span style="font-size: 1rem;">${type.icon}</span>
+          ${renderAbsenceIcon(type.id, type.color, 18)}
           <div style="flex: 1;">
             <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
               <span>${type.name}</span>
@@ -22939,7 +23111,7 @@ class KappaApp {
       const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
       return `
         <div style="display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--color-border-light);">
-          <span style="font-size: 1.1rem;">${type?.icon || '📅'}</span>
+          ${type ? renderAbsenceIcon(type.id, type.color, 18) : renderAbsenceIcon('', '#64748b', 18)}
           <div style="flex: 1;">
             <div style="font-size: 0.8rem; font-weight: 500;">${type?.name || i18n.t('schedule.absenceDefault')}</div>
             <div style="font-size: 0.7rem; color: var(--color-text-muted);">
@@ -23167,7 +23339,7 @@ class KappaApp {
           <div class="absence-form-group">
             <label class="absence-form-label">${i18n.t('schedule.absenceTypeLabel')}</label>
             <select class="absence-form-select" id="editType">
-              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === absence.absenceTypeId ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === absence.absenceTypeId ? 'selected' : ''}>${getAbsenceEmoji(t.id)} ${t.name}</option>`).join('')}
             </select>
           </div>
           <div class="absence-form-row">
@@ -23372,21 +23544,21 @@ class KappaApp {
         const typeEmps = new Set(typeAbs.map((a: any) => a.employeeId)).size;
         const avgDays = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
         return `<tr>
-          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+          <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">
             <div style="display: flex; align-items: center; gap: 6px;">
-              <div style="width: 10px; height: 10px; border-radius: 3px; background: ${t.color}; flex-shrink: 0;"></div>
-              ${t.icon} ${t.name}
+              <div style="width: 14px; height: 14px; border-radius: 3px; background: ${t.color}; flex-shrink: 0;"></div>
+              <span style="font-weight: 600;">${t.name}</span>
             </div>
           </td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${typeDays}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeAbs.length}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeEmps}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${avgDays}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${typeDays}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${typeAbs.length}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${typeEmps}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${avgDays}</td>
         </tr>`;
       }).join('');
 
       // Per-employee summary table with HR data
-      const empSummaryRows = employees.map((emp) => {
+      const empSummaryRows = employees.map((emp, empIdx) => {
         const details = empDetailsMap.get(emp.id);
         const empAbs = this.absences.filter((a: any) => a.employeeId === emp.id);
         const usedDays = empAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
@@ -23397,27 +23569,28 @@ class KappaApp {
         const remColor = remaining < 0 ? '#dc2626' : remaining === 0 ? '#d97706' : '#16a34a';
         const percent = limitTotal > 0 ? Math.round((usedDays / limitTotal) * 100) : 0;
         
-        return `<tr>
-          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
-            <div style="display: flex; align-items: center; gap: 5px;">
-              <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp.firstName?.charAt(0) || ''}${emp.lastName?.charAt(0) || ''}</div>
-              <span style="font-weight: 500;">${emp.firstName} ${emp.lastName}</span>
+        const empBg = empIdx % 2 === 0 ? '#f0f4f8' : 'white';
+        return `<tr style="background: ${empBg};">
+          <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 22px; height: 22px; border-radius: 50%; background: ${emp.color || '#475569'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; flex-shrink: 0;">${emp.firstName?.charAt(0) || ''}${emp.lastName?.charAt(0) || ''}</div>
+              <span style="font-weight: 600; color: #0f172a;">${emp.firstName} ${emp.lastName}</span>
             </div>
           </td>
-          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.department || '–'}</td>
-          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.position || '–'}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #3b82f6; font-weight: 600;">${limitTotal}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${usedDays}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: ${remColor}; font-weight: 700;">${remaining}</td>
-          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9;">
+          <td style="padding: 6px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${details?.department || '–'}</td>
+          <td style="padding: 6px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${details?.position || '–'}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #2563eb; font-weight: 700;">${limitTotal}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${usedDays}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: ${remColor}; font-weight: 700;">${remaining}</td>
+          <td style="padding: 6px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #cbd5e1;">
             <div style="display: flex; align-items: center; gap: 4px;">
-              <div style="flex: 1; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
-                <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${percent > 90 ? '#dc2626' : percent > 70 ? '#d97706' : '#0097AC'}; border-radius: 2px;"></div>
+              <div style="flex: 1; height: 7px; background: #cbd5e1; border-radius: 3px; overflow: hidden;">
+                <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${percent > 90 ? '#dc2626' : percent > 70 ? '#d97706' : '#0097AC'}; border-radius: 3px;"></div>
               </div>
-              <span style="font-size: 8px; color: #64748b; min-width: 24px;">${percent}%</span>
+              <span style="font-size: 9px; color: #334155; font-weight: 600; min-width: 28px;">${percent}%</span>
             </div>
           </td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${empAbs.length}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 600; color: #0f172a;">${empAbs.length}</td>
         </tr>`;
       }).join('');
 
@@ -23428,21 +23601,21 @@ class KappaApp {
         <div style="padding: ${padding}px;">
           <h2 style="margin: 0 0 14px 0; font-size: 16px; color: #1e293b;">${i18n.t('schedule.absenceTimelineYearReport')} ${year}</h2>
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;">
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #0097AC;">
-              <div style="font-size: 24px; font-weight: 700; color: #0097AC;">${totalAbsences}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #0097AC;">
+              <div style="font-size: 26px; font-weight: 800; color: #0097AC;">${totalAbsences}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceStatAbsences')}</div>
             </div>
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #3b82f6;">
-              <div style="font-size: 24px; font-weight: 700; color: #3b82f6;">${totalDays}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatTotalDays')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #3b82f6;">
+              <div style="font-size: 26px; font-weight: 800; color: #2563eb;">${totalDays}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceStatTotalDays')}</div>
             </div>
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #8b5cf6;">
-              <div style="font-size: 24px; font-weight: 700; color: #8b5cf6;">${affectedEmployees}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatEmployees')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #8b5cf6;">
+              <div style="font-size: 26px; font-weight: 800; color: #7c3aed;">${affectedEmployees}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceStatEmployees')}</div>
             </div>
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #f59e0b;">
-              <div style="font-size: 24px; font-weight: 700; color: #f59e0b;">${avgPerEmp}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceTimelineAvgPerEmp')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #f59e0b;">
+              <div style="font-size: 26px; font-weight: 800; color: #d97706;">${avgPerEmp}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceTimelineAvgPerEmp')}</div>
             </div>
           </div>
 
@@ -23455,11 +23628,11 @@ class KappaApp {
               <table style="width: 100%; border-collapse: collapse;">
                 <thead>
                   <tr style="background: #f1f5f9;">
-                    <th style="padding: 5px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListType')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListDays')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatAbsences')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatEmployees')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">Ø ${i18n.t('schedule.absenceListDays')}</th>
+                    <th style="padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceListType')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceListDays')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceStatAbsences')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceStatEmployees')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">Ø ${i18n.t('schedule.absenceListDays')}</th>
                   </tr>
                 </thead>
                 <tbody>${typeBreakdown}</tbody>
@@ -23488,11 +23661,11 @@ class KappaApp {
                   });
                   const barWidth = totalDays > 0 ? Math.round((monthDays / totalDays) * 100) : 0;
                   return `<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
-                    <span style="font-size: 8px; color: #64748b; width: 24px; text-align: right;">${m.substring(0, 3)}</span>
-                    <div style="flex: 1; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden;">
-                      <div style="height: 100%; width: ${barWidth}%; background: #0097AC; border-radius: 3px;"></div>
+                    <span style="font-size: 9px; color: #334155; width: 28px; text-align: right; font-weight: 600;">${m.substring(0, 3)}</span>
+                    <div style="flex: 1; height: 8px; background: #cbd5e1; border-radius: 4px; overflow: hidden;">
+                      <div style="height: 100%; width: ${barWidth}%; background: #0097AC; border-radius: 4px;"></div>
                     </div>
-                    <span style="font-size: 8px; color: #334155; font-weight: 600; min-width: 16px; text-align: right;">${monthDays}</span>
+                    <span style="font-size: 9px; color: #0f172a; font-weight: 700; min-width: 20px; text-align: right;">${monthDays}</span>
                   </div>`;
                 }).join('')}
               </div>
@@ -23513,20 +23686,20 @@ class KappaApp {
           <table style="width: 100%; border-collapse: collapse;">
             <thead>
               <tr style="background: #1e293b;">
-                <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.department') || 'Dział'}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.position') || 'Stanowisko'}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceEntitledDays')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceUsedDays')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceRemainingDays')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.utilization') || 'Wykorzystanie'}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</th>
+                <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListEmployee')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.department') || 'Dział'}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.position') || 'Stanowisko'}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceEntitledDays')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceUsedDays')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceRemainingDays')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.utilization') || 'Wykorzystanie'}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceStatAbsences')}</th>
               </tr>
             </thead>
             <tbody>${empSummaryRows}</tbody>
           </table>
 
-          <div style="margin-top: 16px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; font-size: 9px; color: #92400e;">
+          <div style="margin-top: 16px; padding: 12px 14px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 6px; font-size: 10px; color: #78350f;">
             <strong>⚠️ ${i18n.t('schedule.vdaNotice') || 'Uwaga VDA/HR'}:</strong> 
             ${i18n.t('schedule.vdaNoticeText') || 'Dane dotyczące urlopów zgodne z wymogami VDA 6.3 (P6.3.2) – ewidencja czasu pracy. Urlop wypoczynkowy powinien być planowany równomiernie w ciągu roku. Pracownicy z pozostałym urlopem >5 dni powinni zaplanować wykorzystanie do końca Q4.'}
           </div>
@@ -23584,24 +23757,24 @@ class KappaApp {
       const start = startD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
       const end = endD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
       const weekday = startD.toLocaleDateString(i18n.getDateLocale(), { weekday: 'short' });
-      const bg = idx % 2 === 0 ? '#f8fafc' : 'white';
+      const bg = idx % 2 === 0 ? '#f0f4f8' : 'white';
       return `<tr style="background: ${bg};">
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #0f172a;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="width: 20px; height: 20px; border-radius: 50%; background: ${emp?.color || '#475569'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; flex-shrink: 0;">${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}</div>
+            <span style="font-weight: 600;">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
+          </div>
+        </td>
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">
           <div style="display: flex; align-items: center; gap: 5px;">
-            <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp?.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}</div>
-            <span style="font-weight: 500;">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
+            <div style="width: 12px; height: 12px; border-radius: 3px; background: ${type?.color || '#475569'}; flex-shrink: 0;"></div>
+            <span style="font-weight: 500;">${type?.name || ''}</span>
           </div>
         </td>
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
-          <div style="display: flex; align-items: center; gap: 4px;">
-            <div style="width: 8px; height: 8px; border-radius: 2px; background: ${type?.color || '#64748b'}; flex-shrink: 0;"></div>
-            ${type?.icon || ''} ${type?.name || ''}
-          </div>
-        </td>
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${weekday}, ${start}</td>
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${end}</td>
-        <td style="padding: 5px 8px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 700; color: #0097AC;">${a.workDays}</td>
-        <td style="padding: 5px 8px; font-size: 9px; border-bottom: 1px solid #f1f5f9; color: #64748b; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${a.note || '–'}</td>
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">${weekday}, ${start}</td>
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">${end}</td>
+        <td style="padding: 6px 8px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 700; color: #0097AC;">${a.workDays}</td>
+        <td style="padding: 6px 8px; font-size: 10px; border-bottom: 1px solid #cbd5e1; color: #475569; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${a.note || '–'}</td>
       </tr>`;
     }).join('');
 
@@ -23610,12 +23783,12 @@ class KappaApp {
       <table style="width: 100%; border-collapse: collapse;">
         <thead>
           <tr style="background: #1e293b;">
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListType')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateFrom')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateTo')}</th>
-            <th style="padding: 6px 8px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListDays')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.noteLabel')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListEmployee')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListType')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.dateFrom')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.dateTo')}</th>
+            <th style="padding: 7px 8px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListDays')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.noteLabel')}</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -23715,7 +23888,7 @@ class KappaApp {
         const type = this.absenceTypes.find((t: any) => t.id === a.absenceTypeId);
         const row = overviewSheet.getRow(idx + 5);
         row.getCell(1).value = `${emp?.firstName || ''} ${emp?.lastName || ''}`;
-        row.getCell(2).value = `${type?.icon || ''} ${type?.name || ''}`;
+        row.getCell(2).value = `${type ? getAbsenceEmoji(type.id) : ''} ${type?.name || ''}`;
         row.getCell(3).value = a.startDate;
         row.getCell(4).value = a.endDate;
         row.getCell(5).value = a.workDays;
@@ -23855,7 +24028,7 @@ class KappaApp {
         const avg = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
 
         const row = typeSheet.getRow(idx + 4);
-        row.getCell(1).value = `${t.icon} ${t.name}`;
+        row.getCell(1).value = `${getAbsenceEmoji(t.id)} ${t.name}`;
         row.getCell(2).value = typeAbs.length;
         row.getCell(3).value = typeDays;
         row.getCell(4).value = typeEmps;
