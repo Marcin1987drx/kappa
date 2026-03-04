@@ -741,6 +741,59 @@ class KappaApp {
       this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
     });
 
+    // SMTP / Email settings
+    document.getElementById('emailModeSelect')?.addEventListener('change', async (e) => {
+      const mode = (e.target as HTMLSelectElement).value;
+      await db.setPreference('kappa_email_mode', mode);
+      const smtpFields = document.getElementById('smtpConfigFields');
+      if (smtpFields) smtpFields.style.display = mode === 'smtp' ? 'block' : 'none';
+    });
+    document.getElementById('smtpHostInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_host', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('smtpPortInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_port', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('smtpUserInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_user', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('smtpPassInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_pass', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('testSmtpBtn')?.addEventListener('click', async () => {
+      const host = (document.getElementById('smtpHostInput') as HTMLInputElement)?.value;
+      const port = (document.getElementById('smtpPortInput') as HTMLInputElement)?.value;
+      const user = (document.getElementById('smtpUserInput') as HTMLInputElement)?.value;
+      const pass = (document.getElementById('smtpPassInput') as HTMLInputElement)?.value;
+      if (!host) {
+        this.showToast(i18n.t('schedule.smtpHost') + ' required', 'warning');
+        return;
+      }
+      try {
+        const resp = await fetch('/api/email/test-smtp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ smtpHost: host, smtpPort: port, smtpUser: user, smtpPass: pass, testEmail: user })
+        });
+        if (resp.ok) {
+          this.showToast(i18n.t('schedule.smtpTestSuccess'), 'success');
+        } else {
+          const data = await resp.json();
+          this.showToast(i18n.t('schedule.smtpTestFailed') + ': ' + (data.error || ''), 'error');
+        }
+      } catch (err) {
+        this.showToast(i18n.t('schedule.smtpTestFailed'), 'error');
+      }
+    });
+
     // Logs view buttons
     document.getElementById('exportLogs')?.addEventListener('click', () => this.exportLogs());
     document.getElementById('clearLogs')?.addEventListener('click', () => this.clearLogs());
@@ -5311,6 +5364,9 @@ class KappaApp {
     // Load backup list
     this.loadBackupList();
     
+    // Load SMTP settings
+    this.loadSmtpSettings();
+    
     // Render employee management section
     this.renderSettingsEmployeeList();
     
@@ -5995,6 +6051,7 @@ class KappaApp {
     
     const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
     confirmBtn.style.display = '';
+    confirmBtn.textContent = i18n.t('common.save');
     confirmBtn.onclick = async () => {
       const firstName = (document.getElementById('settEmpFirstName') as HTMLInputElement).value.trim();
       const lastName = (document.getElementById('settEmpLastName') as HTMLInputElement).value.trim();
@@ -8961,6 +9018,57 @@ class KappaApp {
     }
   }
 
+  private async loadSmtpSettings(): Promise<void> {
+    const emailMode = await db.getPreference('kappa_email_mode') as string || 'outlook';
+    const smtpHost = await db.getPreference('kappa_smtp_host') as string || '';
+    const smtpPort = await db.getPreference('kappa_smtp_port') as string || '587';
+    const smtpUser = await db.getPreference('kappa_smtp_user') as string || '';
+    const smtpPass = await db.getPreference('kappa_smtp_pass') as string || '';
+    
+    const modeSelect = document.getElementById('emailModeSelect') as HTMLSelectElement;
+    if (modeSelect) modeSelect.value = emailMode;
+    
+    const hostInput = document.getElementById('smtpHostInput') as HTMLInputElement;
+    if (hostInput) hostInput.value = smtpHost;
+    
+    const portInput = document.getElementById('smtpPortInput') as HTMLInputElement;
+    if (portInput) portInput.value = smtpPort;
+    
+    const userInput = document.getElementById('smtpUserInput') as HTMLInputElement;
+    if (userInput) userInput.value = smtpUser;
+    
+    const passInput = document.getElementById('smtpPassInput') as HTMLInputElement;
+    if (passInput) passInput.value = smtpPass;
+    
+    const smtpFields = document.getElementById('smtpConfigFields');
+    if (smtpFields) smtpFields.style.display = emailMode === 'smtp' ? 'block' : 'none';
+  }
+
+  private async syncSmtpToBackend(): Promise<void> {
+    const smtpHost = await db.getPreference('kappa_smtp_host') as string || '';
+    const smtpPort = await db.getPreference('kappa_smtp_port') as string || '587';
+    const smtpUser = await db.getPreference('kappa_smtp_user') as string || '';
+    const smtpPass = await db.getPreference('kappa_smtp_pass') as string || '';
+    
+    try {
+      // Get current backend settings, merge SMTP fields
+      const resp = await fetch('/api/settings');
+      const settings = resp.ok ? await resp.json() : {};
+      settings.smtpHost = smtpHost;
+      settings.smtpPort = smtpPort;
+      settings.smtpUser = smtpUser;
+      settings.smtpPass = smtpPass;
+      
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+    } catch (err) {
+      console.error('Failed to sync SMTP settings to backend:', err);
+    }
+  }
+
   private async loadBackupList(): Promise<void> {
     const container = document.getElementById('backupListContainer');
     if (!container) return;
@@ -10483,11 +10591,16 @@ class KappaApp {
                     hour: '2-digit', minute: '2-digit' 
                   });
                   
+                  const actionLabel = isAdded ? i18n.t('schedule.logAdded') : isRemoved ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged');
+                  const displayText = log.details 
+                    ? `<strong>${actionLabel}</strong> ${log.entityName}: ${log.details}`
+                    : `<strong>${actionLabel}</strong> ${log.entityName || ''}`;
+                  
                   return `
                     <div class="sched-history-item">
                       <div class="sched-history-icon ${iconClass}">${iconSvg}</div>
                       <div class="sched-history-content">
-                        <div class="sched-history-text">${log.entityName || ''}${log.details ? ` - ${log.details}` : ''}</div>
+                        <div class="sched-history-text">${displayText}</div>
                         <div class="sched-history-time">${time}</div>
                       </div>
                     </div>
@@ -11052,6 +11165,41 @@ class KappaApp {
     fill.style.width = `${percent}%`;
     fill.className = 'sched-coverage-fill ' + (percent < 50 ? 'low' : percent < 80 ? 'medium' : 'high');
     text.textContent = `${assignedCount}/${total}`;
+    
+    // Also update email badge
+    this.updateEmailUpdateBadge();
+  }
+  
+  private async updateEmailUpdateBadge(): Promise<void> {
+    const badge = document.getElementById('emailUpdateBadge');
+    if (!badge) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    const lastSentData = await db.getPreference(`kappa_email_sent_${weekKey}`) as any;
+    const lastSentHash = lastSentData?.hash || '';
+    const lastSentTimestamp = lastSentData?.timestamp || 0;
+    
+    const currentHash = weekAssignments
+      .map(a => `${a.employeeId}:${a.projectId}:${a.shift}:${a.scope}`)
+      .sort()
+      .join('|');
+    
+    const hasChanges = lastSentTimestamp > 0 && currentHash !== lastSentHash;
+    const neverSent = lastSentTimestamp === 0 && weekAssignments.length > 0;
+    
+    if (hasChanges) {
+      badge.style.display = 'block';
+      badge.style.background = '#f59e0b'; // orange for update
+      badge.title = i18n.t('schedule.scheduleUpdated');
+    } else if (neverSent) {
+      badge.style.display = 'block';
+      badge.style.background = '#3b82f6'; // blue for never sent
+      badge.title = i18n.t('schedule.neverSent');
+    } else {
+      badge.style.display = 'none';
+    }
   }
   
   private getWeekDateRange(year: number, week: number): { start: string; end: string } {
@@ -14719,11 +14867,16 @@ class KappaApp {
             day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
           });
           
+          const actionLbl = isAdded ? i18n.t('schedule.logAdded') : isRemoved ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged');
+          const miniText = log.details 
+            ? `<strong>${actionLbl}</strong> ${log.entityName}: ${log.details}`
+            : `<strong>${actionLbl}</strong> ${log.entityName || ''}`;
+          
           return `
             <div class="sched-history-mini-item">
               <div class="sched-history-mini-icon ${iconClass}">${iconSvg}</div>
               <div class="sched-history-mini-content">
-                <span class="sched-history-mini-text">${log.entityName}${log.details ? ` - ${log.details}` : ''}</span>
+                <span class="sched-history-mini-text">${miniText}</span>
                 <span class="sched-history-mini-time">${time}</span>
               </div>
             </div>
@@ -15960,193 +16113,351 @@ class KappaApp {
 
   // ==================== WYSYŁANIE GRAFIKU MAILEM ====================
   private async showSendEmailModal(): Promise<void> {
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
-    
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
     const weekNum = this.scheduleCurrentWeek.toString().padStart(2, '0');
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     
-    const savedEmails = await db.getPreference('kappa_email_addresses') || '';
+    // Check for changes since last send
+    const lastSentData = await db.getPreference(`kappa_email_sent_${weekKey}`) as any;
+    const lastSentTimestamp = lastSentData?.timestamp || 0;
+    const lastSentHash = lastSentData?.hash || '';
     
-    // Build employee list for individual emails
-    const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      if (emp) {
-        if (!byEmployee.has(emp.id)) {
-          byEmployee.set(emp.id, { emp, assignments: [] });
-        }
-        byEmployee.get(emp.id)!.assignments.push(a);
-      }
-    });
+    const currentHash = weekAssignments
+      .map(a => `${a.employeeId}:${a.projectId}:${a.shift}:${a.scope}`)
+      .sort()
+      .join('|');
+    const hasChanges = lastSentTimestamp > 0 && currentHash !== lastSentHash;
     
-    const empCount = byEmployee.size;
-    const empWithEmail = Array.from(byEmployee.values()).filter(({ emp }) => emp.email).length;
+    // ALL employees with email, regardless of schedule assignment
+    const allEmpsWithEmail = this.state.employees
+      .filter(e => e.email)
+      .sort((a, b) => a.firstName.localeCompare(b.firstName));
+    const recipientEmails = allEmpsWithEmail.map(e => e.email!);
+    const allEmpsWithoutEmail = this.state.employees.filter(e => !e.email);
     
-    modalTitle.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
-        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
-      </svg>
-      ${i18n.t('schedule.sendScheduleEmail')} – KW${weekNum}
+    if (recipientEmails.length === 0) {
+      this.showToast(i18n.t('schedule.noEmployeeEmailsWarning'), 'error');
+      return;
+    }
+    
+    // Show brief preparing modal, then auto-send via Outlook
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 99999;
+      background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+      animation: fadeIn 0.2s ease;
     `;
     
-    modalBody.innerHTML = `
-      <div style="max-width: 480px;">
-        <!-- Summary -->
-        <div style="display: flex; gap: 16px; margin-bottom: 20px;">
-          <div style="flex: 1; background: var(--card-bg, #f8fafc); border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px; padding: 14px; text-align: center;">
-            <div style="font-size: 24px; font-weight: 800; color: #0097AC;">${empCount}</div>
-            <div style="font-size: 12px; color: var(--text-secondary, #64748b); margin-top: 2px;">${i18n.t('schedule.assignedEmployees')}</div>
-          </div>
-          <div style="flex: 1; background: var(--card-bg, #f8fafc); border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px; padding: 14px; text-align: center;">
-            <div style="font-size: 24px; font-weight: 800; color: #10b981;">${empWithEmail}</div>
-            <div style="font-size: 12px; color: var(--text-secondary, #64748b); margin-top: 2px;">${i18n.t('schedule.withEmail')}</div>
-          </div>
-          <div style="flex: 1; background: var(--card-bg, #f8fafc); border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px; padding: 14px; text-align: center;">
-            <div style="font-size: 24px; font-weight: 800; color: #f59e0b;">${weekAssignments.length}</div>
-            <div style="font-size: 12px; color: var(--text-secondary, #64748b); margin-top: 2px;">${i18n.t('schedule.totalAssignments')}</div>
-          </div>
+    // 4-step timeline for psychological pacing (~7s total)
+    const steps = [
+      { icon: '📋', label: i18n.t('schedule.prepStep1') },
+      { icon: '📧', label: i18n.t('schedule.prepStep2') },
+      { icon: '✅', label: i18n.t('schedule.prepStep3ready') },
+      { icon: '📨', label: i18n.t('schedule.prepStep4') },
+    ];
+    
+    overlay.innerHTML = `
+      <div style="
+        background: var(--modal-bg, white); border-radius: 24px; padding: 40px 48px; text-align: center;
+        box-shadow: 0 25px 60px rgba(0,0,0,0.3); max-width: 440px; animation: scaleIn 0.3s ease;
+      ">
+        <div id="emailPrepIcon" style="font-size: 56px; margin-bottom: 16px;">
+          <div style="display: inline-block; animation: pulse 1s infinite;">📧</div>
+        </div>
+        <h3 id="emailPrepTitle" style="margin: 0 0 8px; font-size: 20px; font-weight: 700; color: var(--text-primary, #1a1a2e);">
+          ${i18n.t('schedule.sendScheduleEmail')} – KW${weekNum}
+        </h3>
+        
+        <!-- Recipient avatars -->
+        <div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; max-height: 40px; overflow: hidden; margin: 14px 0 10px;">
+          ${allEmpsWithEmail.slice(0, 10).map(e => `
+            <div style="width: 30px; height: 30px; border-radius: 50%; background: ${e.color || '#94a3b8'}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: white; border: 2px solid var(--modal-bg, white);" title="${e.firstName} ${e.lastName}">
+              ${e.firstName.charAt(0)}${e.lastName.charAt(0)}
+            </div>
+          `).join('')}
+          ${allEmpsWithEmail.length > 10 ? `<div style="width: 30px; height: 30px; border-radius: 50%; background: var(--border-color, #e2e8f0); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600; color: var(--text-secondary, #64748b);">+${allEmpsWithEmail.length - 10}</div>` : ''}
+        </div>
+        <div style="font-size: 11px; color: var(--text-secondary, #94a3b8); margin-bottom: 20px;">
+          → ${allEmpsWithEmail.length} ${i18n.t('schedule.recipientsCount')}
+          ${allEmpsWithoutEmail.length > 0 ? ` · <span style="color: #f59e0b;">⚠ ${allEmpsWithoutEmail.length} ${i18n.t('schedule.withoutEmailShort')}</span>` : ''}
         </div>
         
-        <!-- Recipient field -->
-        <div class="form-group" style="margin-bottom: 20px;">
-          <label style="font-weight: 600; font-size: 13px; margin-bottom: 6px; display: block;">${i18n.t('schedule.emailAddressesLabel')}:</label>
-          <textarea id="emailAddresses" class="form-control" rows="2" placeholder="user1@company.com, user2@company.com" style="font-family: monospace; font-size: 13px; padding: 10px 12px;">${savedEmails}</textarea>
+        <!-- Step timeline -->
+        <div style="display: flex; flex-direction: column; gap: 0; text-align: left; margin: 0 auto; max-width: 300px;">
+          ${steps.map((s, idx) => `
+            <div id="emailStep${idx}" style="display: flex; align-items: center; gap: 12px; padding: 7px 0; opacity: 0.3; transition: opacity 0.4s ease, transform 0.3s ease; transform: translateX(-4px);">
+              <div style="width: 32px; height: 32px; border-radius: 10px; background: var(--border-color, #e9ecef); display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; transition: background 0.4s ease;" id="emailStepIcon${idx}">
+                ${s.icon}
+              </div>
+              <div style="font-size: 13px; font-weight: 500; color: var(--text-primary, #334155);">${s.label}</div>
+              <div id="emailStepCheck${idx}" style="margin-left: auto; font-size: 14px; opacity: 0; transition: opacity 0.3s ease; color: #10b981;">✓</div>
+            </div>
+          `).join('')}
         </div>
         
-        <!-- Action buttons -->
-        <div style="display: flex; flex-direction: column; gap: 10px;">
-          <button id="emailCopyGeneral" style="
-            display: flex; align-items: center; gap: 12px; padding: 14px 18px;
-            background: linear-gradient(135deg, #0097AC 0%, #007A8A 100%); color: white;
-            border: none; border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600;
-            transition: opacity 0.2s; text-align: left;
-          ">
-            <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.2); border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </div>
-            <div>
-              <div>${i18n.t('schedule.copyGeneralSchedule')}</div>
-              <div style="font-size: 11px; opacity: 0.8; font-weight: 400; margin-top: 2px;">${i18n.t('schedule.copyGeneralScheduleHint')}</div>
-            </div>
-          </button>
-          
-          <button id="emailOpenOutlook" style="
-            display: flex; align-items: center; gap: 12px; padding: 14px 18px;
-            background: var(--card-bg, #ffffff); color: var(--text-primary, #0f172a);
-            border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600;
-            transition: all 0.2s; text-align: left;
-          ">
-            <div style="width: 40px; height: 40px; background: #f1f5f9; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0097AC" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-            </div>
-            <div>
-              <div>${i18n.t('schedule.openInOutlook')}</div>
-              <div style="font-size: 11px; color: var(--text-secondary, #64748b); font-weight: 400; margin-top: 2px;">${i18n.t('schedule.openInOutlookHint')}</div>
-            </div>
-          </button>
-          
-          ${empWithEmail > 0 ? `
-          <button id="emailSendIndividual" style="
-            display: flex; align-items: center; gap: 12px; padding: 14px 18px;
-            background: var(--card-bg, #ffffff); color: var(--text-primary, #0f172a);
-            border: 1px solid var(--border-color, #e2e8f0); border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600;
-            transition: all 0.2s; text-align: left;
-          ">
-            <div style="width: 40px; height: 40px; background: #dcfce7; border-radius: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-              </svg>
-            </div>
-            <div>
-              <div>${i18n.t('schedule.sendToAllIndividual')} (${empWithEmail})</div>
-              <div style="font-size: 11px; color: var(--text-secondary, #64748b); font-weight: 400; margin-top: 2px;">${i18n.t('schedule.sendToAllIndividualHint')}</div>
-            </div>
-          </button>
-          ` : ''}
+        <!-- Paste reminder (hidden initially, shown before opening Outlook) -->
+        <div id="emailPasteReminder" style="margin-top: 16px; padding: 14px 20px; background: linear-gradient(135deg, #ecfdf5, #d1fae5); border: 1px solid #a7f3d0; border-radius: 12px; opacity: 0; transform: translateY(8px); transition: opacity 0.5s ease, transform 0.5s ease;">
+          <div style="font-size: 13px; font-weight: 700; color: #065f46;">📋 ${i18n.t('schedule.pasteReminderTitle')}</div>
+          <div style="font-size: 11px; color: #047857; margin-top: 4px;">${i18n.t('schedule.pasteReminderDesc')}</div>
         </div>
+        
+        <!-- Progress bar -->
+        <div style="margin-top: 16px; height: 4px; border-radius: 4px; background: var(--border-color, #e2e8f0); overflow: hidden;">
+          <div style="height: 100%; width: 0%; background: linear-gradient(90deg, #0097AC, #007A8A); border-radius: 4px; transition: width 0.8s ease;" id="emailPrepBar"></div>
+        </div>
+        <p id="emailPrepCountdown" style="margin: 8px 0 0; font-size: 11px; color: var(--text-secondary, #94a3b8);">
+          ${i18n.t('schedule.openingOutlookIn')} <span id="emailCountdownNum">7</span>s...
+        </p>
       </div>
     `;
     
-    // Save emails on blur
-    document.getElementById('emailAddresses')?.addEventListener('blur', async (e) => {
-      await db.setPreference('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
-    });
+    document.body.appendChild(overlay);
     
-    // Copy general schedule HTML to clipboard
-    document.getElementById('emailCopyGeneral')?.addEventListener('click', async () => {
-      const html = this.generateCorporateEmailHtml(weekKey, 'general');
+    // Staged animation sequence (total ~4s)
+    const activateStep = (idx: number) => {
+      const step = document.getElementById(`emailStep${idx}`);
+      const icon = document.getElementById(`emailStepIcon${idx}`);
+      if (step) { step.style.opacity = '1'; step.style.transform = 'translateX(0)'; }
+      if (icon) icon.style.background = 'linear-gradient(135deg, #e0f7fa, #b2ebf2)';
+    };
+    
+    const completeStep = (idx: number) => {
+      const check = document.getElementById(`emailStepCheck${idx}`);
+      const icon = document.getElementById(`emailStepIcon${idx}`);
+      if (check) check.style.opacity = '1';
+      if (icon) icon.style.background = 'linear-gradient(135deg, #d1fae5, #a7f3d0)';
+    };
+    
+    // Countdown (7 seconds total)
+    const countdownEl = document.getElementById('emailCountdownNum');
+    let countdown = 7;
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      if (countdownEl && countdown > 0) countdownEl.textContent = String(countdown);
+    }, 1000);
+    
+    // Step 1: Generating schedule (0ms)
+    const bar = document.getElementById('emailPrepBar');
+    activateStep(0);
+    if (bar) bar.style.width = '10%';
+    
+    // Copy HTML to clipboard (happens immediately in background)
+    const html = this.generateCorporateEmailHtml(weekKey, 'full', undefined, hasChanges);
+    const subject = `📅 ${hasChanges ? '🔄 ' : ''}Grafik KW${weekNum} ${this.scheduleCurrentYear} | DRÄXLMAIER Kappa`;
+    
+    let clipboardOk = false;
+    try {
+      const htmlBlob = new Blob([html], { type: 'text/html' });
+      const textBlob = new Blob([this.generatePlainTextSchedule(weekKey, 'general')], { type: 'text/plain' });
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': htmlBlob,
+        'text/plain': textBlob
+      })]);
+      clipboardOk = true;
+    } catch {
       try {
-        const blob = new Blob([html], { type: 'text/html' });
-        await navigator.clipboard.write([new ClipboardItem({ 'text/html': blob })]);
-        this.showToast(i18n.t('schedule.copiedToClipboard'), 'success', 'click');
-      } catch {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = html;
-        await navigator.clipboard.writeText(tempDiv.textContent || '');
-        this.showToast(i18n.t('schedule.copiedAsText'), 'warning');
-      }
-      this.hideModal();
-    });
+        tempDiv.style.position = 'fixed';
+        tempDiv.style.left = '-9999px';
+        document.body.appendChild(tempDiv);
+        const range = document.createRange();
+        range.selectNodeContents(tempDiv);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        document.execCommand('copy');
+        sel?.removeAllRanges();
+        document.body.removeChild(tempDiv);
+        clipboardOk = true;
+      } catch { /* ignore */ }
+    }
     
-    // Open in Outlook
-    document.getElementById('emailOpenOutlook')?.addEventListener('click', async () => {
-      const emails = (document.getElementById('emailAddresses') as HTMLTextAreaElement).value
-        .split(/[,;\n]/).map(e => e.trim()).filter(e => e);
+    // Step 1 complete (after 1.2s)
+    setTimeout(() => {
+      completeStep(0);
+      if (bar) bar.style.width = '25%';
+      activateStep(1);
+    }, 1200);
+    
+    // Step 2 complete (after 2.5s)
+    setTimeout(() => {
+      completeStep(1);
+      if (bar) bar.style.width = '50%';
+      activateStep(2);
+    }, 2500);
+    
+    // Step 3 complete (after 3.8s)
+    setTimeout(() => {
+      completeStep(2);
+      if (bar) bar.style.width = '70%';
+      activateStep(3);
+    }, 3800);
+    
+    // Step 4 complete + show paste reminder (after 5s)
+    setTimeout(() => {
+      completeStep(3);
+      if (bar) bar.style.width = '90%';
       
-      if (emails.length === 0) {
-        this.showToast(i18n.t('schedule.enterEmailAddress'), 'warning');
-        return;
+      // Show the paste reminder panel
+      const reminder = document.getElementById('emailPasteReminder');
+      if (reminder) {
+        reminder.style.opacity = '1';
+        reminder.style.transform = 'translateY(0)';
       }
-      await db.setPreference('kappa_email_addresses', emails.join(', '));
+    }, 5000);
+    
+    // Fill bar + final pause (after 6.2s)
+    setTimeout(() => {
+      if (bar) bar.style.width = '100%';
+    }, 6200);
+    
+    // Actually open mailto & transition (7.2s)
+    setTimeout(async () => {
+      clearInterval(countdownInterval);
       
-      const subject = `📅 Grafik tygodniowy ${this.scheduleCurrentYear}-KW${weekNum} | DRÄXLMAIER Kappa`;
-      const body = this.generatePlainTextSchedule(weekKey, 'general');
-      this.openOutlookEmail(emails.join('; '), subject, body);
-      this.hideModal();
-    });
-    
-    // Send individual emails
-    document.getElementById('emailSendIndividual')?.addEventListener('click', async () => {
-      let count = 0;
-      byEmployee.forEach(({ emp }) => {
-        if (emp.email) {
-          const subject = `📅 Twój grafik ${this.scheduleCurrentYear}-KW${weekNum} – ${emp.firstName} ${emp.lastName} | DRÄXLMAIER Kappa`;
-          const body = this.generatePlainTextSchedule(weekKey, 'employee', emp.id);
-          this.openOutlookEmail(emp.email, subject, body);
-          count++;
-        }
-      });
-      if (count > 0) {
-        this.showToast(i18n.t('schedule.outlookOpened').replace('{0}', String(count)), 'success', 'notification');
+      // Open mailto
+      const mailtoUrl = `mailto:${encodeURIComponent(recipientEmails.join('; '))}?subject=${encodeURIComponent(subject)}`;
+      window.open(mailtoUrl, '_blank');
+      
+      // Mark as sent
+      await db.setPreference(`kappa_email_sent_${weekKey}`, { timestamp: Date.now(), hash: currentHash });
+      this.updateEmailUpdateBadge();
+      
+      // Remove preparing modal
+      overlay.remove();
+      
+      // Show paste instruction overlay
+      if (clipboardOk) {
+        this.showPasteInstructionOverlay();
       }
-      this.hideModal();
+    }, 7200);
+  }
+
+  /**
+   * Show a prominent overlay instructing the user to paste with Ctrl+V in Outlook
+   */
+  private showPasteInstructionOverlay(): void {
+    const autoCloseSeconds = 12;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 99999;
+      background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center;
+      animation: fadeIn 0.2s ease;
+    `;
+    overlay.innerHTML = `
+      <div style="
+        background: white; border-radius: 24px; padding: 44px 52px; text-align: center;
+        box-shadow: 0 25px 60px rgba(0,0,0,0.3); max-width: 460px; animation: scaleIn 0.3s ease;
+      ">
+        <div style="font-size: 60px; margin-bottom: 12px;">\uD83D\uDCCB</div>
+        <h2 style="margin: 0 0 8px; font-size: 22px; color: #1a1a2e; font-family: Arial, sans-serif;">
+          ${i18n.t('schedule.pasteInstructionTitle')}
+        </h2>
+        <p style="margin: 0 0 6px; color: #64748b; font-size: 14px; line-height: 1.6; font-family: Arial, sans-serif;">
+          ${i18n.t('schedule.pasteInstructionDesc')}
+        </p>
+        
+        <!-- Step-by-step instructions -->
+        <div style="text-align: left; margin: 16px auto 20px; max-width: 320px;">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #e0f2fe; color: #0284c7; font-size: 12px; font-weight: 700; flex-shrink: 0;">1</span>
+            <span style="font-size: 13px; color: #334155; font-family: Arial, sans-serif;">${i18n.t('schedule.pasteStep1')}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #e0f2fe; color: #0284c7; font-size: 12px; font-weight: 700; flex-shrink: 0;">2</span>
+            <span style="font-size: 13px; color: #334155; font-family: Arial, sans-serif;">${i18n.t('schedule.pasteStep2')}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #dcfce7; color: #16a34a; font-size: 12px; font-weight: 700; flex-shrink: 0;">3</span>
+            <span style="font-size: 13px; color: #334155; font-family: Arial, sans-serif;">${i18n.t('schedule.pasteStep3')}</span>
+          </div>
+        </div>
+        
+        <div style="
+          display: inline-flex; align-items: center; gap: 10px;
+          background: linear-gradient(135deg, #0097AC, #007A8A); color: white;
+          padding: 16px 36px; border-radius: 14px; font-size: 22px; font-weight: 700;
+          letter-spacing: 1px; box-shadow: 0 4px 15px rgba(0,151,172,0.4);
+          animation: pulse 2s infinite;
+        ">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <rect x="2" y="2" width="8" height="8" rx="1"/><path d="M14 2h4a2 2 0 012 2v4"/><path d="M20 14v4a2 2 0 01-2 2h-4"/><rect x="14" y="14" width="8" height="8" rx="1"/>
+          </svg>
+          Ctrl + V
+        </div>
+        
+        <p style="margin: 14px 0 0; color: #94a3b8; font-size: 11px; font-family: Arial, sans-serif;">
+          ${i18n.t('schedule.pasteInstructionHint')}
+        </p>
+        
+        <!-- Countdown timer bar -->
+        <div style="margin-top: 18px;">
+          <div style="height: 3px; border-radius: 3px; background: #e2e8f0; overflow: hidden;">
+            <div id="pasteTimerBar" style="height: 100%; width: 100%; background: linear-gradient(90deg, #0097AC, #007A8A); border-radius: 3px; transition: width ${autoCloseSeconds}s linear;"></div>
+          </div>
+          <div style="font-size: 10px; color: #cbd5e1; margin-top: 6px; font-family: Arial, sans-serif;">
+            ${i18n.t('schedule.autoCloseIn')} <span id="pasteCountdownNum">${autoCloseSeconds}</span>s
+          </div>
+        </div>
+        
+        <button style="
+          margin-top: 14px; padding: 10px 30px; border: none; border-radius: 8px;
+          background: #f1f5f9; color: #64748b; font-size: 13px; cursor: pointer;
+          transition: all 0.2s; font-family: Arial, sans-serif;
+        " onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">
+          ${i18n.t('common.close')}
+        </button>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Start countdown bar animation
+    requestAnimationFrame(() => {
+      const bar = document.getElementById('pasteTimerBar');
+      if (bar) bar.style.width = '0%';
     });
     
-    // Hide default confirm button
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    confirmBtn.style.display = 'none';
+    // Countdown number
+    let remaining = autoCloseSeconds;
+    const countdownEl = document.getElementById('pasteCountdownNum');
+    const countdownInterval = setInterval(() => {
+      remaining--;
+      if (countdownEl && remaining >= 0) countdownEl.textContent = String(remaining);
+      if (remaining <= 0) clearInterval(countdownInterval);
+    }, 1000);
     
-    modal.classList.add('active');
+    // Close on button click or overlay click
+    const closeOverlay = () => {
+      clearInterval(countdownInterval);
+      overlay.remove();
+    };
+    overlay.querySelector('button')?.addEventListener('click', closeOverlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeOverlay();
+    });
+    
+    // Auto-close
+    setTimeout(closeOverlay, autoCloseSeconds * 1000);
   }
   
   // ==================== CORPORATE HTML EMAIL GENERATOR ====================
   
-  private generateCorporateEmailHtml(weekKey: string, mode: 'general' | 'employee', employeeId?: string): string {
+  private generateCorporateEmailHtml(weekKey: string, mode: 'general' | 'employee' | 'full', employeeId?: string, isUpdate: boolean = false): string {
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const weekNum = weekKey.split('KW')[1];
     const year = weekKey.split('-KW')[0];
+    const weekDates = this.getWeekDateRange(parseInt(year), parseInt(weekNum));
     const dateStr = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
     
     // Corporate color palette
-    const colors = {
-      black: '#000000',
+    const c = {
+      black: '#1a1a2e',
       teal: '#0097AC',
       tealDark: '#007A8A',
       tealLight: '#E6F7F9',
+      tealBg: '#f0fafb',
       gray50: '#f8fafc',
       gray100: '#f1f5f9',
       gray200: '#e2e8f0',
@@ -16156,53 +16467,63 @@ class KappaApp {
       gray900: '#0f172a',
       white: '#ffffff',
       green: '#10b981',
+      greenBg: '#ecfdf5',
       orange: '#f59e0b',
+      orangeBg: '#fffbeb',
+      orangeBorder: '#fde68a',
       red: '#ef4444',
+      purple: '#8b5cf6',
+      purpleBg: '#f5f3ff',
+      purpleBorder: '#ddd6fe',
+      blue: '#3b82f6',
+      blueBg: '#eff6ff',
     };
     
-    const shiftNames = ['Zmiana 1 (6:00-14:00)', 'Zmiana 2 (14:00-22:00)', 'Zmiana 3 (22:00-6:00)'];
+    const shiftNames = [
+      `${i18n.t('schedule.shift')} 1 – ${i18n.t('schedule.shiftMorning') || 'Poranek'} (6:00–14:00)`,
+      `${i18n.t('schedule.shift')} 2 – ${i18n.t('schedule.shiftAfternoon') || 'Popołudnie'} (14:00–22:00)`,
+      `${i18n.t('schedule.shift')} 3 – ${i18n.t('schedule.shiftNight') || 'Noc'} (22:00–6:00)`
+    ];
+    const shiftShortNames = [`${i18n.t('schedule.shift')} 1`, `${i18n.t('schedule.shift')} 2`, `${i18n.t('schedule.shift')} 3`];
+    const shiftSubNames = ['6:00–14:00', '14:00–22:00', '22:00–6:00'];
     const shiftColors = ['#f59e0b', '#f97316', '#6366f1'];
-    const shiftBgs = ['#fffbeb', '#fff7ed', '#eef2ff'];
-    const shiftIcons = ['☀️', '🌅', '🌙'];
+    const shiftBgs = ['#fffbeb', '#fff7ed', '#f5f3ff'];
+    const shiftHeaderBgs = ['#fef3c7', '#ffedd5', '#ede9fe'];
+    const shiftIcons = ['☀️', '🔥', '🌙'];
     
-    // Build general schedule data
-    const byProject = new Map<string, { customer: string; type: string; test: string; shifts: Map<number, Array<{name: string; scope: string; color: string}>> }>();
+    // Build general schedule data grouped by project
+    const byProject = new Map<string, { customer: string; type: string; customerColor: string; shifts: Map<number, Array<{name: string; scope: string; color: string; firstName: string}>> }>();
     
     weekAssignments.forEach((a: ScheduleAssignment) => {
       const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
       const emp = this.state.employees.find(e => e.id === a.employeeId);
       if (project && emp) {
-        const customer = this.state.customers.find(c => c.id === project.customer_id);
+        const customer = this.state.customers.find(cu => cu.id === project.customer_id);
         const ptype = this.state.types.find(t => t.id === project.type_id);
-        const test = this.state.tests.find(t => t.id === project.test_id);
-        const key = `${customer?.name || '?'}|||${ptype?.name || '?'}|||${test?.name || ''}`;
+        const groupKey = `${project.customer_id}-${project.type_id}`;
         
-        if (!byProject.has(key)) {
-          byProject.set(key, { 
+        if (!byProject.has(groupKey)) {
+          byProject.set(groupKey, { 
             customer: customer?.name || '?', 
-            type: ptype?.name || '?', 
-            test: test?.name || '',
+            type: ptype?.name || '?',
+            customerColor: (customer as any)?.color || c.teal,
             shifts: new Map() 
           });
         }
-        const data = byProject.get(key)!;
+        const data = byProject.get(groupKey)!;
         if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
         
         let scopeTag = '';
-        if (a.scope === 'audit') scopeTag = 'Audit';
-        else if (a.scope === 'adhesion') scopeTag = 'Adhesion';
+        if (a.scope === 'audit') scopeTag = '🔍 Audit';
+        else if (a.scope === 'adhesion') scopeTag = '🔧 Messlehre';
         else if (a.scope === 'specific' && a.testId) {
           const t = this.state.tests.find(t => t.id === a.testId);
-          scopeTag = t?.name || '';
+          scopeTag = `⚙️ ${t?.name || 'Test'}`;
         }
         
-        data.shifts.get(a.shift)!.push({ name: `${emp.firstName} ${emp.lastName}`, scope: scopeTag, color: emp.color });
+        data.shifts.get(a.shift)!.push({ name: `${emp.firstName} ${emp.lastName}`, firstName: emp.firstName, scope: scopeTag, color: emp.color });
       }
     });
-    
-    // Build employee-specific data
-    const targetEmp = employeeId ? this.state.employees.find(e => e.id === employeeId) : null;
-    const empAssignments = employeeId ? weekAssignments.filter(a => a.employeeId === employeeId) : [];
     
     // Build per-employee grouping
     const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
@@ -16216,47 +16537,128 @@ class KappaApp {
       }
     });
     
+    const activeShifts = [1, 2, 3].filter(s => s <= this.scheduleShiftSystem);
+    const colWidth = Math.floor(70 / activeShifts.length);
+    
     // ============ HEADER ============
     const headerHtml = `
       <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+        <!-- Thin teal accent bar at very top -->
         <tr>
-          <td style="background: ${colors.black}; padding: 24px 32px;">
+          <td bgcolor="${c.teal}" style="background-color: ${c.teal}; height: 4px; font-size: 0; line-height: 0;">&nbsp;</td>
+        </tr>
+        <!-- Clean white header -->
+        <tr>
+          <td style="padding: 28px 32px 20px; border-bottom: 1px solid ${c.gray200};">
             <table width="100%" cellpadding="0" cellspacing="0" border="0">
               <tr>
                 <td>
-                  <span style="font-size: 22px; font-weight: 800; color: ${colors.white}; letter-spacing: 2px; font-family: Arial, sans-serif;">DRÄXLMAIER</span>
-                  <span style="font-size: 14px; color: ${colors.gray300}; font-family: Arial, sans-serif; display: block; margin-top: 2px;">Group</span>
+                  <span style="font-size: 18px; font-weight: 800; color: ${c.gray900}; letter-spacing: 2px; font-family: Arial, sans-serif;">DRÄXLMAIER</span>
+                  <span style="font-size: 11px; color: ${c.gray300}; font-family: Arial, sans-serif; display: inline; margin-left: 6px; letter-spacing: 1px; font-weight: 400;">GROUP</span>
                 </td>
                 <td style="text-align: right;">
-                  <span style="font-size: 12px; color: ${colors.gray300}; font-family: Arial, sans-serif;">Kappa Planning System</span>
-                  <span style="font-size: 11px; color: ${colors.gray500}; font-family: Arial, sans-serif; display: block; margin-top: 2px;">${dateStr}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px;">Kappa Planning</span>
                 </td>
               </tr>
             </table>
           </td>
         </tr>
+        <!-- Week info section -->
         <tr>
-          <td style="background: ${colors.teal}; padding: 20px 32px;">
-            <span style="font-size: 20px; font-weight: 700; color: ${colors.white}; font-family: Arial, sans-serif;">
-              📅 ${mode === 'employee' && targetEmp ? `Grafik dla: ${targetEmp.firstName} ${targetEmp.lastName}` : `Grafik Tygodniowy`}
-            </span>
-            <span style="display: block; font-size: 28px; font-weight: 800; color: ${colors.white}; font-family: Arial, sans-serif; margin-top: 4px;">
-              ${year} – KW${weekNum}
-            </span>
+          <td style="padding: 24px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td>
+                  ${isUpdate ? `<span style="display: inline-block; background-color: ${c.orangeBg}; color: ${c.orange}; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 4px; border: 1px solid ${c.orangeBorder}; margin-bottom: 10px; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 0.5px;">AKTUALIZACJA</span><br>` : ''}
+                  <span style="font-size: 11px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;">
+                    ${mode === 'employee' ? i18n.t('schedule.yourAssignments') : i18n.t('schedule.scheduleOverview')}
+                  </span>
+                  <span style="display: block; font-size: 32px; font-weight: 800; color: ${c.gray900}; font-family: Arial, sans-serif; margin-top: 4px; letter-spacing: -0.5px;">
+                    KW${weekNum}
+                  </span>
+                  <span style="display: block; font-size: 14px; color: ${c.gray500}; font-family: Arial, sans-serif; margin-top: 4px;">
+                    ${weekDates.start.slice(0, 5)} – ${weekDates.end.slice(0, 5)}, ${year}
+                  </span>
+                </td>
+                <td style="text-align: right; vertical-align: bottom;">
+                  <span style="font-size: 11px; color: ${c.gray300}; font-family: Arial, sans-serif;">${dateStr}</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Thin separator -->
+        <tr>
+          <td style="padding: 0 32px;">
+            <div style="height: 1px; background-color: ${c.gray200};"></div>
           </td>
         </tr>
       </table>
     `;
     
-    // ============ PERSONAL SECTION (for employee mode) ============
+    // ============ SUMMARY STATS ============
+    const totalAssignments = weekAssignments.length;
+    const totalEmployees = new Set(weekAssignments.map(a => a.employeeId)).size;
+    const totalProjects = byProject.size;
+    const shift1Count = weekAssignments.filter(a => a.shift === 1).length;
+    const shift2Count = weekAssignments.filter(a => a.shift === 2).length;
+    const shift3Count = weekAssignments.filter(a => a.shift === 3).length;
+    
+    const summaryHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 20px 0 24px;">
+        <tr>
+          <td>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td width="33%" style="text-align: center; padding: 16px 8px;">
+                  <span style="font-size: 28px; font-weight: 800; color: ${c.teal}; font-family: Arial, sans-serif; display: block; line-height: 1;">${totalEmployees}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; display: block;">${i18n.t('schedule.employees')}</span>
+                </td>
+                <td width="1" style="background-color: ${c.gray200}; width: 1px; padding: 0;"></td>
+                <td width="33%" style="text-align: center; padding: 16px 8px;">
+                  <span style="font-size: 28px; font-weight: 800; color: ${c.teal}; font-family: Arial, sans-serif; display: block; line-height: 1;">${totalProjects}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; display: block;">${i18n.t('analytics.export.projects')}</span>
+                </td>
+                <td width="1" style="background-color: ${c.gray200}; width: 1px; padding: 0;"></td>
+                <td width="33%" style="text-align: center; padding: 16px 8px;">
+                  <span style="font-size: 28px; font-weight: 800; color: ${c.teal}; font-family: Arial, sans-serif; display: block; line-height: 1;">${totalAssignments}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; display: block;">${i18n.t('analytics.export.assignments')}</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        ${activeShifts.length > 1 ? `
+        <tr>
+          <td style="padding-top: 12px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                ${activeShifts.map(s => {
+                  const count = [shift1Count, shift2Count, shift3Count][s-1];
+                  return `
+                    <td width="${Math.floor(100/activeShifts.length)}%" style="text-align: center; padding: 8px 4px;">
+                      <span style="display: inline-block; font-size: 11px; font-weight: 600; color: ${c.gray700}; padding: 5px 14px; border-radius: 20px; border: 1px solid ${c.gray200}; background-color: ${c.gray50}; font-family: Arial, sans-serif;">${shiftShortNames[s-1]} &middot; ${count}</span>
+                    </td>
+                  `;
+                }).join('')}
+              </tr>
+            </table>
+          </td>
+        </tr>
+        ` : ''}
+      </table>
+    `;
+    
+    // ============ EMPLOYEE PERSONAL SECTION (for single employee mode) ============
+    const targetEmp = employeeId ? this.state.employees.find(e => e.id === employeeId) : null;
+    const empAssignments = employeeId ? weekAssignments.filter(a => a.employeeId === employeeId) : [];
+    
     let personalSectionHtml = '';
     if (mode === 'employee' && targetEmp && empAssignments.length > 0) {
-      const empShift = empAssignments[0]?.shift || 1;
-      
       personalSectionHtml = `
         <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 24px;">
           <tr>
-            <td style="background: ${colors.tealLight}; border: 2px solid ${colors.teal}; border-radius: 8px; padding: 20px 24px;">
+            <td style="background: ${c.tealBg}; border: 2px solid ${c.teal}; border-radius: 12px; padding: 20px 24px;">
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                   <td width="56" valign="top">
@@ -16264,27 +16666,26 @@ class KappaApp {
                       ${targetEmp.firstName.charAt(0)}${targetEmp.lastName.charAt(0)}
                     </div>
                   </td>
-                  <td style="padding-left: 12px;">
-                    <span style="font-size: 18px; font-weight: 700; color: ${colors.gray900}; font-family: Arial, sans-serif; display: block;">
+                  <td style="padding-left: 14px;">
+                    <span style="font-size: 20px; font-weight: 700; color: ${c.gray900}; font-family: Arial, sans-serif; display: block;">
                       ${targetEmp.firstName} ${targetEmp.lastName}
                     </span>
-                    <span style="font-size: 13px; color: ${colors.gray500}; font-family: Arial, sans-serif; display: block; margin-top: 4px;">
-                      ${shiftIcons[empShift - 1]} ${shiftNames[empShift - 1]} &nbsp;|&nbsp; ${empAssignments.length} ${empAssignments.length === 1 ? 'projekt' : 'projektów'}
+                    <span style="font-size: 13px; color: ${c.gray500}; font-family: Arial, sans-serif; display: block; margin-top: 4px;">
+                      ${empAssignments.length} ${empAssignments.length === 1 ? 'zadanie' : empAssignments.length < 5 ? 'zadania' : 'zadań'} w tym tygodniu
                     </span>
                   </td>
                 </tr>
               </table>
               
-              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px;">
-                ${empAssignments.map((a: ScheduleAssignment) => {
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px; border-collapse: collapse;">
+                ${empAssignments.map((a: ScheduleAssignment, aIdx: number) => {
                   const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-                  const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+                  const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
                   const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
-                  const test = project ? this.state.tests.find(t => t.id === project.test_id) : null;
                   
                   let scopeTag = '';
                   if (a.scope === 'audit') scopeTag = '🔍 Audit';
-                  else if (a.scope === 'adhesion') scopeTag = '🔧 Adhesion';
+                  else if (a.scope === 'adhesion') scopeTag = '🔧 Messlehre';
                   else if (a.scope === 'specific' && a.testId) {
                     const t = this.state.tests.find(t => t.id === a.testId);
                     scopeTag = `⚙️ ${t?.name || 'Test'}`;
@@ -16292,19 +16693,22 @@ class KappaApp {
                   
                   return `
                     <tr>
-                      <td style="padding: 8px 0; border-bottom: 1px solid ${colors.gray200};">
+                      <td style="padding: 10px 12px; background: ${c.white}; border-bottom: 1px solid ${c.gray200}; ${aIdx === 0 ? 'border-radius: 8px 8px 0 0;' : ''} ${aIdx === empAssignments.length - 1 ? 'border-radius: 0 0 8px 8px; border-bottom: none;' : ''}">
                         <table width="100%" cellpadding="0" cellspacing="0" border="0">
                           <tr>
-                            <td>
-                              <span style="font-size: 15px; font-weight: 600; color: ${colors.gray900}; font-family: Arial, sans-serif;">
+                            <td width="4" style="background: ${shiftColors[a.shift - 1]}; border-radius: 4px;"></td>
+                            <td style="padding-left: 12px;">
+                              <span style="font-size: 14px; font-weight: 600; color: ${c.gray900}; font-family: Arial, sans-serif;">
                                 ${customer?.name || '?'} – ${ptype?.name || '?'}
                               </span>
-                              ${test ? `<span style="display: inline-block; font-size: 11px; background: ${colors.teal}; color: white; padding: 2px 8px; border-radius: 10px; margin-left: 8px; font-family: Arial, sans-serif;">${test.name}</span>` : ''}
-                              ${scopeTag ? `<span style="display: block; font-size: 12px; color: ${colors.gray500}; margin-top: 2px; font-family: Arial, sans-serif;">${scopeTag}</span>` : ''}
+                              ${scopeTag ? `<span style="display: block; font-size: 12px; color: ${c.gray500}; margin-top: 2px; font-family: Arial, sans-serif;">${scopeTag}</span>` : ''}
                             </td>
-                            <td style="text-align: right; white-space: nowrap;">
-                              <span style="display: inline-block; font-size: 12px; font-weight: 600; background: ${shiftBgs[a.shift - 1]}; color: ${shiftColors[a.shift - 1]}; padding: 4px 12px; border-radius: 12px; border: 1px solid ${shiftColors[a.shift - 1]}30; font-family: Arial, sans-serif;">
-                                ${shiftIcons[a.shift - 1]} Z${a.shift}
+                            <td style="text-align: right; white-space: nowrap; vertical-align: middle;">
+                              <span style="display: inline-block; font-size: 12px; font-weight: 600; background: ${shiftBgs[a.shift - 1]}; color: ${shiftColors[a.shift - 1]}; padding: 5px 14px; border-radius: 14px; font-family: Arial, sans-serif;">
+                                ${shiftIcons[a.shift - 1]} ${shiftShortNames[a.shift - 1]}
+                              </span>
+                              <span style="display: block; font-size: 10px; color: ${c.gray500}; margin-top: 2px; text-align: center; font-family: Arial, sans-serif;">
+                                ${shiftSubNames[a.shift - 1]}
                               </span>
                             </td>
                           </tr>
@@ -16320,64 +16724,62 @@ class KappaApp {
       `;
     }
     
-    // ============ GENERAL SCHEDULE TABLE ============
+    // ============ GENERAL SCHEDULE TABLE (like the app grid) ============
     const sortedProjects = Array.from(byProject.entries()).sort((a, b) => a[1].customer.localeCompare(b[1].customer));
     
     let scheduleTableHtml = '';
     if (sortedProjects.length > 0) {
-      const sectionTitle = mode === 'employee' ? 'Grafik ogólny – wszystkie projekty' : 'Przegląd grafiku';
-      
       scheduleTableHtml = `
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 8px;">
           <tr>
-            <td style="padding-bottom: 12px;">
-              <span style="font-size: 16px; font-weight: 700; color: ${colors.gray900}; font-family: Arial, sans-serif; border-bottom: 3px solid ${colors.teal}; padding-bottom: 4px;">
-                ${sectionTitle}
+            <td style="padding-bottom: 14px;">
+              <span style="font-size: 11px; font-weight: 700; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1.5px;">
+                ${i18n.t('schedule.scheduleOverview')}
               </span>
             </td>
           </tr>
         </table>
         
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; border: 1px solid ${colors.gray200}; border-radius: 8px; overflow: hidden; margin-bottom: 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; border: 1px solid ${c.gray200}; margin-bottom: 28px;">
           <thead>
             <tr>
-              <th style="background: ${colors.gray900}; color: ${colors.white}; padding: 12px 16px; text-align: left; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-family: Arial, sans-serif; width: 30%;">
-                Projekt
+              <th style="background-color: ${c.gray50}; color: ${c.gray500}; padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; font-family: Arial, sans-serif; border-bottom: 2px solid ${c.gray200}; width: 30%;">
+                ${i18n.t('schedule.project')}
               </th>
-              ${[1, 2, 3].filter(s => s <= this.scheduleShiftSystem).map(s => `
-                <th style="background: ${colors.gray900}; color: ${colors.white}; padding: 12px 16px; text-align: center; font-size: 12px; font-weight: 600; font-family: Arial, sans-serif;">
-                  ${shiftIcons[s-1]} Zmiana ${s}
+              ${activeShifts.map(s => `
+                <th style="background-color: ${c.gray50}; padding: 10px 8px; text-align: center; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-family: Arial, sans-serif; border-bottom: 2px solid ${c.gray200}; border-left: 1px solid ${c.gray200}; width: ${colWidth}%; color: ${c.gray500};">
+                  <span style="font-size: 12px; font-weight: 700; color: ${c.gray700}; display: block;">${shiftShortNames[s-1]}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-weight: 400;">${shiftSubNames[s-1]}</span>
                 </th>
               `).join('')}
             </tr>
           </thead>
           <tbody>
             ${sortedProjects.map(([_, data], idx) => {
-              const rowBg = idx % 2 === 0 ? colors.white : colors.gray50;
+              const rowBg = idx % 2 === 0 ? c.white : c.gray50;
               
               return `
                 <tr>
-                  <td style="background: ${rowBg}; padding: 12px 16px; border-bottom: 1px solid ${colors.gray200}; vertical-align: top;">
-                    <span style="font-size: 14px; font-weight: 600; color: ${colors.gray900}; font-family: Arial, sans-serif; display: block;">
+                  <td style="background-color: ${rowBg}; padding: 12px 14px; border-bottom: 1px solid ${c.gray200}; vertical-align: middle; border-left: 3px solid ${c.teal};">
+                    <span style="font-size: 13px; font-weight: 700; color: ${c.gray900}; font-family: Arial, sans-serif; display: block;">
                       ${data.customer}
                     </span>
-                    <span style="font-size: 12px; color: ${colors.gray500}; font-family: Arial, sans-serif; display: block; margin-top: 2px;">
+                    <span style="font-size: 11px; color: ${c.gray500}; font-family: Arial, sans-serif; display: block; margin-top: 2px;">
                       ${data.type}
                     </span>
-                    ${data.test ? `<span style="display: inline-block; font-size: 10px; background: ${colors.teal}; color: white; padding: 1px 8px; border-radius: 8px; margin-top: 4px; font-family: Arial, sans-serif;">${data.test}</span>` : ''}
                   </td>
-                  ${[1, 2, 3].filter(s => s <= this.scheduleShiftSystem).map(s => {
+                  ${activeShifts.map(s => {
                     const emps = data.shifts.get(s) || [];
                     return `
-                      <td style="background: ${rowBg}; padding: 8px 12px; border-bottom: 1px solid ${colors.gray200}; border-left: 1px solid ${colors.gray200}; text-align: center; vertical-align: top;">
+                      <td style="background-color: ${rowBg}; padding: 8px 10px; border-bottom: 1px solid ${c.gray200}; border-left: 1px solid ${c.gray200}; text-align: center; vertical-align: middle;">
                         ${emps.length > 0 ? emps.map(e => `
-                          <div style="display: inline-block; margin: 2px;">
-                            <span style="display: inline-block; background: ${e.color}; color: white; padding: 4px 12px; border-radius: 14px; font-size: 12px; font-weight: 500; font-family: Arial, sans-serif; white-space: nowrap;">
-                              ${e.name}
+                          <div style="margin: 2px 0;">
+                            <span style="font-size: 12px; font-weight: 600; color: ${c.gray900}; font-family: Arial, sans-serif;">
+                              ${e.firstName}
                             </span>
-                            ${e.scope ? `<span style="display: block; font-size: 10px; color: ${colors.gray500}; margin-top: 1px; font-family: Arial, sans-serif;">${e.scope}</span>` : ''}
+                            ${e.scope ? `<span style="font-size: 10px; color: ${c.gray500}; display: block; font-family: Arial, sans-serif;">${e.scope}</span>` : ''}
                           </div>
-                        `).join('') : `<span style="color: ${colors.gray300}; font-size: 12px; font-family: Arial, sans-serif;">—</span>`}
+                        `).join('') : `<span style="color: ${c.gray300}; font-size: 12px;">—</span>`}
                       </td>
                     `;
                   }).join('')}
@@ -16389,103 +16791,128 @@ class KappaApp {
       `;
     }
     
-    // ============ EMPLOYEE DETAIL TABLE (for employee mode, showing per employee) ============
+    // ============ INDIVIDUAL EMPLOYEE SCHEDULES (for 'full' mode) ============
     let employeeDetailHtml = '';
-    if (mode === 'employee' && byEmployee.size > 0) {
+    if ((mode === 'full' || mode === 'general') && byEmployee.size > 0) {
+      const employeeSections = Array.from(byEmployee.entries()).map(([_eId, data]: [string, { emp: Employee; assignments: ScheduleAssignment[] }]) => {
+        const { emp, assignments } = data;
+        
+        // Group assignments by shift
+        const byShift = new Map<number, ScheduleAssignment[]>();
+        assignments.forEach(a => {
+          if (!byShift.has(a.shift)) byShift.set(a.shift, []);
+          byShift.get(a.shift)!.push(a);
+        });
+        
+        return `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 14px; border: 1px solid ${c.gray200};">
+            <!-- Employee header -->
+            <tr>
+              <td colspan="2" style="background-color: ${c.white}; padding: 10px 16px; border-bottom: 1px solid ${c.gray200};">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td width="36" valign="middle">
+                      <div style="width: 32px; height: 32px; border-radius: 50%; background-color: ${c.teal}; color: white; font-size: 12px; font-weight: 700; text-align: center; line-height: 32px; font-family: Arial, sans-serif;">
+                        ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+                      </div>
+                    </td>
+                    <td style="padding-left: 10px;">
+                      <span style="font-size: 14px; font-weight: 700; color: ${c.gray900}; font-family: Arial, sans-serif;">
+                        ${emp.firstName} ${emp.lastName}
+                      </span>
+                    </td>
+                    <td style="text-align: right;">
+                      <span style="font-size: 11px; color: ${c.gray500}; font-family: Arial, sans-serif;">
+                        ${assignments.length} ${assignments.length === 1 ? 'task' : 'tasks'}
+                      </span>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <!-- Tasks -->
+            ${assignments.map((a: ScheduleAssignment, aIdx: number) => {
+              const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+              const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
+              const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+              const rowBg = aIdx % 2 === 0 ? c.white : c.gray50;
+              
+              let scopeTag = '';
+              if (a.scope === 'audit') scopeTag = 'Audit';
+              else if (a.scope === 'adhesion') scopeTag = 'Messlehre';
+              else if (a.scope === 'specific' && a.testId) {
+                const t = this.state.tests.find(t => t.id === a.testId);
+                scopeTag = t?.name || 'Test';
+              }
+              
+              return `
+                <tr>
+                  <td style="background-color: ${rowBg}; padding: 9px 16px; border-bottom: 1px solid ${c.gray200}; border-left: 3px solid ${c.teal};">
+                    <span style="font-size: 12px; font-weight: 600; color: ${c.gray900}; font-family: Arial, sans-serif;">
+                      ${customer?.name || '?'} – ${ptype?.name || '?'}
+                    </span>
+                    ${scopeTag ? `<span style="display: inline; font-size: 10px; color: ${c.gray500}; margin-left: 6px; font-family: Arial, sans-serif;">(${scopeTag})</span>` : ''}
+                  </td>
+                  <td style="background-color: ${rowBg}; padding: 9px 12px; border-bottom: 1px solid ${c.gray200}; text-align: right; white-space: nowrap; vertical-align: middle;">
+                    <span style="font-size: 11px; font-weight: 600; color: ${c.gray700}; font-family: Arial, sans-serif;">
+                      ${shiftShortNames[a.shift - 1]}
+                    </span>
+                    <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; margin-left: 4px;">
+                      ${shiftSubNames[a.shift - 1]}
+                    </span>
+                  </td>
+                </tr>
+              `;
+            }).join('')}
+          </table>
+        `;
+      });
+      
       employeeDetailHtml = `
-        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 24px;">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 8px; margin-top: 8px;">
           <tr>
-            <td style="padding-bottom: 12px;">
-              <span style="font-size: 16px; font-weight: 700; color: ${colors.gray900}; font-family: Arial, sans-serif; border-bottom: 3px solid ${colors.teal}; padding-bottom: 4px;">
-                Szczegóły – wszyscy pracownicy
+            <td style="padding-bottom: 14px; padding-top: 12px; border-top: 1px solid ${c.gray200};">
+              <span style="font-size: 11px; font-weight: 700; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1.5px;">
+                ${i18n.t('schedule.allEmployeeSchedules')}
               </span>
             </td>
           </tr>
         </table>
-        
-        ${Array.from(byEmployee.entries()).map(([eId, data]: [string, { emp: Employee; assignments: ScheduleAssignment[] }]) => {
-          const { emp, assignments } = data;
-          const isTarget = eId === employeeId;
-          const borderColor = isTarget ? colors.teal : colors.gray200;
-          const headerBg = isTarget ? colors.tealLight : colors.gray50;
-          
-          return `
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 12px; border: ${isTarget ? '2' : '1'}px solid ${borderColor}; border-radius: 8px; overflow: hidden;">
-              <tr>
-                <td style="background: ${headerBg}; padding: 10px 16px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                    <tr>
-                      <td width="36" valign="middle">
-                        <div style="width: 32px; height: 32px; border-radius: 50%; background: ${emp.color}; color: white; font-size: 13px; font-weight: 700; text-align: center; line-height: 32px; font-family: Arial, sans-serif;">
-                          ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
-                        </div>
-                      </td>
-                      <td style="padding-left: 10px;">
-                        <span style="font-size: 14px; font-weight: 700; color: ${colors.gray900}; font-family: Arial, sans-serif;">
-                          ${emp.firstName} ${emp.lastName}
-                        </span>
-                        <span style="font-size: 12px; color: ${colors.gray500}; font-family: Arial, sans-serif; margin-left: 8px;">
-                          ${assignments.length} ${assignments.length === 1 ? 'projekt' : 'projektów'}
-                        </span>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-              ${assignments.map((a: ScheduleAssignment, aIdx: number) => {
-                const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-                const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-                const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
-                const rowBg = aIdx % 2 === 0 ? colors.white : colors.gray50;
-                
-                return `
-                  <tr>
-                    <td style="background: ${rowBg}; padding: 8px 16px; border-top: 1px solid ${colors.gray200};">
-                      <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                        <tr>
-                          <td>
-                            <span style="font-size: 13px; font-weight: 500; color: ${colors.gray900}; font-family: Arial, sans-serif;">
-                              ${customer?.name || '?'} – ${ptype?.name || '?'}
-                            </span>
-                          </td>
-                          <td style="text-align: right;">
-                            <span style="display: inline-block; font-size: 11px; font-weight: 600; background: ${shiftBgs[a.shift - 1]}; color: ${shiftColors[a.shift - 1]}; padding: 3px 10px; border-radius: 10px; font-family: Arial, sans-serif;">
-                              ${shiftIcons[a.shift - 1]} Z${a.shift}
-                            </span>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                `;
-              }).join('')}
-            </table>
-          `;
-        }).join('')}
+        ${employeeSections.join('')}
       `;
     }
     
     // ============ FOOTER ============
     const footerHtml = `
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 24px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 8px;">
         <tr>
-          <td style="background: ${colors.gray900}; padding: 16px 32px; text-align: center;">
-            <span style="font-size: 11px; color: ${colors.gray500}; font-family: Arial, sans-serif;">
-              © ${new Date().getFullYear()} DRÄXLMAIER Group &nbsp;|&nbsp; Kappa Planning System &nbsp;|&nbsp; Wygenerowano: ${dateStr}
-            </span>
+          <td style="padding: 0 32px;">
+            <div style="height: 1px; background-color: ${c.gray200};"></div>
           </td>
+        </tr>
+        <tr>
+          <td style="padding: 20px 32px; text-align: center;">
+            <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif;">${i18n.t('schedule.emailFooterNote')}</span>
+            <br>
+            <span style="font-size: 10px; color: ${c.gray300}; font-family: Arial, sans-serif; margin-top: 4px; display: inline-block;">&copy; ${new Date().getFullYear()} DRÄXLMAIER Group &nbsp;&middot;&nbsp; Kappa Planning &nbsp;&middot;&nbsp; ${dateStr}</span>
+          </td>
+        </tr>
+        <!-- Bottom teal accent bar -->
+        <tr>
+          <td bgcolor="${c.teal}" style="background-color: ${c.teal}; height: 4px; font-size: 0; line-height: 0;">&nbsp;</td>
         </tr>
       </table>
     `;
     
     // ============ ASSEMBLE ============
     return `
-      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 700px; margin: 0 auto; background: ${colors.gray100};">
+      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 720px; margin: 0 auto; background: ${c.white}; border: 1px solid ${c.gray200};">
         ${headerHtml}
-        <div style="padding: 24px 32px;">
+        <div style="padding: 28px 32px;">
           ${personalSectionHtml}
+          ${summaryHtml}
           ${scheduleTableHtml}
-          ${mode === 'employee' ? employeeDetailHtml : ''}
+          ${(mode === 'full' || mode === 'general') ? employeeDetailHtml : ''}
         </div>
         ${footerHtml}
       </div>
@@ -16499,8 +16926,8 @@ class KappaApp {
     const line = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
     
     let text = '';
-    text += `DRÄXLMAIER Group – Kappa Planning\\n`;
-    text += `${line}\\n\\n`;
+    text += `DRÄXLMAIER Group – Kappa Planning\n`;
+    text += `${line}\n\n`;
     
     if (mode === 'employee' && employeeId) {
       const emp = this.state.employees.find(e => e.id === employeeId);
@@ -16508,28 +16935,28 @@ class KappaApp {
       
       const empAssignments = weekAssignments.filter(a => a.employeeId === employeeId);
       
-      text += `Cześć ${emp.firstName}!\\n\\n`;
-      text += `Twój grafik na tydzień ${weekKey}:\\n`;
-      text += `${line}\\n\\n`;
+      text += `Cześć ${emp.firstName}!\n\n`;
+      text += `Twój grafik na tydzień ${weekKey}:\n`;
+      text += `${line}\n\n`;
       
       empAssignments.forEach((a: ScheduleAssignment) => {
         const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
         const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
         const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
         
-        text += `▸ ${customer?.name || '?'} – ${ptype?.name || '?'}\\n`;
-        text += `  ⏰ ${shiftNames[a.shift - 1]}\\n`;
+        text += `▸ ${customer?.name || '?'} – ${ptype?.name || '?'}\n`;
+        text += `  ⏰ ${shiftNames[a.shift - 1]}\n`;
         if (a.scope !== 'project') {
-          text += `  📋 Zakres: ${a.scope}\\n`;
+          text += `  📋 Zakres: ${a.scope}\n`;
         }
-        text += `\\n`;
+        text += `\n`;
       });
       
-      text += `\\n📋 GRAFIK OGÓLNY:\\n`;
-      text += `${line}\\n\\n`;
+      text += `\n📋 GRAFIK OGÓLNY:\n`;
+      text += `${line}\n\n`;
     } else {
-      text += `📅 GRAFIK TYGODNIOWY ${weekKey}\\n`;
-      text += `${line}\\n\\n`;
+      text += `📅 GRAFIK TYGODNIOWY ${weekKey}\n`;
+      text += `${line}\n\n`;
     }
     
     // General schedule in text
@@ -16549,16 +16976,16 @@ class KappaApp {
     });
     
     byProject.forEach((shifts, name) => {
-      text += `📦 ${name}\\n`;
+      text += `📦 ${name}\n`;
       [1, 2, 3].forEach(s => {
         if (shifts.has(s)) {
-          text += `   ${shiftNames[s-1]}: ${shifts.get(s)!.join(', ')}\\n`;
+          text += `   ${shiftNames[s-1]}: ${shifts.get(s)!.join(', ')}\n`;
         }
       });
-      text += `\\n`;
+      text += `\n`;
     });
     
-    text += `\\nPozdrawiam,\\nZespół Kappa Planning`;
+    text += `\nPozdrawiam,\nZespół Kappa Planning`;
     return text;
   }
   
@@ -17115,18 +17542,19 @@ class KappaApp {
     await db.put('scheduleAssignments', assignment);
     
     // Log zmiany - do głównej historii i historii grafiku
+    const weekLabel = assignment.week;
     if (projectChanged && shiftChanged) {
-      const details = `${oldProjectName} Z${oldShift} → ${newProjectName} Z${newShift}`;
+      const details = `${oldProjectName} ${i18n.t('schedule.shift')} ${oldShift} → ${newProjectName} ${i18n.t('schedule.shift')} ${newShift}, ${weekLabel}`;
       await this.addLog('updated', 'Assignment', empName, details);
       this.logScheduleChange('modified', empName, details);
       this.showToast(`Przeniesiono na ${newProjectName}, zmiana ${newShift}`, 'success', 'drop');
     } else if (projectChanged) {
-      const details = `${oldProjectName} → ${newProjectName}`;
+      const details = `${oldProjectName} → ${newProjectName}, ${i18n.t('schedule.shift')} ${assignment.shift}, ${weekLabel}`;
       await this.addLog('updated', 'Assignment', empName, details);
       this.logScheduleChange('modified', empName, details);
       this.showToast(`Przeniesiono na ${newProjectName}`, 'success', 'drop');
     } else {
-      const details = `${oldProjectName}: Z${oldShift} → Z${newShift}`;
+      const details = `${oldProjectName}: ${i18n.t('schedule.shift')} ${oldShift} → ${i18n.t('schedule.shift')} ${newShift}, ${weekLabel}`;
       await this.addLog('updated', 'Assignment', empName, details);
       this.logScheduleChange('modified', empName, details);
       this.showToast(i18n.t('schedule.movedToShift').replace('{0}', String(newShift)), 'success', 'drop');
@@ -18160,7 +18588,14 @@ class KappaApp {
     const emp = this.state.employees.find(e => e.id === employeeId);
     const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
     const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - ${i18n.t('schedule.shift')} ${shift}`);
+    const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+    const projectFullName = customer && type ? `${customer.name} ${type.name}` : (customer?.name || '?');
+    const scopeLabelsLog: Record<string, string> = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
+    const scopeLabelLog = scopeLabelsLog[scope] || scope;
+    const empFullName = `${emp?.firstName || '?'} ${emp?.lastName || ''}`;
+    const logDetails = `${projectFullName}, ${i18n.t('schedule.shift')} ${shift}, ${scopeLabelLog}, ${week}`;
+    await this.addLog('created', 'Assignment', empFullName, logDetails);
+    this.logScheduleChange('added', empFullName, logDetails);
     
     this.renderScheduleContent();
     this.renderScheduleAlerts();
@@ -18180,10 +18615,11 @@ class KappaApp {
       history = [];
     }
     
+    const actionLabel = action === 'added' ? i18n.t('schedule.logAdded') : action === 'removed' ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged');
     history.push({
       action,
       type: 'Assignment',
-      details: `${action === 'added' ? i18n.t('schedule.logAdded') : action === 'removed' ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged')} <strong>${employee}</strong> → ${details}`,
+      details: `<strong>${actionLabel}</strong> ${employee}: ${details}`,
       timestamp: Date.now()
     });
     
@@ -19250,8 +19686,14 @@ class KappaApp {
     await db.put('scheduleAssignments', assignment);
     
     const emp = this.state.employees.find(e => e.id === employeeId);
+    const projForLog = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
+    const custForLog = projForLog ? this.state.customers.find(c => c.id === projForLog.customer_id) : null;
+    const typeForLog = projForLog ? this.state.types.find(t => t.id === projForLog.type_id) : null;
+    const projFullNameLog = custForLog && typeForLog ? `${custForLog.name} ${typeForLog.name}` : (custForLog?.name || projectId);
     const scopeLabels = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
-    await this.addLog('created', 'Assignment', `${emp?.firstName || ''} → ${week} Z${shift} [${scopeLabels[scope]}]`);
+    const empNameForLog = `${emp?.firstName || '?'} ${emp?.lastName || ''}`;
+    const detailsForLog = `${projFullNameLog}, ${i18n.t('schedule.shift')} ${shift}, ${scopeLabels[scope]}, ${week}`;
+    await this.addLog('created', 'Assignment', empNameForLog, detailsForLog);
     
     this.showToast(i18n.t('schedule.employeeAssigned'), 'success', 'assign');
     this.renderScheduleContent();
@@ -19329,13 +19771,15 @@ class KappaApp {
       
       // Czytelny log zamiast ID
       const empName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
-      const projectName = customer?.name || '?';
+      const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+      const projectFullName = customer && type ? `${customer.name} ${type.name}` : (customer?.name || '?');
       const scopeLabels: Record<string, string> = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
       const scopeLabel = scopeLabels[assignment.scope] || assignment.scope;
-      await this.addLog('deleted', 'Assignment', `${empName} ← ${projectName}`, `Z${assignment.shift}, ${scopeLabel}`);
+      const removeDetails = `${projectFullName}, ${i18n.t('schedule.shift')} ${assignment.shift}, ${scopeLabel}, ${assignment.week}`;
+      await this.addLog('deleted', 'Assignment', empName, removeDetails);
       
       // Loguj do historii
-      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - ` + i18n.t('schedule.shift') + ` ${assignment.shift}`);
+      this.logScheduleChange('removed', empName, removeDetails);
       
       this.renderScheduleContent();
       this.renderScheduleEmployeePanel();
@@ -20327,17 +20771,34 @@ class KappaApp {
       sounds.play('drop');
       
       const employee = this.state.employees.find(e => e.id === id);
-      await this.addLog('created', 'ScheduleEntry', `${employee?.firstName || ''} → ${targetWeek}`);
+      const seProject = this.state.projects.find(p => p.id === targetProjectId || `${p.customer_id}-${p.type_id}` === targetProjectId);
+      const seCustomer = seProject ? this.state.customers.find(c => c.id === seProject.customer_id) : null;
+      const seType = seProject ? this.state.types.find(t => t.id === seProject.type_id) : null;
+      const seProjName = seCustomer && seType ? `${seCustomer.name} ${seType.name}` : (seCustomer?.name || targetProjectId);
+      const seEmpName = employee ? `${employee.firstName} ${employee.lastName}` : '?';
+      await this.addLog('created', 'ScheduleEntry', seEmpName, `${seProjName}, ${targetWeek}`);
       
     } else if (type === 'entry') {
       // Move existing entry to new cell
       const entry = this.state.scheduleEntries.find(en => en.id === id);
       if (entry) {
+        const oldProjectId = entry.projectId;
+        const oldWeek = entry.week;
         entry.projectId = targetProjectId;
         entry.week = targetWeek;
         entry.updatedAt = Date.now();
         await db.put('scheduleEntries', entry);
-        await this.addLog('updated', 'ScheduleEntry', id, `Moved to ${targetWeek}`);
+        const entryEmp = this.state.employees.find(e => e.id === entry.employeeId);
+        const entryEmpName = entryEmp ? `${entryEmp.firstName} ${entryEmp.lastName}` : id;
+        const oldProj = this.state.projects.find(p => p.id === oldProjectId || `${p.customer_id}-${p.type_id}` === oldProjectId);
+        const oldCust = oldProj ? this.state.customers.find(c => c.id === oldProj.customer_id) : null;
+        const oldType = oldProj ? this.state.types.find(t => t.id === oldProj.type_id) : null;
+        const oldProjName = oldCust && oldType ? `${oldCust.name} ${oldType.name}` : (oldCust?.name || oldProjectId);
+        const newProj = this.state.projects.find(p => p.id === targetProjectId || `${p.customer_id}-${p.type_id}` === targetProjectId);
+        const newCust = newProj ? this.state.customers.find(c => c.id === newProj.customer_id) : null;
+        const newType2 = newProj ? this.state.types.find(t => t.id === newProj.type_id) : null;
+        const newProjName = newCust && newType2 ? `${newCust.name} ${newType2.name}` : (newCust?.name || targetProjectId);
+        await this.addLog('updated', 'ScheduleEntry', entryEmpName, `${oldProjName} ${oldWeek} → ${newProjName} ${targetWeek}`);
       }
     }
     

@@ -155,6 +155,22 @@ async function initDatabase() {
     db.run(`ALTER TABLE employees ADD COLUMN shiftSystem INTEGER DEFAULT 2`);
     console.log('✅ Added shiftSystem column to employees table');
   } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN position TEXT DEFAULT 'worker'`);
+    console.log('✅ Added position column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN schedulable INTEGER DEFAULT 1`);
+    console.log('✅ Added schedulable column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN note TEXT`);
+    console.log('✅ Added note column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN qualifications TEXT`);
+    console.log('✅ Added qualifications column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS schedule_assignments (
