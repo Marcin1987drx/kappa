@@ -981,7 +981,8 @@ recoveryRouter.post('/send-code', async (req, res) => {
       if (val.expiresAt < Date.now()) recoveryCodes.delete(key);
     }
     
-    // Try to send email via nodemailer (only if SMTP configured)
+    // Try to send email via nodemailer
+    // Use ethereal test account as fallback if no SMTP configured
     try {
       // Check if SMTP settings exist in app settings
       const settingRow = getOne('SELECT value FROM settings WHERE key = ?', ['app-settings']) as any;
@@ -1002,19 +1003,28 @@ recoveryRouter.post('/send-code', async (req, res) => {
         }
       }
       
-      if (!smtpConfig) {
-        // No SMTP configured - log code to console for local use
-        console.log(`🔐 Recovery code for ${email}: ${code} (no SMTP configured - code stored locally)`);
-        return res.json({ success: true, message: 'Recovery code generated' });
+      let transporter;
+      if (smtpConfig) {
+        transporter = nodemailer.createTransport(smtpConfig);
+      } else {
+        // Fallback: use Ethereal test account (emails go to ethereal.email inbox)
+        const testAccount = await nodemailer.createTestAccount();
+        transporter = nodemailer.createTransport({
+          host: 'smtp.ethereal.email',
+          port: 587,
+          secure: false,
+          auth: {
+            user: testAccount.user,
+            pass: testAccount.pass
+          }
+        });
       }
-
-      const transporter = nodemailer.createTransport(smtpConfig);
       
-      await transporter.sendMail({
+      const info = await transporter.sendMail({
         from: '"DRÄXLMAIER Kappa" <noreply@kappa.draexlmaier.com>',
         to: email,
-        subject: `Recovery code: ${code} – DRÄXLMAIER Kappa`,
-        text: `Your password recovery code: ${code}\n\nThis code is valid for 15 minutes.\n\nIf you did not request a password reset, ignore this message.\n\n– DRÄXLMAIER Kappa Planning`,
+        subject: `🔐 Kod odzyskiwania hasła Kappa – ${code}`,
+        text: `Twój kod odzyskiwania hasła: ${code}\n\nKod jest ważny przez 15 minut.\n\nJeśli nie prosiłeś o reset hasła, zignoruj tę wiadomość.\n\n– DRÄXLMAIER Kappa Planning`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
             <div style="background: #1a1a1a; padding: 20px 24px; border-radius: 12px 12px 0 0;">
@@ -1022,21 +1032,33 @@ recoveryRouter.post('/send-code', async (req, res) => {
             </div>
             <div style="background: #0097AC; height: 4px;"></div>
             <div style="background: #f8fafc; padding: 32px 24px; border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 12px 12px;">
-              <h3 style="margin: 0 0 8px; color: #0f172a;">Password Recovery</h3>
-              <p style="color: #64748b; font-size: 14px; margin: 0 0 24px;">Use the code below to reset your Kappa settings password.</p>
+              <h3 style="margin: 0 0 8px; color: #0f172a;">Odzyskiwanie hasła</h3>
+              <p style="color: #64748b; font-size: 14px; margin: 0 0 24px;">Użyj poniższego kodu, aby zresetować hasło do ustawień aplikacji Kappa.</p>
               <div style="background: white; border: 2px dashed #0097AC; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
                 <div style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #0097AC; font-family: 'Courier New', monospace;">${code}</div>
               </div>
-              <p style="color: #94a3b8; font-size: 12px; margin: 0;">This code is valid for 15 minutes. If you did not request a password reset, ignore this message.</p>
+              <p style="color: #94a3b8; font-size: 12px; margin: 0;">Kod jest ważny przez 15 minut. Jeśli nie prosiłeś o reset hasła, zignoruj tę wiadomość.</p>
             </div>
           </div>
         `
       });
       
+      // Log preview URL for Ethereal
+      if (!smtpConfig) {
+        const previewUrl = nodemailer.getTestMessageUrl(info as any);
+        console.log('📧 Recovery email preview URL:', previewUrl);
+        return res.json({ 
+          success: true, 
+          message: 'Recovery code sent',
+          previewUrl: previewUrl || undefined // Only for dev/test
+        });
+      }
+      
       res.json({ success: true, message: 'Recovery code sent' });
     } catch (emailErr) {
       console.error('Failed to send email:', emailErr);
       // Even if email fails, we still have the code stored
+      // In production you'd return an error; for now, log code to console
       console.log(`🔐 Recovery code for ${email}: ${code}`);
       res.json({ success: true, message: 'Recovery code generated' });
     }

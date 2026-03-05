@@ -78,11 +78,11 @@ class KappaApp {
       backupFrequency: 'none',
       lastBackupDate: '',
       qualificationDefinitions: [
-        { id: 'audit', name: 'Product Audit', icon: '📋', description: '', sortOrder: 1 },
-        { id: 'adhesion', name: 'Adhesion (Peel-off)', icon: '🔬', description: '', sortOrder: 2 },
-        { id: 'dimensions', name: 'Dimensions / Measurements', icon: '📐', description: '', sortOrder: 3 },
-        { id: 'visual', name: 'Visual Inspection', icon: '👁️', description: '', sortOrder: 4 },
-        { id: 'laboratory', name: 'Laboratory', icon: '🧪', description: '', sortOrder: 5 },
+        { id: 'audit', name: 'Audyt produktu', icon: '📋', description: '', sortOrder: 1 },
+        { id: 'adhesion', name: 'Przyczepność (Peel-off)', icon: '🔬', description: '', sortOrder: 2 },
+        { id: 'dimensions', name: 'Wymiary / Pomiary', icon: '📐', description: '', sortOrder: 3 },
+        { id: 'visual', name: 'Kontrola wizualna', icon: '👁️', description: '', sortOrder: 4 },
+        { id: 'laboratory', name: 'Laboratorium', icon: '🧪', description: '', sortOrder: 5 },
       ],
     },
     currentView: 'planning',
@@ -206,7 +206,7 @@ class KappaApp {
       // Load example data
       const response = await fetch('/example-data.json');
       if (!response.ok) {
-        this.showToast(i18n.t('messages.errorOccurred'), 'error');
+        this.showToast('Could not load example data', 'error');
         return;
       }
       
@@ -238,10 +238,10 @@ class KappaApp {
       // Reload data and refresh view
       await this.loadData();
       this.renderCurrentView();
-      this.showToast(i18n.t('messages.importSuccessfully'), 'success', 'complete');
+      this.showToast('Example data loaded successfully! 🎉', 'success', 'complete');
     } catch (error) {
       console.error('Failed to load example data:', error);
-      this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      this.showToast('Failed to load example data', 'error');
     }
   }
 
@@ -774,7 +774,7 @@ class KappaApp {
       const user = (document.getElementById('smtpUserInput') as HTMLInputElement)?.value;
       const pass = (document.getElementById('smtpPassInput') as HTMLInputElement)?.value;
       if (!host) {
-        this.showToast(i18n.t('schedule.smtpHostRequired'), 'warning');
+        this.showToast(i18n.t('schedule.smtpHost') + ' required', 'warning');
         return;
       }
       try {
@@ -787,7 +787,7 @@ class KappaApp {
           this.showToast(i18n.t('schedule.smtpTestSuccess'), 'success');
         } else {
           const data = await resp.json();
-          this.showToast(i18n.t('schedule.smtpConnectionError').replace('{0}', data.error || ''), 'error');
+          this.showToast(i18n.t('schedule.smtpTestFailed') + ': ' + (data.error || ''), 'error');
         }
       } catch (err) {
         this.showToast(i18n.t('schedule.smtpTestFailed'), 'error');
@@ -1104,7 +1104,7 @@ class KappaApp {
     // Title for tooltip
     const totalIst = istData.reduce((a, b) => a + b, 0);
     const totalSoll = sollData.reduce((a, b) => a + b, 0);
-    svg.innerHTML = `<title>${i18n.t('planning.sparklineTooltip').replace('{0}', String(weeksToShow)).replace('{1}', String(totalIst)).replace('{2}', String(totalSoll))}</title>` + svg.innerHTML;
+    svg.innerHTML = `<title>Ostatnie ${weeksToShow} tyg.: IST ${totalIst} / SOLL ${totalSoll}</title>` + svg.innerHTML;
     
     return svg;
   }
@@ -2201,11 +2201,7 @@ class KappaApp {
         if (weekTask) {
           istCell.innerHTML = `<span class="cell-value planner-extra-ist">${weekTask.units}</span>`;
           istCell.classList.add('planner-extra-active-cell');
-          const totalMin = weekTask.units * weekTask.timePerUnit;
-          const h = Math.floor(totalMin / 60);
-          const m = totalMin % 60;
-          const timeStr = h > 0 ? `${h}h${m > 0 ? m + 'min' : ''}` : `${totalMin}min`;
-          istCell.title = timeStr;
+          istCell.title = `${weekTask.units} × ${weekTask.timePerUnit}min`;
         }
         container.appendChild(istCell);
         
@@ -4623,7 +4619,7 @@ class KappaApp {
 
         popup.remove();
         this.renderAnalyticsTable();
-        this.showToast(i18n.t('planning.statusUpdated'), 'success', 'toggle');
+        this.showToast('Status postoju zaktualizowany', 'success', 'toggle');
       });
     });
 
@@ -5706,11 +5702,11 @@ class KappaApp {
     }
     // Default fallback
     return [
-      { id: 'audit', name: 'Product Audit', icon: '📋', description: '', sortOrder: 1 },
-      { id: 'adhesion', name: 'Adhesion (Peel-off)', icon: '🔬', description: '', sortOrder: 2 },
-      { id: 'dimensions', name: 'Dimensions / Measurements', icon: '📐', description: '', sortOrder: 3 },
-      { id: 'visual', name: 'Visual Inspection', icon: '👁️', description: '', sortOrder: 4 },
-      { id: 'laboratory', name: 'Laboratory', icon: '🧪', description: '', sortOrder: 5 },
+      { id: 'audit', name: 'Audyt produktu', icon: '📋', description: '', sortOrder: 1 },
+      { id: 'adhesion', name: 'Przyczepność (Peel-off)', icon: '🔬', description: '', sortOrder: 2 },
+      { id: 'dimensions', name: 'Wymiary / Pomiary', icon: '📐', description: '', sortOrder: 3 },
+      { id: 'visual', name: 'Kontrola wizualna', icon: '👁️', description: '', sortOrder: 4 },
+      { id: 'laboratory', name: 'Laboratorium', icon: '🧪', description: '', sortOrder: 5 },
     ];
   }
   
@@ -6156,9 +6152,12 @@ class KappaApp {
       return;
     }
 
-    // Need to unlock - check if password is set
+    // Need to unlock - if no password is set, unlock immediately
     if (!this.state.settings.deletePassword) {
-      this.showToast(i18n.t('settings.noPasswordSet'), 'warning');
+      this.adminUnlocked = true;
+      this.updateAdminUI();
+      this.updateAdminUnlockButton();
+      this.showToast(i18n.t('settings.appUnlocked'), 'success');
       return;
     }
 
@@ -6849,7 +6848,7 @@ class KappaApp {
       modal.classList.add('active');
     } catch (error) {
       console.error('Error generating weekly report:', error);
-      this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      this.showToast('Error generating weekly report', 'error');
     }
   }
 
@@ -9535,7 +9534,7 @@ class KappaApp {
 
     } catch (error) {
       console.error('Error loading file:', error);
-      this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      this.showToast('Error loading Excel file', 'error');
     }
   }
 
@@ -9964,11 +9963,11 @@ class KappaApp {
       this.renderCurrentView();
       this.closeImportWizard();
       
-      this.showToast(i18n.t('messages.importComplete').replace('{0}', String(importedCount)).replace('{1}', String(updatedCount)).replace('{2}', String(skippedCount)), 'success', 'complete');
+      this.showToast(`Import complete: ${importedCount} new, ${updatedCount} updated, ${skippedCount} skipped`, 'success', 'complete');
 
     } catch (error) {
       console.error('Import error:', error);
-      this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      this.showToast('Error during import', 'error');
     }
   }
 
@@ -9977,9 +9976,9 @@ class KappaApp {
     const buffer = await file.arrayBuffer();
     await workbook.xlsx.load(buffer);
     
-    const sheet = workbook.getWorksheet('Kappa Planning');
+    const sheet = workbook.getWorksheet('Produkt Audyt');
     if (!sheet) {
-      this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      this.showToast('Invalid Excel file format', 'error');
       return;
     }
 
@@ -11000,304 +10999,105 @@ class KappaApp {
     try {
       const t = (key: string) => i18n.t(key);
       const ExcelJS = await import('exceljs');
-      const lang = i18n.getLanguage();
-      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
 
       this.showExportProgress(true, 10, t('export.preparingData'));
 
       const data = this.getScheduleExportData();
-      const dateStr = new Date().toLocaleDateString(dateLocale);
-      const timeStr = new Date().toLocaleTimeString(dateLocale);
 
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'Kappa Planning – DRÄXLMAIER Group';
+      workbook.creator = 'Produkt Audit 360';
       workbook.created = new Date();
 
-      // Shared styles
-      const black = 'FF000000';
-      const white = 'FFFFFFFF';
-      const brandColor = 'FF0097AC';
-      const lightGray = 'FFF8FAFC';
-      const medGray = 'FFF1F5F9';
-      const darkSlate = 'FF1E293B';
-      const headerFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
-      const subFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, color: { argb: 'FF334155' } };
-      const thinBorder: Partial<ExcelJS.Borders> = {
-        top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
-        right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
-      };
+      // Colors
+      const headerBg = '000000';
+      const headerText = 'FFFFFF';
+      const tealBg = '0097AC';
+      const altRowBg = 'F8FAFC';
 
-      const addBrandHeader = (sheet: ExcelJS.Worksheet, colCount: number, subtitle: string) => {
-        const lastCol = String.fromCharCode(64 + colCount);
-        sheet.mergeCells(`A1:${lastCol}1`);
-        const titleCell = sheet.getCell('A1');
-        titleCell.value = 'DRÄXLMAIER Group';
-        titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: white } };
-        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
-        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        sheet.getRow(1).height = 35;
+      this.showExportProgress(true, 30, t('export.creatingSheets'));
 
-        sheet.mergeCells(`A2:${lastCol}2`);
-        const subCell = sheet.getCell('A2');
-        subCell.value = subtitle;
-        subCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: white } };
-        subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
-        subCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        sheet.getRow(2).height = 28;
-
-        sheet.mergeCells(`A3:${lastCol}3`);
-        const infoCell = sheet.getCell('A3');
-        infoCell.value = `${t('export.generatedAt')}: ${dateStr} ${timeStr} | ${t('export.user')}: ${this.state.settings.userName || 'System'}`;
-        infoCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
-        infoCell.alignment = { horizontal: 'center' };
-        sheet.getRow(3).height = 20;
-      };
-
-      this.showExportProgress(true, 20, t('export.creatingSheets'));
-
-      // ==================== SHEET 1: Overview ====================
-      const overviewSheet = workbook.addWorksheet(`Kappa - ${t('export.summary')}`, {
-        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
-      });
-      overviewSheet.columns = [
-        { width: 22 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 14 }
+      // Sheet 1: Summary
+      const summarySheet = workbook.addWorksheet(t('export.summary'));
+      summarySheet.columns = [
+        { header: '', key: 'label', width: 30 },
+        { header: '', key: 'value', width: 25 }
       ];
 
-      addBrandHeader(overviewSheet, 7, `Kappa Planning – ${t('export.scheduleReport')} | ${data.weekKey} (${data.weekDates.start} - ${data.weekDates.end})`);
-
-      // KPI Section
-      let row = 5;
-      overviewSheet.mergeCells(`A${row}:G${row}`);
-      const kpiTitle = overviewSheet.getCell(`A${row}`);
-      kpiTitle.value = `📊 ${t('export.kpiTitle')}`;
-      kpiTitle.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF1E293B' } };
-      overviewSheet.getRow(row).height = 24;
-      row++;
-
-      const kpiLabels = [t('export.totalEmployees'), t('export.assignedEmployees'), t('export.projectsCount'), t('export.coverage')];
-      const kpiValues = [data.stats.totalEmployees, data.stats.assignedEmployees, data.stats.totalProjects, `${data.stats.coveragePercent}%`];
-      const kpiColors = ['FF0097AC', 'FF10B981', 'FF6366F1', data.stats.coveragePercent >= 80 ? 'FF10B981' : data.stats.coveragePercent >= 50 ? 'FFF59E0B' : 'FFEF4444'];
-
-      // KPI row with values
-      const kpiLabelRow = overviewSheet.getRow(row);
-      const kpiValueRow = overviewSheet.getRow(row + 1);
-      for (let k = 0; k < 4; k++) {
-        const col = k + 1;
-        const labelCell = kpiLabelRow.getCell(col);
-        labelCell.value = kpiLabels[k];
-        labelCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF475569' } };
-        labelCell.alignment = { horizontal: 'center' };
-        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
-        labelCell.border = thinBorder;
-
-        const valCell = kpiValueRow.getCell(col);
-        valCell.value = kpiValues[k];
-        valCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: kpiColors[k] } };
-        valCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
-        valCell.border = thinBorder;
-      }
-      kpiValueRow.height = 32;
-      row += 3;
-
-      // Shift Summary Section
-      overviewSheet.mergeCells(`A${row}:G${row}`);
-      const shiftTitle = overviewSheet.getCell(`A${row}`);
-      shiftTitle.value = `👥 ${t('export.assignmentsByShift')}`;
-      shiftTitle.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF1E293B' } };
-      overviewSheet.getRow(row).height = 24;
-      row++;
-
-      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
-      const shiftColors = ['FF3B82F6', 'FF8B5CF6', 'FFF97316'];
-
-      // Shift header row
-      const shiftHeaderRow = overviewSheet.getRow(row);
-      for (let s = 0; s < 3; s++) {
-        const col = s * 2 + 1;
-        overviewSheet.mergeCells(row, col, row, col + 1);
-        const cell = shiftHeaderRow.getCell(col);
-        const shiftData = data.byShift.get(s + 1) || [];
-        cell.value = `${t('export.shift')} ${s + 1} - ${shiftNames[s]} (${shiftData.length})`;
-        cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: shiftColors[s] } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      }
-      shiftHeaderRow.height = 26;
-      row++;
-
-      // Shift employee lists (up to 15 rows)
-      const maxShiftRows = 15;
-      for (let r = 0; r < maxShiftRows; r++) {
-        const dataRow = overviewSheet.getRow(row + r);
-        for (let s = 0; s < 3; s++) {
-          const shiftData = data.byShift.get(s + 1) || [];
-          const col = s * 2 + 1;
-          if (r < shiftData.length) {
-            const item = shiftData[r];
-            dataRow.getCell(col).value = item.employee;
-            dataRow.getCell(col).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
-            dataRow.getCell(col).border = thinBorder;
-            dataRow.getCell(col + 1).value = `${item.customer} • ${item.type}`;
-            dataRow.getCell(col + 1).font = { name: 'Calibri', size: 9, color: { argb: 'FF64748B' } };
-            dataRow.getCell(col + 1).border = thinBorder;
-          } else if (r === shiftData.length && shiftData.length === 0) {
-            overviewSheet.mergeCells(row + r, col, row + r, col + 1);
-            dataRow.getCell(col).value = t('export.noAssignments');
-            dataRow.getCell(col).font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
-            dataRow.getCell(col).alignment = { horizontal: 'center' };
-            dataRow.getCell(col).border = thinBorder;
-          }
-          if (r % 2 === 0 && r < shiftData.length) {
-            dataRow.getCell(col).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-            dataRow.getCell(col + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-          }
-        }
-      }
-      row += maxShiftRows + 1;
-
-      // Project Assignments Section
-      overviewSheet.mergeCells(`A${row}:G${row}`);
-      const projTitle = overviewSheet.getCell(`A${row}`);
-      projTitle.value = `🏢 ${t('export.projectAssignments')}`;
-      projTitle.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF1E293B' } };
-      overviewSheet.getRow(row).height = 24;
-      row++;
-
-      // Project table headers
-      const projHeaders = [t('export.customer'), t('export.type'), t('export.employees'), '', '', '', t('export.count')];
-      const projHeaderRow = overviewSheet.getRow(row);
-      projHeaders.forEach((h, i) => {
-        const cell = projHeaderRow.getCell(i + 1);
-        cell.value = h;
-        cell.font = headerFont;
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
-        cell.alignment = { horizontal: i === 6 ? 'center' : 'left', vertical: 'middle' };
-        cell.border = thinBorder;
-      });
-      overviewSheet.mergeCells(row, 3, row, 6);
-      projHeaderRow.height = 22;
-      row++;
-
-      // Project data rows
-      const projectRows = Array.from(data.byProject.entries());
-      projectRows.forEach(([key, proj], idx) => {
-        const empList = proj.employees.map(e => `${e.name} (${t('export.shift')} ${e.shift})`).join(', ');
-        const dataRow = overviewSheet.getRow(row);
-        dataRow.getCell(1).value = proj.customerName;
-        dataRow.getCell(1).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
-        dataRow.getCell(2).value = proj.typeName;
-        dataRow.getCell(2).font = subFont;
-        overviewSheet.mergeCells(row, 3, row, 6);
-        dataRow.getCell(3).value = empList;
-        dataRow.getCell(3).font = { name: 'Calibri', size: 9, color: { argb: 'FF475569' } };
-        dataRow.getCell(7).value = proj.employees.length;
-        dataRow.getCell(7).font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF0097AC' } };
-        dataRow.getCell(7).alignment = { horizontal: 'center' };
-
-        for (let c = 1; c <= 7; c++) {
-          dataRow.getCell(c).border = thinBorder;
-          if (idx % 2 === 0) {
-            dataRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-          }
-        }
-        row++;
-      });
+      summarySheet.addRow([t('export.scheduleReport'), '']);
+      summarySheet.getRow(1).font = { bold: true, size: 16 };
+      summarySheet.addRow([t('export.week'), data.weekKey]);
+      summarySheet.addRow([t('export.dateRange'), `${data.weekDates.start} - ${data.weekDates.end}`]);
+      summarySheet.addRow([t('export.generatedAt'), new Date().toLocaleString()]);
+      summarySheet.addRow(['', '']);
+      summarySheet.addRow([t('export.totalEmployees'), data.stats.totalEmployees]);
+      summarySheet.addRow([t('export.assignedEmployees'), data.stats.assignedEmployees]);
+      summarySheet.addRow([t('export.projectsCount'), data.stats.totalProjects]);
+      summarySheet.addRow([t('export.coverage'), `${data.stats.coveragePercent}%`]);
 
       this.showExportProgress(true, 50, t('export.creatingSheets'));
 
-      // ==================== SHEET 2: All Assignments ====================
-      const assignmentsSheet = workbook.addWorksheet(t('export.assignments'), {
-        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
-      });
+      // Sheet 2: All Assignments
+      const assignmentsSheet = workbook.addWorksheet(t('export.assignments'));
       assignmentsSheet.columns = [
-        { width: 25 }, { width: 25 }, { width: 20 }, { width: 14 }, { width: 22 }
+        { header: t('export.employee'), key: 'employee', width: 25 },
+        { header: t('export.customer'), key: 'customer', width: 25 },
+        { header: t('export.type'), key: 'type', width: 20 },
+        { header: t('export.shift'), key: 'shift', width: 12 },
+        { header: t('export.scope'), key: 'scope', width: 20 }
       ];
 
-      addBrandHeader(assignmentsSheet, 5, `${t('export.assignments')} – ${data.weekKey}`);
+      // Style header
+      const headerRow = assignmentsSheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: headerText } };
+      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: headerBg } };
+      headerRow.alignment = { horizontal: 'center' };
 
-      // Column headers at row 4
-      const assHeaders = [t('export.employee'), t('export.customer'), t('export.type'), t('export.shift'), t('export.scope')];
-      const assHeaderRow = assignmentsSheet.getRow(4);
-      assHeaders.forEach((h, i) => {
-        const cell = assHeaderRow.getCell(i + 1);
-        cell.value = h;
-        cell.font = headerFont;
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        cell.border = thinBorder;
-      });
-      assHeaderRow.height = 24;
-
-      let assRow = 5;
+      // Add data rows
+      let rowIndex = 2;
       [1, 2, 3].forEach(shift => {
         const shiftData = data.byShift.get(shift) || [];
         shiftData.forEach(item => {
-          const r = assignmentsSheet.getRow(assRow);
-          r.getCell(1).value = item.employee;
-          r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
-          r.getCell(2).value = item.customer;
-          r.getCell(2).font = subFont;
-          r.getCell(3).value = item.type;
-          r.getCell(3).font = subFont;
-          r.getCell(4).value = `${shift} - ${shiftNames[shift - 1]}`;
-          r.getCell(4).font = subFont;
-          r.getCell(4).alignment = { horizontal: 'center' };
-          r.getCell(5).value = item.scope;
-          r.getCell(5).font = subFont;
-          for (let c = 1; c <= 5; c++) {
-            r.getCell(c).border = thinBorder;
-            if (assRow % 2 === 0) {
-              r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-            }
+          assignmentsSheet.addRow({
+            employee: item.employee,
+            customer: item.customer,
+            type: item.type,
+            shift: shift,
+            scope: item.scope
+          });
+          if (rowIndex % 2 === 0) {
+            assignmentsSheet.getRow(rowIndex).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
           }
-          assRow++;
+          rowIndex++;
         });
       });
 
       this.showExportProgress(true, 70, t('export.creatingSheets'));
 
-      // ==================== SHEETS 3-5: Per Shift ====================
+      // Sheet 3: By Shift
+      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
       for (let shift = 1; shift <= 3; shift++) {
-        const shiftSheet = workbook.addWorksheet(`${t('export.shift')} ${shift} - ${shiftNames[shift - 1]}`, {
-          views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
-        });
+        const shiftSheet = workbook.addWorksheet(`${t('export.shift')} ${shift} - ${shiftNames[shift - 1]}`);
         shiftSheet.columns = [
-          { width: 25 }, { width: 25 }, { width: 20 }, { width: 22 }
+          { header: t('export.employee'), key: 'employee', width: 25 },
+          { header: t('export.customer'), key: 'customer', width: 25 },
+          { header: t('export.type'), key: 'type', width: 20 },
+          { header: t('export.scope'), key: 'scope', width: 20 }
         ];
 
-        addBrandHeader(shiftSheet, 4, `${t('export.shift')} ${shift} - ${shiftNames[shift - 1]} | ${data.weekKey}`);
-
-        const shHeaders = [t('export.employee'), t('export.customer'), t('export.type'), t('export.scope')];
-        const shHeaderRow = shiftSheet.getRow(4);
-        shHeaders.forEach((h, i) => {
-          const cell = shHeaderRow.getCell(i + 1);
-          cell.value = h;
-          cell.font = headerFont;
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: shiftColors[shift - 1] } };
-          cell.alignment = { horizontal: 'center', vertical: 'middle' };
-          cell.border = thinBorder;
-        });
-        shHeaderRow.height = 24;
+        const shiftHeaderRow = shiftSheet.getRow(1);
+        shiftHeaderRow.font = { bold: true, color: { argb: headerText } };
+        shiftHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tealBg } };
 
         const shiftData = data.byShift.get(shift) || [];
         shiftData.forEach((item, idx) => {
-          const r = shiftSheet.getRow(idx + 5);
-          r.getCell(1).value = item.employee;
-          r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
-          r.getCell(2).value = item.customer;
-          r.getCell(2).font = subFont;
-          r.getCell(3).value = item.type;
-          r.getCell(3).font = subFont;
-          r.getCell(4).value = item.scope;
-          r.getCell(4).font = subFont;
-          for (let c = 1; c <= 4; c++) {
-            r.getCell(c).border = thinBorder;
-            if (idx % 2 === 0) {
-              r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-            }
+          shiftSheet.addRow({
+            employee: item.employee,
+            customer: item.customer,
+            type: item.type,
+            scope: item.scope
+          });
+          if (idx % 2 === 1) {
+            shiftSheet.getRow(idx + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
           }
         });
       }
@@ -16444,13 +16244,37 @@ class KappaApp {
     activateStep(0);
     if (bar) bar.style.width = '10%';
     
-    // Generate PNG image and copy to clipboard
+    // Copy HTML to clipboard (happens immediately in background)
+    const html = this.generateCorporateEmailHtml(weekKey, 'full', undefined, hasChanges);
     const subject = `📅 ${hasChanges ? '🔄 ' : ''}Grafik KW${weekNum} ${this.scheduleCurrentYear} | DRÄXLMAIER Kappa`;
     
     let clipboardOk = false;
     try {
-      clipboardOk = await this.generateAndCopyScheduleImage(weekKey, hasChanges);
-    } catch { /* ignore */ }
+      const htmlBlob = new Blob([html], { type: 'text/html' });
+      const textBlob = new Blob([this.generatePlainTextSchedule(weekKey, 'general')], { type: 'text/plain' });
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html': htmlBlob,
+        'text/plain': textBlob
+      })]);
+      clipboardOk = true;
+    } catch {
+      try {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = html;
+        tempDiv.style.position = 'fixed';
+        tempDiv.style.left = '-9999px';
+        document.body.appendChild(tempDiv);
+        const range = document.createRange();
+        range.selectNodeContents(tempDiv);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+        document.execCommand('copy');
+        sel?.removeAllRanges();
+        document.body.removeChild(tempDiv);
+        clipboardOk = true;
+      } catch { /* ignore */ }
+    }
     
     // Step 1 complete (after 1.2s)
     setTimeout(() => {
@@ -16497,12 +16321,7 @@ class KappaApp {
       
       // Open mailto
       const mailtoUrl = `mailto:${encodeURIComponent(recipientEmails.join('; '))}?subject=${encodeURIComponent(subject)}`;
-      const a = document.createElement('a');
-      a.href = mailtoUrl;
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      window.open(mailtoUrl, '_blank');
       
       // Mark as sent
       await db.setPreference(`kappa_email_sent_${weekKey}`, { timestamp: Date.now(), hash: currentHash });
@@ -16625,271 +16444,6 @@ class KappaApp {
     // Auto-close
     setTimeout(closeOverlay, autoCloseSeconds * 1000);
   }
-
-  // ==================== SCHEDULE IMAGE GENERATOR (PNG) ====================
-
-  private async generateAndCopyScheduleImage(weekKey: string, isUpdate: boolean): Promise<boolean> {
-    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    const weekNum = weekKey.split('KW')[1];
-    const year = weekKey.split('-KW')[0];
-    const weekDates = this.getWeekDateRange(parseInt(year), parseInt(weekNum));
-    const dateStr = new Date().toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const activeShifts = [1, 2, 3].filter(s => s <= this.scheduleShiftSystem);
-    const shiftNames = [`${i18n.t('schedule.shift')} 1`, `${i18n.t('schedule.shift')} 2`, `${i18n.t('schedule.shift')} 3`];
-    const shiftTimes = ['6:00 – 14:00', '14:00 – 22:00', '22:00 – 6:00'];
-    const shiftColors = ['#F59E0B', '#F97316', '#6366F1'];
-    const shiftBgs = ['#FFFBEB', '#FFF7ED', '#EEF2FF'];
-
-    // Build data by project
-    const byProject = new Map<string, { customer: string; type: string; customerColor: string; shifts: Map<number, Array<{firstName: string; lastName: string; scope: string; color: string}>> }>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      if (project && emp) {
-        const customer = this.state.customers.find(cu => cu.id === project.customer_id);
-        const ptype = this.state.types.find(t => t.id === project.type_id);
-        const groupKey = `${project.customer_id}-${project.type_id}`;
-        if (!byProject.has(groupKey)) {
-          byProject.set(groupKey, { customer: customer?.name || '?', type: ptype?.name || '?', customerColor: (customer as any)?.color || '#0097AC', shifts: new Map() });
-        }
-        const data = byProject.get(groupKey)!;
-        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
-        let scopeTag = '';
-        if (a.scope === 'audit') scopeTag = i18n.t('settings.qualAudit');
-        else if (a.scope === 'adhesion') scopeTag = i18n.t('settings.qualAdhesion');
-        else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
-        data.shifts.get(a.shift)!.push({ firstName: emp.firstName, lastName: emp.lastName, scope: scopeTag, color: emp.color });
-      }
-    });
-
-    // Build data by employee
-    const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      const emp = this.state.employees.find(e => e.id === a.employeeId);
-      if (emp) {
-        if (!byEmployee.has(emp.id)) byEmployee.set(emp.id, { emp, assignments: [] });
-        byEmployee.get(emp.id)!.assignments.push(a);
-      }
-    });
-
-    const totalEmployees = new Set(weekAssignments.map(a => a.employeeId)).size;
-    const totalProjects = byProject.size;
-    const totalAssignments = weekAssignments.length;
-    const sortedProjects = Array.from(byProject.entries()).sort((a, b) => a[1].customer.localeCompare(b[1].customer));
-    const shiftCounts = activeShifts.map(s => weekAssignments.filter(a => a.shift === s).length);
-
-    // Create hidden render container
-    const container = document.createElement('div');
-    container.style.cssText = 'position: fixed; left: -9999px; top: 0; z-index: -1;';
-    document.body.appendChild(container);
-
-    const WIDTH = 540;
-    const colW = Math.floor((WIDTH - 170) / activeShifts.length);
-
-    // Build project rows HTML
-    const projectRowsHtml = sortedProjects.map(([_, data], idx) => {
-      const bg = idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC';
-      const shiftCells = activeShifts.map(s => {
-        const emps = data.shifts.get(s) || [];
-        if (emps.length === 0) return `<td style="padding:10px 6px;text-align:center;vertical-align:middle;border-bottom:1px solid #F1F5F9;background:${bg};"><span style="color:#CBD5E1;font-size:14px;">—</span></td>`;
-        return `<td style="padding:8px 6px;vertical-align:top;border-bottom:1px solid #F1F5F9;background:${bg};">
-          ${emps.map(e => `
-            <div style="display:flex;align-items:center;gap:6px;padding:2px 0;">
-              <div style="width:22px;height:22px;border-radius:6px;background:${e.color || '#0097AC'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-                <span style="color:#fff;font-size:8px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${e.firstName.charAt(0)}${e.lastName.charAt(0)}</span>
-              </div>
-              <div style="min-width:0;">
-                <div style="font-size:11px;font-weight:600;color:#1E293B;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:nowrap;">${e.firstName} ${e.lastName}</div>
-                ${e.scope ? `<div style="font-size:9px;color:#0097AC;font-weight:500;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${e.scope}</div>` : ''}
-              </div>
-            </div>
-          `).join('')}
-        </td>`;
-      }).join('');
-      return `<tr>
-        <td style="padding:8px 12px;vertical-align:top;border-bottom:1px solid #F1F5F9;background:${bg};width:170px;">
-          <div style="font-size:11px;font-weight:700;color:#0F172A;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${data.customer}</div>
-          <div style="font-size:9px;color:#94A3B8;font-weight:400;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin-top:1px;">${data.type}</div>
-        </td>
-        ${shiftCells}
-      </tr>`;
-    }).join('');
-
-    // Employee cards
-    const empCardsHtml = Array.from(byEmployee.entries()).sort((a, b) => a[1].emp.firstName.localeCompare(b[1].emp.firstName)).map(([_, data]) => {
-      const { emp, assignments } = data;
-      const tasks = assignments.map((a: ScheduleAssignment) => {
-        const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-        const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
-        const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
-        let scopeTag = '';
-        if (a.scope === 'audit') scopeTag = i18n.t('settings.qualAudit');
-        else if (a.scope === 'adhesion') scopeTag = i18n.t('settings.qualAdhesion');
-        else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
-        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:#F8FAFC;border-radius:6px;margin-top:4px;">
-          <div>
-            <span style="font-size:10px;font-weight:600;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${customer?.name || '?'} – ${ptype?.name || '?'}</span>
-            ${scopeTag ? `<span style="font-size:9px;color:#0097AC;margin-left:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${scopeTag}</span>` : ''}
-          </div>
-          <div style="display:inline-flex;align-items:center;gap:3px;background:${shiftBgs[a.shift-1]};border:1px solid ${shiftColors[a.shift-1]}20;padding:2px 8px;border-radius:5px;">
-            <span style="width:5px;height:5px;border-radius:50%;background:${shiftColors[a.shift-1]};display:inline-block;"></span>
-            <span style="font-size:9px;font-weight:700;color:${shiftColors[a.shift-1]};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${shiftNames[a.shift-1]}</span>
-          </div>
-        </div>`;
-      }).join('');
-      return `<div style="background:#fff;border:1px solid #F1F5F9;border-radius:10px;padding:10px 12px;margin-bottom:6px;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <div style="width:26px;height:26px;border-radius:7px;background:${emp.color || '#0097AC'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
-            <span style="color:#fff;font-size:9px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
-          </div>
-          <div style="flex:1;min-width:0;">
-            <div style="font-size:11px;font-weight:700;color:#0F172A;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${emp.firstName} ${emp.lastName}</div>
-          </div>
-          <div style="background:#E6F7F9;color:#0097AC;font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${assignments.length} ${assignments.length === 1 ? i18n.t('schedule.imgTaskSingular') : assignments.length < 5 ? i18n.t('schedule.imgTaskPluralFew') : i18n.t('schedule.imgTaskPluralMany')}</div>
-        </div>
-        ${tasks}
-      </div>`;
-    }).join('');
-
-    // Assemble the full layout
-    container.innerHTML = `
-    <div id="scheduleImageRoot" style="width:${WIDTH}px;background:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">
-
-      <!-- Top accent bar -->
-      <div style="height:3px;background:linear-gradient(90deg,#0097AC,#007A8A,#005F6B);"></div>
-
-      <!-- Header: logo + week context in one compact bar -->
-      <div style="padding:16px 24px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <div style="width:28px;height:28px;background:linear-gradient(135deg,#0097AC,#007A8A);border-radius:7px;display:flex;align-items:center;justify-content:center;">
-            <span style="color:#fff;font-size:9px;font-weight:800;letter-spacing:0.5px;">PA</span>
-          </div>
-          <div>
-            <div style="display:flex;align-items:baseline;gap:4px;">
-              <span style="font-size:12px;font-weight:800;color:#0F172A;letter-spacing:0.8px;">DRÄXLMAIER</span>
-              <span style="font-size:7px;color:#CBD5E1;letter-spacing:1.5px;">GROUP</span>
-            </div>
-            <div style="font-size:8px;color:#94A3B8;margin-top:1px;">Produkt Audyt · ${dateStr}</div>
-          </div>
-        </div>
-        <div style="text-align:right;">
-          ${isUpdate ? `<div style="display:inline-block;background:#FEF3C7;color:#D97706;font-size:8px;font-weight:700;padding:2px 8px;border-radius:4px;margin-bottom:3px;letter-spacing:0.5px;">🔄 ${i18n.t('schedule.imgUpdate')}</div><br>` : ''}
-          <span style="font-size:9px;color:#64748B;font-weight:500;">${i18n.t('schedule.weeklySchedule')}</span>
-        </div>
-      </div>
-
-      <!-- Context bar: KW + dates + KPIs in one line -->
-      <div style="margin:0 24px;background:linear-gradient(135deg,#006D7B 0%,#0097AC 50%,#00B4CC 100%);border-radius:10px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <span style="font-size:22px;font-weight:800;color:#fff;letter-spacing:-0.5px;line-height:1;">KW${weekNum}</span>
-          <div style="width:1px;height:24px;background:rgba(255,255,255,0.2);"></div>
-          <div>
-            <div style="font-size:11px;color:rgba(255,255,255,0.9);font-weight:600;">${weekDates.start.slice(0, 5)} – ${weekDates.end.slice(0, 5)}</div>
-            <div style="font-size:9px;color:rgba(255,255,255,0.45);margin-top:1px;">${year}</div>
-          </div>
-        </div>
-        <div style="display:flex;gap:12px;align-items:center;">
-          <div style="text-align:center;">
-            <div style="font-size:15px;font-weight:800;color:#fff;line-height:1;">${totalEmployees}</div>
-            <div style="font-size:7px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.8px;margin-top:2px;">${i18n.t('schedule.imgEmployeesShort')}</div>
-          </div>
-          <div style="width:1px;height:20px;background:rgba(255,255,255,0.15);"></div>
-          <div style="text-align:center;">
-            <div style="font-size:15px;font-weight:800;color:#fff;line-height:1;">${totalProjects}</div>
-            <div style="font-size:7px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.8px;margin-top:2px;">${i18n.t('schedule.imgProjectsShort')}</div>
-          </div>
-          <div style="width:1px;height:20px;background:rgba(255,255,255,0.15);"></div>
-          <div style="text-align:center;">
-            <div style="font-size:15px;font-weight:800;color:#fff;line-height:1;">${totalAssignments}</div>
-            <div style="font-size:7px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.8px;margin-top:2px;">${i18n.t('schedule.imgAssignmentsShort')}</div>
-          </div>
-        </div>
-      </div>
-
-      ${activeShifts.length > 1 ? `
-      <!-- Shift breakdown: inline pills -->
-      <div style="margin:8px 24px 0;display:flex;gap:6px;">
-        ${activeShifts.map((s, i) => {
-          const count = shiftCounts[i];
-          const pct = totalAssignments > 0 ? Math.round(count / totalAssignments * 100) : 0;
-          return `<div style="flex:1;background:#F8FAFC;border:1px solid #F1F5F9;border-radius:6px;padding:6px 4px;text-align:center;">
-            <span style="font-size:9px;font-weight:700;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${shiftNames[s-1]}</span>
-            <span style="font-size:8px;color:#94A3B8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"> ${shiftTimes[s-1]}</span>
-            <span style="font-size:12px;font-weight:800;color:#0097AC;margin-left:6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${count}</span>
-            <span style="font-size:8px;color:#CBD5E1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">(${pct}%)</span>
-          </div>`;
-        }).join('')}
-      </div>` : ''}
-
-      <!-- Schedule table -->
-      <div style="margin:14px 24px 0;">
-        <div style="font-size:9px;font-weight:700;color:#0F172A;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">📋 ${i18n.t('schedule.scheduleOverview')}</div>
-        <div style="border-radius:10px;overflow:hidden;border:1px solid #F1F5F9;">
-          <table style="width:100%;border-collapse:collapse;">
-            <tr>
-              <th style="background:#0097AC;padding:8px 12px;text-align:left;font-size:9px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:0.5px;width:170px;">${i18n.t('schedule.project')}</th>
-              ${activeShifts.map(s => `
-                <th style="background:#0097AC;padding:8px 6px;text-align:center;border-left:1px solid rgba(255,255,255,0.15);">
-                  <div style="font-size:10px;font-weight:700;color:#fff;">${shiftNames[s-1]}</div>
-                  <div style="font-size:8px;color:rgba(255,255,255,0.65);margin-top:1px;">${shiftTimes[s-1]}</div>
-                </th>
-              `).join('')}
-            </tr>
-            ${projectRowsHtml}
-          </table>
-        </div>
-      </div>
-
-      <!-- Employee details -->
-      <div style="margin:14px 24px 0;">
-        <div style="font-size:9px;font-weight:700;color:#0F172A;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;">👥 ${i18n.t('schedule.allEmployeeSchedules')}</div>
-        ${empCardsHtml}
-      </div>
-
-      <!-- Footer -->
-      <div style="margin:14px 24px 0;border-top:1px solid #F1F5F9;padding:12px 0 14px;text-align:center;">
-        <div style="display:flex;align-items:center;justify-content:center;gap:6px;">
-          <div style="width:18px;height:18px;background:linear-gradient(135deg,#0097AC,#007A8A);border-radius:5px;display:flex;align-items:center;justify-content:center;">
-            <span style="color:#fff;font-size:7px;font-weight:800;">PA</span>
-          </div>
-          <span style="font-size:10px;font-weight:700;color:#0F172A;">Produkt Audyt</span>
-          <span style="font-size:9px;color:#CBD5E1;">by DRÄXLMAIER</span>
-        </div>
-        <div style="font-size:8px;color:#CBD5E1;margin-top:4px;">© ${new Date().getFullYear()} DRÄXLMAIER Group · Produkt Audyt · ${dateStr}</div>
-      </div>
-
-      <!-- Bottom accent bar -->
-      <div style="height:3px;background:linear-gradient(90deg,#0097AC,#007A8A,#005F6B);"></div>
-    </div>`;
-
-    // Render to canvas
-    const root = container.querySelector('#scheduleImageRoot') as HTMLElement;
-    try {
-      const canvas = await html2canvas(root, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#FFFFFF',
-        width: WIDTH,
-        windowWidth: WIDTH,
-      });
-
-      // Convert to blob and copy to clipboard
-      const blob = await new Promise<Blob>((resolve, reject) => {
-        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png');
-      });
-
-      await navigator.clipboard.write([
-        new ClipboardItem({ 'image/png': blob })
-      ]);
-
-      document.body.removeChild(container);
-      return true;
-    } catch (e) {
-      document.body.removeChild(container);
-      throw e;
-    }
-  }
   
   // ==================== CORPORATE HTML EMAIL GENERATOR ====================
   
@@ -16899,9 +16453,8 @@ class KappaApp {
     const year = weekKey.split('-KW')[0];
     const weekDates = this.getWeekDateRange(parseInt(year), parseInt(weekNum));
     const dateStr = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
-    const dayNames = ['Mo', 'Di', 'Mi', 'Do', 'Fr'];
     
-    // Premium color palette
+    // Corporate color palette
     const c = {
       black: '#1a1a2e',
       teal: '#0097AC',
@@ -16929,13 +16482,20 @@ class KappaApp {
       blueBg: '#eff6ff',
     };
     
-    const font = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
+    const shiftNames = [
+      `${i18n.t('schedule.shift')} 1 – ${i18n.t('schedule.shiftMorning') || 'Poranek'} (6:00–14:00)`,
+      `${i18n.t('schedule.shift')} 2 – ${i18n.t('schedule.shiftAfternoon') || 'Popołudnie'} (14:00–22:00)`,
+      `${i18n.t('schedule.shift')} 3 – ${i18n.t('schedule.shiftNight') || 'Noc'} (22:00–6:00)`
+    ];
     const shiftShortNames = [`${i18n.t('schedule.shift')} 1`, `${i18n.t('schedule.shift')} 2`, `${i18n.t('schedule.shift')} 3`];
     const shiftSubNames = ['6:00–14:00', '14:00–22:00', '22:00–6:00'];
-    const shiftIcons = ['☀️', '🌤️', '🌙'];
+    const shiftColors = ['#f59e0b', '#f97316', '#6366f1'];
+    const shiftBgs = ['#fffbeb', '#fff7ed', '#f5f3ff'];
+    const shiftHeaderBgs = ['#fef3c7', '#ffedd5', '#ede9fe'];
+    const shiftIcons = ['☀️', '🔥', '🌙'];
     
     // Build general schedule data grouped by project
-    const byProject = new Map<string, { customer: string; type: string; customerColor: string; shifts: Map<number, Array<{name: string; scope: string; color: string; firstName: string; lastName: string}>> }>();
+    const byProject = new Map<string, { customer: string; type: string; customerColor: string; shifts: Map<number, Array<{name: string; scope: string; color: string; firstName: string}>> }>();
     
     weekAssignments.forEach((a: ScheduleAssignment) => {
       const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
@@ -16957,14 +16517,14 @@ class KappaApp {
         if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
         
         let scopeTag = '';
-        if (a.scope === 'audit') scopeTag = 'Produkt Audit';
-        else if (a.scope === 'adhesion') scopeTag = 'Messlehre';
+        if (a.scope === 'audit') scopeTag = '🔍 Audit';
+        else if (a.scope === 'adhesion') scopeTag = '🔧 Messlehre';
         else if (a.scope === 'specific' && a.testId) {
           const t = this.state.tests.find(t => t.id === a.testId);
-          scopeTag = t?.name || 'Test';
+          scopeTag = `⚙️ ${t?.name || 'Test'}`;
         }
         
-        data.shifts.get(a.shift)!.push({ name: `${emp.firstName} ${emp.lastName}`, firstName: emp.firstName, lastName: emp.lastName, scope: scopeTag, color: emp.color });
+        data.shifts.get(a.shift)!.push({ name: `${emp.firstName} ${emp.lastName}`, firstName: emp.firstName, scope: scopeTag, color: emp.color });
       }
     });
     
@@ -16981,382 +16541,385 @@ class KappaApp {
     });
     
     const activeShifts = [1, 2, 3].filter(s => s <= this.scheduleShiftSystem);
-    const colWidth = Math.floor(68 / activeShifts.length);
+    const colWidth = Math.floor(70 / activeShifts.length);
     
-    // Stats
+    // ============ HEADER ============
+    const headerHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+        <!-- Thin teal accent bar at very top -->
+        <tr>
+          <td bgcolor="${c.teal}" style="background-color: ${c.teal}; height: 4px; font-size: 0; line-height: 0;">&nbsp;</td>
+        </tr>
+        <!-- Clean white header -->
+        <tr>
+          <td style="padding: 28px 32px 20px; border-bottom: 1px solid ${c.gray200};">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td>
+                  <span style="font-size: 18px; font-weight: 800; color: ${c.gray900}; letter-spacing: 2px; font-family: Arial, sans-serif;">DRÄXLMAIER</span>
+                  <span style="font-size: 11px; color: ${c.gray300}; font-family: Arial, sans-serif; display: inline; margin-left: 6px; letter-spacing: 1px; font-weight: 400;">GROUP</span>
+                </td>
+                <td style="text-align: right;">
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px;">Kappa Planning</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Week info section -->
+        <tr>
+          <td style="padding: 24px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td>
+                  ${isUpdate ? `<span style="display: inline-block; background-color: ${c.orangeBg}; color: ${c.orange}; font-size: 10px; font-weight: 700; padding: 3px 10px; border-radius: 4px; border: 1px solid ${c.orangeBorder}; margin-bottom: 10px; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 0.5px;">AKTUALIZACJA</span><br>` : ''}
+                  <span style="font-size: 11px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;">
+                    ${mode === 'employee' ? i18n.t('schedule.yourAssignments') : i18n.t('schedule.scheduleOverview')}
+                  </span>
+                  <span style="display: block; font-size: 32px; font-weight: 800; color: ${c.gray900}; font-family: Arial, sans-serif; margin-top: 4px; letter-spacing: -0.5px;">
+                    KW${weekNum}
+                  </span>
+                  <span style="display: block; font-size: 14px; color: ${c.gray500}; font-family: Arial, sans-serif; margin-top: 4px;">
+                    ${weekDates.start.slice(0, 5)} – ${weekDates.end.slice(0, 5)}, ${year}
+                  </span>
+                </td>
+                <td style="text-align: right; vertical-align: bottom;">
+                  <span style="font-size: 11px; color: ${c.gray300}; font-family: Arial, sans-serif;">${dateStr}</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        <!-- Thin separator -->
+        <tr>
+          <td style="padding: 0 32px;">
+            <div style="height: 1px; background-color: ${c.gray200};"></div>
+          </td>
+        </tr>
+      </table>
+    `;
+    
+    // ============ SUMMARY STATS ============
     const totalAssignments = weekAssignments.length;
     const totalEmployees = new Set(weekAssignments.map(a => a.employeeId)).size;
     const totalProjects = byProject.size;
-    const shiftCounts = [
-      weekAssignments.filter(a => a.shift === 1).length,
-      weekAssignments.filter(a => a.shift === 2).length,
-      weekAssignments.filter(a => a.shift === 3).length,
-    ];
+    const shift1Count = weekAssignments.filter(a => a.shift === 1).length;
+    const shift2Count = weekAssignments.filter(a => a.shift === 2).length;
+    const shift3Count = weekAssignments.filter(a => a.shift === 3).length;
     
-    // Employee personal section (for single employee mode)
+    const summaryHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 20px 0 24px;">
+        <tr>
+          <td>
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td width="33%" style="text-align: center; padding: 16px 8px;">
+                  <span style="font-size: 28px; font-weight: 800; color: ${c.teal}; font-family: Arial, sans-serif; display: block; line-height: 1;">${totalEmployees}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; display: block;">${i18n.t('schedule.employees')}</span>
+                </td>
+                <td width="1" style="background-color: ${c.gray200}; width: 1px; padding: 0;"></td>
+                <td width="33%" style="text-align: center; padding: 16px 8px;">
+                  <span style="font-size: 28px; font-weight: 800; color: ${c.teal}; font-family: Arial, sans-serif; display: block; line-height: 1;">${totalProjects}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; display: block;">${i18n.t('analytics.export.projects')}</span>
+                </td>
+                <td width="1" style="background-color: ${c.gray200}; width: 1px; padding: 0;"></td>
+                <td width="33%" style="text-align: center; padding: 16px 8px;">
+                  <span style="font-size: 28px; font-weight: 800; color: ${c.teal}; font-family: Arial, sans-serif; display: block; line-height: 1;">${totalAssignments}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; display: block;">${i18n.t('analytics.export.assignments')}</span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+        ${activeShifts.length > 1 ? `
+        <tr>
+          <td style="padding-top: 12px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                ${activeShifts.map(s => {
+                  const count = [shift1Count, shift2Count, shift3Count][s-1];
+                  return `
+                    <td width="${Math.floor(100/activeShifts.length)}%" style="text-align: center; padding: 8px 4px;">
+                      <span style="display: inline-block; font-size: 11px; font-weight: 600; color: ${c.gray700}; padding: 5px 14px; border-radius: 20px; border: 1px solid ${c.gray200}; background-color: ${c.gray50}; font-family: Arial, sans-serif;">${shiftShortNames[s-1]} &middot; ${count}</span>
+                    </td>
+                  `;
+                }).join('')}
+              </tr>
+            </table>
+          </td>
+        </tr>
+        ` : ''}
+      </table>
+    `;
+    
+    // ============ EMPLOYEE PERSONAL SECTION (for single employee mode) ============
     const targetEmp = employeeId ? this.state.employees.find(e => e.id === employeeId) : null;
     const empAssignments = employeeId ? weekAssignments.filter(a => a.employeeId === employeeId) : [];
     
     let personalSectionHtml = '';
     if (mode === 'employee' && targetEmp && empAssignments.length > 0) {
       personalSectionHtml = `
-        <tr><td style="padding: 0 40px 32px;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
-            <tr>
-              <td style="background: ${c.tealLight}; border-left: 4px solid ${c.teal}; padding: 20px 24px;">
-                <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td width="52" valign="top">
-                      <div style="width: 44px; height: 44px; border-radius: 12px; background: ${targetEmp.color || c.teal}; color: white; font-size: 16px; font-weight: 700; text-align: center; line-height: 44px; font-family: ${font};">
-                        ${targetEmp.firstName.charAt(0)}${targetEmp.lastName.charAt(0)}
-                      </div>
-                    </td>
-                    <td style="padding-left: 14px;">
-                      <span style="font-size: 18px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; display: block;">${targetEmp.firstName} ${targetEmp.lastName}</span>
-                      <span style="font-size: 12px; color: ${c.gray500}; font-family: ${font}; display: block; margin-top: 2px;">${empAssignments.length} ${empAssignments.length === 1 ? 'zadanie' : empAssignments.length < 5 ? 'zadania' : 'zadań'}</span>
-                    </td>
-                  </tr>
-                </table>
-                ${empAssignments.map((a: ScheduleAssignment) => {
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 24px;">
+          <tr>
+            <td style="background: ${c.tealBg}; border: 2px solid ${c.teal}; border-radius: 12px; padding: 20px 24px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td width="56" valign="top">
+                    <div style="width: 48px; height: 48px; border-radius: 50%; background: ${targetEmp.color}; color: white; font-size: 18px; font-weight: 700; text-align: center; line-height: 48px; font-family: Arial, sans-serif;">
+                      ${targetEmp.firstName.charAt(0)}${targetEmp.lastName.charAt(0)}
+                    </div>
+                  </td>
+                  <td style="padding-left: 14px;">
+                    <span style="font-size: 20px; font-weight: 700; color: ${c.gray900}; font-family: Arial, sans-serif; display: block;">
+                      ${targetEmp.firstName} ${targetEmp.lastName}
+                    </span>
+                    <span style="font-size: 13px; color: ${c.gray500}; font-family: Arial, sans-serif; display: block; margin-top: 4px;">
+                      ${empAssignments.length} ${empAssignments.length === 1 ? 'zadanie' : empAssignments.length < 5 ? 'zadania' : 'zadań'} w tym tygodniu
+                    </span>
+                  </td>
+                </tr>
+              </table>
+              
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top: 16px; border-collapse: collapse;">
+                ${empAssignments.map((a: ScheduleAssignment, aIdx: number) => {
                   const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
                   const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
                   const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+                  
                   let scopeTag = '';
-                  if (a.scope === 'audit') scopeTag = 'Produkt Audit';
-                  else if (a.scope === 'adhesion') scopeTag = 'Messlehre';
-                  else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
+                  if (a.scope === 'audit') scopeTag = '🔍 Audit';
+                  else if (a.scope === 'adhesion') scopeTag = '🔧 Messlehre';
+                  else if (a.scope === 'specific' && a.testId) {
+                    const t = this.state.tests.find(t => t.id === a.testId);
+                    scopeTag = `⚙️ ${t?.name || 'Test'}`;
+                  }
+                  
                   return `
-                    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 8px;">
-                      <tr>
-                        <td style="background: ${c.white}; padding: 12px 16px; border-radius: 8px;">
-                          <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-                            <td>
-                              <span style="font-size: 13px; font-weight: 600; color: ${c.gray900}; font-family: ${font};">${customer?.name || '?'} – ${ptype?.name || '?'}</span>
-                              ${scopeTag ? `<span style="font-size: 11px; color: ${c.tealDark}; font-family: ${font}; display: block; margin-top: 2px;">${scopeTag}</span>` : ''}
+                    <tr>
+                      <td style="padding: 10px 12px; background: ${c.white}; border-bottom: 1px solid ${c.gray200}; ${aIdx === 0 ? 'border-radius: 8px 8px 0 0;' : ''} ${aIdx === empAssignments.length - 1 ? 'border-radius: 0 0 8px 8px; border-bottom: none;' : ''}">
+                        <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                          <tr>
+                            <td width="4" style="background: ${shiftColors[a.shift - 1]}; border-radius: 4px;"></td>
+                            <td style="padding-left: 12px;">
+                              <span style="font-size: 14px; font-weight: 600; color: ${c.gray900}; font-family: Arial, sans-serif;">
+                                ${customer?.name || '?'} – ${ptype?.name || '?'}
+                              </span>
+                              ${scopeTag ? `<span style="display: block; font-size: 12px; color: ${c.gray500}; margin-top: 2px; font-family: Arial, sans-serif;">${scopeTag}</span>` : ''}
                             </td>
-                            <td style="text-align: right;">
-                              <span style="display: inline-block; font-size: 11px; font-weight: 700; color: ${c.white}; background: ${c.teal}; padding: 4px 14px; border-radius: 6px; font-family: ${font};">${shiftShortNames[a.shift - 1]} ${shiftSubNames[a.shift - 1]}</span>
+                            <td style="text-align: right; white-space: nowrap; vertical-align: middle;">
+                              <span style="display: inline-block; font-size: 12px; font-weight: 600; background: ${shiftBgs[a.shift - 1]}; color: ${shiftColors[a.shift - 1]}; padding: 5px 14px; border-radius: 14px; font-family: Arial, sans-serif;">
+                                ${shiftIcons[a.shift - 1]} ${shiftShortNames[a.shift - 1]}
+                              </span>
+                              <span style="display: block; font-size: 10px; color: ${c.gray500}; margin-top: 2px; text-align: center; font-family: Arial, sans-serif;">
+                                ${shiftSubNames[a.shift - 1]}
+                              </span>
                             </td>
-                          </tr></table>
-                        </td>
-                      </tr>
-                    </table>`;
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  `;
                 }).join('')}
-              </td>
-            </tr>
-          </table>
-        </td></tr>`;
+              </table>
+            </td>
+          </tr>
+        </table>
+      `;
     }
     
-    // General schedule table
+    // ============ GENERAL SCHEDULE TABLE (like the app grid) ============
     const sortedProjects = Array.from(byProject.entries()).sort((a, b) => a[1].customer.localeCompare(b[1].customer));
     
     let scheduleTableHtml = '';
     if (sortedProjects.length > 0) {
       scheduleTableHtml = `
-        <tr><td style="padding: 0 40px 12px;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
-            <tr><td style="padding-bottom: 12px;">
-              <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; text-transform: uppercase; letter-spacing: 2px;">📋 ${i18n.t('schedule.scheduleOverview')}</span>
-            </td></tr>
-          </table>
-        </td></tr>
-        <tr><td style="padding: 0 40px 36px;">
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 8px;">
+          <tr>
+            <td style="padding-bottom: 14px;">
+              <span style="font-size: 11px; font-weight: 700; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1.5px;">
+                ${i18n.t('schedule.scheduleOverview')}
+              </span>
+            </td>
+          </tr>
+        </table>
+        
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; border: 1px solid ${c.gray200}; margin-bottom: 28px;">
+          <thead>
             <tr>
-              <td style="background: ${c.teal}; padding: 14px 18px; font-size: 11px; font-weight: 700; color: ${c.white}; font-family: ${font}; text-transform: uppercase; letter-spacing: 1px; width: 32%;">${i18n.t('schedule.project')}</td>
+              <th style="background-color: ${c.gray50}; color: ${c.gray500}; padding: 10px 14px; text-align: left; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; font-family: Arial, sans-serif; border-bottom: 2px solid ${c.gray200}; width: 30%;">
+                ${i18n.t('schedule.project')}
+              </th>
               ${activeShifts.map(s => `
-                <td style="background: ${c.teal}; padding: 14px 10px; text-align: center; font-family: ${font}; width: ${colWidth}%; border-left: 1px solid rgba(255,255,255,0.15);">
-                  <span style="font-size: 12px; font-weight: 700; color: ${c.white}; display: block;">${shiftIcons[s-1]} ${shiftShortNames[s-1]}</span>
-                  <span style="font-size: 10px; color: rgba(255,255,255,0.75);">${shiftSubNames[s-1]}</span>
-                </td>
+                <th style="background-color: ${c.gray50}; padding: 10px 8px; text-align: center; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-family: Arial, sans-serif; border-bottom: 2px solid ${c.gray200}; border-left: 1px solid ${c.gray200}; width: ${colWidth}%; color: ${c.gray500};">
+                  <span style="font-size: 12px; font-weight: 700; color: ${c.gray700}; display: block;">${shiftShortNames[s-1]}</span>
+                  <span style="font-size: 10px; color: ${c.gray500}; font-weight: 400;">${shiftSubNames[s-1]}</span>
+                </th>
               `).join('')}
             </tr>
+          </thead>
+          <tbody>
             ${sortedProjects.map(([_, data], idx) => {
-              const isEven = idx % 2 === 0;
-              const rowBg = isEven ? c.white : '#f7f9fb';
-              const isLast = idx === sortedProjects.length - 1;
+              const rowBg = idx % 2 === 0 ? c.white : c.gray50;
+              
               return `
                 <tr>
-                  <td style="background: ${rowBg}; padding: 16px 18px; ${!isLast ? 'border-bottom: 1px solid ' + c.gray200 + ';' : ''} vertical-align: top;">
-                    <span style="font-size: 14px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; display: block; line-height: 1.3;">${data.customer}</span>
-                    <span style="font-size: 11px; color: ${c.gray500}; font-family: ${font}; display: block; margin-top: 2px;">${data.type}</span>
+                  <td style="background-color: ${rowBg}; padding: 12px 14px; border-bottom: 1px solid ${c.gray200}; vertical-align: middle; border-left: 3px solid ${c.teal};">
+                    <span style="font-size: 13px; font-weight: 700; color: ${c.gray900}; font-family: Arial, sans-serif; display: block;">
+                      ${data.customer}
+                    </span>
+                    <span style="font-size: 11px; color: ${c.gray500}; font-family: Arial, sans-serif; display: block; margin-top: 2px;">
+                      ${data.type}
+                    </span>
                   </td>
                   ${activeShifts.map(s => {
                     const emps = data.shifts.get(s) || [];
                     return `
-                      <td style="background: ${rowBg}; padding: 12px 10px; ${!isLast ? 'border-bottom: 1px solid ' + c.gray200 + ';' : ''} border-left: 1px solid ${c.gray200}; text-align: center; vertical-align: top;">
+                      <td style="background-color: ${rowBg}; padding: 8px 10px; border-bottom: 1px solid ${c.gray200}; border-left: 1px solid ${c.gray200}; text-align: center; vertical-align: middle;">
                         ${emps.length > 0 ? emps.map(e => `
-                          <div style="margin: 4px 0;">
-                            <table cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto;"><tr>
-                              <td width="24" valign="middle">
-                                <div style="width: 22px; height: 22px; border-radius: 6px; background: ${e.color || c.teal}; color: white; font-size: 9px; font-weight: 700; text-align: center; line-height: 22px; font-family: ${font};">${e.firstName.charAt(0)}${e.lastName.charAt(0)}</div>
-                              </td>
-                              <td style="padding-left: 6px;">
-                                <span style="font-size: 13px; font-weight: 600; color: ${c.gray900}; font-family: ${font};">${e.firstName}</span>
-                                ${e.scope ? `<span style="font-size: 9px; color: ${c.tealDark}; display: block; font-family: ${font}; font-weight: 500; line-height: 1.2;">${e.scope}</span>` : ''}
-                              </td>
-                            </tr></table>
+                          <div style="margin: 2px 0;">
+                            <span style="font-size: 12px; font-weight: 600; color: ${c.gray900}; font-family: Arial, sans-serif;">
+                              ${e.firstName}
+                            </span>
+                            ${e.scope ? `<span style="font-size: 10px; color: ${c.gray500}; display: block; font-family: Arial, sans-serif;">${e.scope}</span>` : ''}
                           </div>
-                        `).join('') : `<span style="color: ${c.gray300}; font-size: 16px;">—</span>`}
+                        `).join('') : `<span style="color: ${c.gray300}; font-size: 12px;">—</span>`}
                       </td>
                     `;
                   }).join('')}
                 </tr>
               `;
             }).join('')}
-          </table>
-        </td></tr>`;
+          </tbody>
+        </table>
+      `;
     }
     
-    // Individual employee detail cards (for 'full' mode)
+    // ============ INDIVIDUAL EMPLOYEE SCHEDULES (for 'full' mode) ============
     let employeeDetailHtml = '';
     if ((mode === 'full' || mode === 'general') && byEmployee.size > 0) {
-      const empCards = Array.from(byEmployee.entries()).map(([_eId, data]: [string, { emp: Employee; assignments: ScheduleAssignment[] }]) => {
+      const employeeSections = Array.from(byEmployee.entries()).map(([_eId, data]: [string, { emp: Employee; assignments: ScheduleAssignment[] }]) => {
         const { emp, assignments } = data;
+        
+        // Group assignments by shift
+        const byShift = new Map<number, ScheduleAssignment[]>();
+        assignments.forEach(a => {
+          if (!byShift.has(a.shift)) byShift.set(a.shift, []);
+          byShift.get(a.shift)!.push(a);
+        });
+        
         return `
-          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 10px; overflow: hidden;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 14px; border: 1px solid ${c.gray200};">
+            <!-- Employee header -->
             <tr>
-              <td style="background: ${c.white}; padding: 14px 18px; border-bottom: 1px solid ${c.gray100};">
-                <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-                  <td width="36" valign="middle">
-                    <div style="width: 32px; height: 32px; border-radius: 8px; background: ${emp.color || c.teal}; color: white; font-size: 12px; font-weight: 700; text-align: center; line-height: 32px; font-family: ${font};">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
-                  </td>
-                  <td style="padding-left: 12px;">
-                    <span style="font-size: 14px; font-weight: 700; color: ${c.gray900}; font-family: ${font};">${emp.firstName} ${emp.lastName}</span>
-                  </td>
-                  <td style="text-align: right;">
-                    <span style="display: inline-block; font-size: 11px; font-weight: 700; color: ${c.teal}; background: ${c.tealLight}; padding: 4px 12px; border-radius: 6px; font-family: ${font};">${assignments.length} ${assignments.length === 1 ? 'task' : 'tasks'}</span>
-                  </td>
-                </tr></table>
+              <td colspan="2" style="background-color: ${c.white}; padding: 10px 16px; border-bottom: 1px solid ${c.gray200};">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td width="36" valign="middle">
+                      <div style="width: 32px; height: 32px; border-radius: 50%; background-color: ${c.teal}; color: white; font-size: 12px; font-weight: 700; text-align: center; line-height: 32px; font-family: Arial, sans-serif;">
+                        ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
+                      </div>
+                    </td>
+                    <td style="padding-left: 10px;">
+                      <span style="font-size: 14px; font-weight: 700; color: ${c.gray900}; font-family: Arial, sans-serif;">
+                        ${emp.firstName} ${emp.lastName}
+                      </span>
+                    </td>
+                    <td style="text-align: right;">
+                      <span style="font-size: 11px; color: ${c.gray500}; font-family: Arial, sans-serif;">
+                        ${assignments.length} ${assignments.length === 1 ? 'task' : 'tasks'}
+                      </span>
+                    </td>
+                  </tr>
+                </table>
               </td>
             </tr>
+            <!-- Tasks -->
             ${assignments.map((a: ScheduleAssignment, aIdx: number) => {
               const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
               const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
               const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+              const rowBg = aIdx % 2 === 0 ? c.white : c.gray50;
+              
               let scopeTag = '';
-              if (a.scope === 'audit') scopeTag = 'Produkt Audit';
+              if (a.scope === 'audit') scopeTag = 'Audit';
               else if (a.scope === 'adhesion') scopeTag = 'Messlehre';
-              else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
-              const isLast = aIdx === assignments.length - 1;
+              else if (a.scope === 'specific' && a.testId) {
+                const t = this.state.tests.find(t => t.id === a.testId);
+                scopeTag = t?.name || 'Test';
+              }
+              
               return `
                 <tr>
-                  <td style="background: ${c.white}; padding: 11px 18px; ${!isLast ? 'border-bottom: 1px solid ' + c.gray100 + ';' : ''}">
-                    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-                      <td style="border-left: 3px solid ${c.teal}; padding-left: 12px;">
-                        <span style="font-size: 13px; font-weight: 600; color: ${c.gray900}; font-family: ${font};">${customer?.name || '?'} – ${ptype?.name || '?'}</span>
-                        ${scopeTag ? `<span style="font-size: 10px; color: ${c.tealDark}; margin-left: 6px; font-family: ${font}; font-weight: 500;">(${scopeTag})</span>` : ''}
-                      </td>
-                      <td style="text-align: right; white-space: nowrap;">
-                        <span style="display: inline-block; font-size: 11px; font-weight: 700; color: ${c.white}; background: ${c.teal}; padding: 4px 12px; border-radius: 6px; font-family: ${font};">${shiftShortNames[a.shift - 1]} ${shiftSubNames[a.shift - 1]}</span>
-                      </td>
-                    </tr></table>
+                  <td style="background-color: ${rowBg}; padding: 9px 16px; border-bottom: 1px solid ${c.gray200}; border-left: 3px solid ${c.teal};">
+                    <span style="font-size: 12px; font-weight: 600; color: ${c.gray900}; font-family: Arial, sans-serif;">
+                      ${customer?.name || '?'} – ${ptype?.name || '?'}
+                    </span>
+                    ${scopeTag ? `<span style="display: inline; font-size: 10px; color: ${c.gray500}; margin-left: 6px; font-family: Arial, sans-serif;">(${scopeTag})</span>` : ''}
                   </td>
-                </tr>`;
+                  <td style="background-color: ${rowBg}; padding: 9px 12px; border-bottom: 1px solid ${c.gray200}; text-align: right; white-space: nowrap; vertical-align: middle;">
+                    <span style="font-size: 11px; font-weight: 600; color: ${c.gray700}; font-family: Arial, sans-serif;">
+                      ${shiftShortNames[a.shift - 1]}
+                    </span>
+                    <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif; margin-left: 4px;">
+                      ${shiftSubNames[a.shift - 1]}
+                    </span>
+                  </td>
+                </tr>
+              `;
             }).join('')}
-          </table>`;
+          </table>
+        `;
       });
       
       employeeDetailHtml = `
-        <tr><td style="padding: 0 40px 12px;">
-          <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; text-transform: uppercase; letter-spacing: 2px;">👥 ${i18n.t('schedule.allEmployeeSchedules')}</span>
-        </td></tr>
-        <tr><td style="padding: 0 40px 32px;">
-          ${empCards.join('')}
-        </td></tr>`;
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 8px; margin-top: 8px;">
+          <tr>
+            <td style="padding-bottom: 14px; padding-top: 12px; border-top: 1px solid ${c.gray200};">
+              <span style="font-size: 11px; font-weight: 700; color: ${c.gray500}; font-family: Arial, sans-serif; text-transform: uppercase; letter-spacing: 1.5px;">
+                ${i18n.t('schedule.allEmployeeSchedules')}
+              </span>
+            </td>
+          </tr>
+        </table>
+        ${employeeSections.join('')}
+      `;
     }
     
-    // ============ ASSEMBLE FULL EMAIL ============
-    return `<!DOCTYPE html>
-<html lang="de">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="X-UA-Compatible" content="IE=edge">
-<title>Grafik KW${weekNum} ${year}</title>
-</head>
-<body style="margin: 0; padding: 0; background-color: #eef2f7; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
-<!--[if mso]><table width="680" cellpadding="0" cellspacing="0" border="0" align="center" style="background:#ffffff;"><tr><td><![endif]-->
-
-<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; background: #eef2f7;">
-<tr><td align="center" style="padding: 24px 16px;">
-
-<!-- MAIN CONTAINER -->
-<table width="660" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; max-width: 660px; width: 100%; background: ${c.white}; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
-
-  <!-- ████ TOP GRADIENT BAR ████ -->
-  <tr>
-    <td style="background: linear-gradient(90deg, ${c.teal}, ${c.tealDark}, #005F6B); height: 6px; font-size: 0; line-height: 0;">&nbsp;</td>
-  </tr>
-
-  <!-- ████ LOGO HEADER ████ -->
-  <tr>
-    <td style="padding: 28px 40px 0;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0">
+    // ============ FOOTER ============
+    const footerHtml = `
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 8px;">
         <tr>
-          <td valign="middle">
-            <table cellpadding="0" cellspacing="0" border="0"><tr>
-              <td style="width: 36px; height: 36px; background: ${c.teal}; border-radius: 10px; text-align: center; vertical-align: middle;">
-                <span style="color: white; font-size: 16px; font-weight: 800; font-family: ${font}; line-height: 36px;">K</span>
-              </td>
-              <td style="padding-left: 12px;">
-                <span style="font-size: 18px; font-weight: 800; color: ${c.gray900}; letter-spacing: 1.5px; font-family: ${font};">DRÄXLMAIER</span>
-                <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-left: 4px; letter-spacing: 2px; font-weight: 400;">GROUP</span>
-              </td>
-            </tr></table>
-          </td>
-          <td style="text-align: right; vertical-align: middle;">
-            <span style="font-size: 10px; color: ${c.gray500}; font-family: ${font}; letter-spacing: 0.5px; text-transform: uppercase;">Kappa Planning</span>
-            <span style="display: block; font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-top: 2px;">${dateStr}</span>
+          <td style="padding: 0 32px;">
+            <div style="height: 1px; background-color: ${c.gray200};"></div>
           </td>
         </tr>
-      </table>
-    </td>
-  </tr>
-
-  <!-- ████ HERO BANNER ████ -->
-  <tr>
-    <td style="padding: 28px 40px 0;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; border-radius: 16px; overflow: hidden;">
         <tr>
-          <td style="background: linear-gradient(135deg, #006d7b 0%, ${c.teal} 40%, #00b4cc 100%); padding: 36px 32px 32px;">
-            <table width="100%" cellpadding="0" cellspacing="0" border="0">
-              <tr>
-                <td>
-                  ${isUpdate ? `<span style="display: inline-block; background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); color: white; font-size: 10px; font-weight: 700; padding: 5px 14px; border-radius: 20px; margin-bottom: 14px; font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; border: 1px solid rgba(255,255,255,0.2);">🔄 AKTUALIZACJA</span><br><br>` : ''}
-                  <span style="font-size: 11px; color: rgba(255,255,255,0.6); font-family: ${font}; text-transform: uppercase; letter-spacing: 3px; font-weight: 600; display: block;">${mode === 'employee' ? i18n.t('schedule.yourAssignments') : i18n.t('schedule.scheduleOverview')}</span>
-                  <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 8px;"><tr>
-                    <td>
-                      <span style="font-size: 52px; font-weight: 800; color: white; font-family: ${font}; letter-spacing: -2px; line-height: 1;">KW${weekNum}</span>
-                    </td>
-                    <td style="padding-left: 16px; vertical-align: bottom; padding-bottom: 8px;">
-                      <span style="display: block; font-size: 15px; color: rgba(255,255,255,0.9); font-family: ${font}; font-weight: 500;">${weekDates.start.slice(0, 5)} – ${weekDates.end.slice(0, 5)}</span>
-                      <span style="display: block; font-size: 13px; color: rgba(255,255,255,0.5); font-family: ${font}; margin-top: 2px;">${year}</span>
-                    </td>
-                  </tr></table>
-                </td>
-              </tr>
-            </table>
-            
-            <!-- KPI Pills inside hero -->
-            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 24px;">
-              <tr>
-                <td width="33%" style="padding-right: 6px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
-                    <tr>
-                      <td style="background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); border-radius: 12px; padding: 14px 12px; text-align: center; border: 1px solid rgba(255,255,255,0.1);">
-                        <span style="font-size: 26px; font-weight: 800; color: white; font-family: ${font}; display: block; line-height: 1;">${totalEmployees}</span>
-                        <span style="font-size: 9px; color: rgba(255,255,255,0.7); font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; display: block; font-weight: 600;">${i18n.t('schedule.employees')}</span>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-                <td width="34%" style="padding: 0 3px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
-                    <tr>
-                      <td style="background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); border-radius: 12px; padding: 14px 12px; text-align: center; border: 1px solid rgba(255,255,255,0.1);">
-                        <span style="font-size: 26px; font-weight: 800; color: white; font-family: ${font}; display: block; line-height: 1;">${totalProjects}</span>
-                        <span style="font-size: 9px; color: rgba(255,255,255,0.7); font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; display: block; font-weight: 600;">${i18n.t('export.projects')}</span>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-                <td width="33%" style="padding-left: 6px;">
-                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
-                    <tr>
-                      <td style="background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); border-radius: 12px; padding: 14px 12px; text-align: center; border: 1px solid rgba(255,255,255,0.1);">
-                        <span style="font-size: 26px; font-weight: 800; color: white; font-family: ${font}; display: block; line-height: 1;">${totalAssignments}</span>
-                        <span style="font-size: 9px; color: rgba(255,255,255,0.7); font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; display: block; font-weight: 600;">${i18n.t('export.assignments')}</span>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-            </table>
+          <td style="padding: 20px 32px; text-align: center;">
+            <span style="font-size: 10px; color: ${c.gray500}; font-family: Arial, sans-serif;">${i18n.t('schedule.emailFooterNote')}</span>
+            <br>
+            <span style="font-size: 10px; color: ${c.gray300}; font-family: Arial, sans-serif; margin-top: 4px; display: inline-block;">&copy; ${new Date().getFullYear()} DRÄXLMAIER Group &nbsp;&middot;&nbsp; Kappa Planning &nbsp;&middot;&nbsp; ${dateStr}</span>
           </td>
         </tr>
-      </table>
-    </td>
-  </tr>
-
-  ${activeShifts.length > 1 ? `
-  <!-- ████ SHIFT BREAKDOWN BAR ████ -->
-  <tr>
-    <td style="padding: 20px 40px 0;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; background: ${c.gray50}; border-radius: 12px; border: 1px solid ${c.gray200};">
+        <!-- Bottom teal accent bar -->
         <tr>
-          ${activeShifts.map((s, i) => {
-            const count = shiftCounts[s-1];
-            const pct = totalAssignments > 0 ? Math.round(count / totalAssignments * 100) : 0;
-            return `
-              <td width="${Math.floor(100/activeShifts.length)}%" style="text-align: center; padding: 16px 8px; ${i < activeShifts.length - 1 ? 'border-right: 1px solid ' + c.gray200 + ';' : ''}">
-                <span style="font-size: 18px; display: block; line-height: 1;">${shiftIcons[s-1]}</span>
-                <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; display: block; margin-top: 6px;">${shiftShortNames[s-1]}</span>
-                <span style="font-size: 10px; color: ${c.gray500}; font-family: ${font}; display: block; margin-top: 2px;">${shiftSubNames[s-1]}</span>
-                <span style="display: inline-block; margin-top: 8px; font-size: 18px; font-weight: 800; color: ${c.teal}; font-family: ${font};">${count}</span>
-                <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-left: 2px;">(${pct}%)</span>
-              </td>
-            `;
-          }).join('')}
+          <td bgcolor="${c.teal}" style="background-color: ${c.teal}; height: 4px; font-size: 0; line-height: 0;">&nbsp;</td>
         </tr>
       </table>
-    </td>
-  </tr>
-  ` : ''}
-
-  <!-- ████ SPACER ████ -->
-  <tr><td style="height: 28px; font-size: 0; line-height: 0;">&nbsp;</td></tr>
-
-  <!-- ████ PERSONAL / SCHEDULE / EMPLOYEE DETAILS ████ -->
-  ${personalSectionHtml}
-  ${scheduleTableHtml}
-  ${(mode === 'full' || mode === 'general') ? employeeDetailHtml : ''}
-
-  <!-- ████ FOOTER ████ -->
-  <tr>
-    <td style="padding: 0 40px;">
-      <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top: 1px solid ${c.gray200};"></td></tr></table>
-    </td>
-  </tr>
-  <tr>
-    <td style="padding: 24px 40px 12px; text-align: center;">
-      <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;"><tr>
-        <td style="width: 28px; height: 28px; background: ${c.teal}; border-radius: 8px; text-align: center; vertical-align: middle;">
-          <span style="color: white; font-size: 13px; font-weight: 800; font-family: ${font}; line-height: 28px;">K</span>
-        </td>
-        <td style="padding-left: 10px;">
-          <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font};">Kappa Planning</span>
-          <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-left: 6px;">by DRÄXLMAIER</span>
-        </td>
-      </tr></table>
-    </td>
-  </tr>
-  <tr>
-    <td style="padding: 0 40px 8px; text-align: center;">
-      <span style="font-size: 10px; color: ${c.gray500}; font-family: ${font}; line-height: 1.6;">${i18n.t('schedule.emailFooterNote')}</span>
-    </td>
-  </tr>
-  <tr>
-    <td style="padding: 0 40px 24px; text-align: center;">
-      <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font};">&copy; ${new Date().getFullYear()} DRÄXLMAIER Group &nbsp;·&nbsp; Kappa Planning &nbsp;·&nbsp; ${dateStr}</span>
-    </td>
-  </tr>
-  
-  <!-- ████ BOTTOM GRADIENT BAR ████ -->
-  <tr>
-    <td style="background: linear-gradient(90deg, ${c.teal}, ${c.tealDark}, #005F6B); height: 6px; font-size: 0; line-height: 0;">&nbsp;</td>
-  </tr>
-
-</table>
-<!-- END MAIN CONTAINER -->
-
-</td></tr>
-</table>
-
-<!--[if mso]></td></tr></table><![endif]-->
-</body>
-</html>`;
+    `;
+    
+    // ============ ASSEMBLE ============
+    return `
+      <div style="font-family: Arial, Helvetica, sans-serif; max-width: 720px; margin: 0 auto; background: ${c.white}; border: 1px solid ${c.gray200};">
+        ${headerHtml}
+        <div style="padding: 28px 32px;">
+          ${personalSectionHtml}
+          ${summaryHtml}
+          ${scheduleTableHtml}
+          ${(mode === 'full' || mode === 'general') ? employeeDetailHtml : ''}
+        </div>
+        ${footerHtml}
+      </div>
+    `;
   }
   
   // Plain text version for mailto: links
@@ -17435,12 +16998,7 @@ class KappaApp {
   
   private openOutlookEmail(to: string, subject: string, body: string): void {
     const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.replace(/\\n/g, '\n'))}`;
-    const a = document.createElement('a');
-    a.href = mailtoUrl;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    window.open(mailtoUrl, '_blank');
   }
 
   // ==================== WIDOK GANTT OBCIĄŻENIA ====================
@@ -22119,7 +21677,7 @@ class KappaApp {
       if (sidebar && layout) {
         sidebar.classList.add('open');
         layout.classList.add('sidebar-open');
-        db.setPreference('absenceEmployeesSidebarOpen', true);
+        localStorage.setItem('absenceEmployeesSidebarOpen', '1');
         sounds.play('swoosh');
       }
     });
@@ -22131,26 +21689,24 @@ class KappaApp {
       if (sidebar && layout) {
         sidebar.classList.remove('open');
         layout.classList.remove('sidebar-open');
-        db.setPreference('absenceEmployeesSidebarOpen', false);
+        localStorage.setItem('absenceEmployeesSidebarOpen', '0');
         sounds.play('swoosh');
       }
     });
     
-    // Restore sidebar state from database (default: open)
-    db.getPreference('absenceEmployeesSidebarOpen').then((val) => {
-      const absenceSidebarOpen = val !== false;
-      const absenceSidebar = document.getElementById('absenceEmployeesSidebar');
-      const absenceLayout = absenceSidebar?.closest('.absence-layout');
-      if (absenceSidebar && absenceLayout) {
-        if (absenceSidebarOpen) {
-          absenceSidebar.classList.add('open');
-          absenceLayout.classList.add('sidebar-open');
-        } else {
-          absenceSidebar.classList.remove('open');
-          absenceLayout.classList.remove('sidebar-open');
-        }
+    // Przywróć stan sidebara z localStorage (domyślnie otwarty)
+    const absenceSidebarOpen = localStorage.getItem('absenceEmployeesSidebarOpen') !== '0';
+    const absenceSidebar = document.getElementById('absenceEmployeesSidebar');
+    const absenceLayout = absenceSidebar?.closest('.absence-layout');
+    if (absenceSidebar && absenceLayout) {
+      if (absenceSidebarOpen) {
+        absenceSidebar.classList.add('open');
+        absenceLayout.classList.add('sidebar-open');
+      } else {
+        absenceSidebar.classList.remove('open');
+        absenceLayout.classList.remove('sidebar-open');
       }
-    });
+    }
   }
 
   private renderAbsenceFilters(): void {
@@ -24649,7 +24205,7 @@ class KappaApp {
       this.showToast(i18n.t('messages.exportSuccessfully'), 'success', 'notification');
     } catch (e) {
       console.error('PDF export error:', e);
-      this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      this.showToast('Export failed', 'error');
     }
   }
 
@@ -24719,254 +24275,139 @@ class KappaApp {
       this.showToast(i18n.t('schedule.exportGenerating'), 'success', 'notification');
 
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'Kappa Planning – DRÄXLMAIER Group';
+      workbook.creator = 'Kappa Planning';
       workbook.created = new Date();
 
       const brandColor = 'FF0097AC';
       const black = 'FF000000';
       const white = 'FFFFFFFF';
-      const lightGray = 'FFF8FAFC';
-      const medGray = 'FFF1F5F9';
-      const darkSlate = 'FF1E293B';
-      const headerFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
-      const subFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, color: { argb: 'FF334155' } };
+      const lightGray = 'FFF1F5F9';
+      const headerFont = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
+      const subFont = { name: 'Calibri', size: 10, color: { argb: 'FF334155' } };
       const thinBorder: Partial<ExcelJS.Borders> = {
         top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
       };
-      const dateLocale = i18n.getDateLocale();
-      const dateStr = new Date().toLocaleDateString(dateLocale);
-      const timeStr = new Date().toLocaleTimeString(dateLocale);
 
-      const addBrandHeader = (sheet: ExcelJS.Worksheet, colCount: number, subtitle: string) => {
-        const lastCol = String.fromCharCode(64 + Math.min(colCount, 26));
-        sheet.mergeCells(`A1:${lastCol}1`);
-        const titleCell = sheet.getCell('A1');
-        titleCell.value = 'DRÄXLMAIER Group';
-        titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: white } };
-        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
-        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        sheet.getRow(1).height = 35;
-
-        sheet.mergeCells(`A2:${lastCol}2`);
-        const subCell = sheet.getCell('A2');
-        subCell.value = subtitle;
-        subCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: white } };
-        subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
-        subCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        sheet.getRow(2).height = 28;
-
-        sheet.mergeCells(`A3:${lastCol}3`);
-        const infoCell = sheet.getCell('A3');
-        infoCell.value = `${i18n.t('export.generatedAt')}: ${dateStr} ${timeStr} | ${i18n.t('export.user')}: ${this.state.settings.userName || 'System'}`;
-        infoCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
-        infoCell.alignment = { horizontal: 'center' };
-        sheet.getRow(3).height = 20;
-      };
-
-      // Compute KPIs (matching PDF)
-      const totalAbsences = this.absences.length;
-      const totalDays = this.absences.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
-      const affectedEmployees = new Set(this.absences.map((a: any) => a.employeeId)).size;
-      const avgPerEmp = employees.length > 0 ? parseFloat((totalDays / employees.length).toFixed(1)) : 0;
-
-      // ==================== SHEET 1: Statistics Overview ====================
-      const statsSheet = workbook.addWorksheet(`📊 ${i18n.t('schedule.absences')}`, {
-        views: [{ state: 'frozen', xSplit: 0, ySplit: 3 }]
-      });
-      statsSheet.columns = [
-        { width: 22 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }
-      ];
-
-      addBrandHeader(statsSheet, 8, `Kappa Planning – ${i18n.t('schedule.absenceTimelineYearReport')} ${year}`);
-
-      // KPI section
-      let row = 5;
-      statsSheet.mergeCells(`A${row}:H${row}`);
-      statsSheet.getCell(`A${row}`).value = `📊 ${i18n.t('schedule.absenceTimelineYearReport')} ${year}`;
-      statsSheet.getCell(`A${row}`).font = { name: 'Calibri', size: 13, bold: true, color: { argb: '001E293B' } };
-      statsSheet.getRow(row).height = 24;
-      row++;
-
-      const kpiLabels = [i18n.t('schedule.absenceStatAbsences'), i18n.t('schedule.absenceStatTotalDays'), i18n.t('schedule.absenceStatEmployees'), i18n.t('schedule.absenceTimelineAvgPerEmp')];
-      const kpiValues: (number | string)[] = [totalAbsences, totalDays, affectedEmployees, avgPerEmp];
-      const kpiColors = ['FF0097AC', 'FF2563EB', 'FF7C3AED', 'FFD97706'];
-
-      const kpiLabelRow = statsSheet.getRow(row);
-      const kpiValueRow = statsSheet.getRow(row + 1);
-      for (let k = 0; k < 4; k++) {
-        const col = k * 2 + 1;
-        statsSheet.mergeCells(row, col, row, col + 1);
-        statsSheet.mergeCells(row + 1, col, row + 1, col + 1);
-        const labelCell = kpiLabelRow.getCell(col);
-        labelCell.value = kpiLabels[k];
-        labelCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF475569' } };
-        labelCell.alignment = { horizontal: 'center' };
-        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
-        labelCell.border = thinBorder;
-
-        const valCell = kpiValueRow.getCell(col);
-        valCell.value = kpiValues[k];
-        valCell.font = { name: 'Calibri', size: 20, bold: true, color: { argb: kpiColors[k] } };
-        valCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
-        valCell.border = thinBorder;
-      }
-      kpiValueRow.height = 34;
-      row += 3;
-
-      // Monthly distribution section
-      statsSheet.mergeCells(`A${row}:H${row}`);
-      statsSheet.getCell(`A${row}`).value = `📅 ${i18n.t('schedule.monthlyDistribution') || 'Monthly Distribution'}`;
-      statsSheet.getCell(`A${row}`).font = { name: 'Calibri', size: 13, bold: true, color: { argb: '001E293B' } };
-      statsSheet.getRow(row).height = 24;
-      row++;
-
-      // Month headers
-      const monthHeaderRow = statsSheet.getRow(row);
-      const monthShortNames = months.map(m => m.substring(0, 3));
-      // Show months in pairs across 8 columns, but better: show 12 months in 2 rows of labels + values
-      // Use columns A-L for all 12 months
-      const monthLabelHeaders = [i18n.t('schedule.monthlyDistribution') || 'Month', i18n.t('schedule.absenceListDays')];
-      monthHeaderRow.getCell(1).value = monthLabelHeaders[0];
-      monthHeaderRow.getCell(1).font = headerFont;
-      monthHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
-      monthHeaderRow.getCell(1).border = thinBorder;
-      monthHeaderRow.getCell(2).value = monthLabelHeaders[1];
-      monthHeaderRow.getCell(2).font = headerFont;
-      monthHeaderRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
-      monthHeaderRow.getCell(2).alignment = { horizontal: 'center' };
-      monthHeaderRow.getCell(2).border = thinBorder;
-      monthHeaderRow.height = 22;
-      row++;
-
-      for (let m = 0; m < 12; m++) {
-        const monthStart = new Date(year, m, 1);
-        const monthEnd = new Date(year, m + 1, 0);
-        let monthDays = 0;
-        this.absences.forEach((a: any) => {
-          const s = new Date(a.startDate);
-          const e = new Date(a.endDate);
-          const os = s > monthStart ? s : monthStart;
-          const oe = e < monthEnd ? e : monthEnd;
-          if (os <= oe) {
-            const cur = new Date(os);
-            while (cur <= oe) { if (cur.getDay() !== 0 && cur.getDay() !== 6) monthDays++; cur.setDate(cur.getDate() + 1); }
-          }
-        });
-        const mRow = statsSheet.getRow(row);
-        mRow.getCell(1).value = months[m];
-        mRow.getCell(1).font = { name: 'Calibri', size: 10, bold: true, color: { argb: '00334155' } };
-        mRow.getCell(1).border = thinBorder;
-        mRow.getCell(2).value = monthDays;
-        mRow.getCell(2).font = { name: 'Calibri', size: 11, bold: true, color: { argb: monthDays > 0 ? '000097AC' : '0094A3B8' } };
-        mRow.getCell(2).alignment = { horizontal: 'center' };
-        mRow.getCell(2).border = thinBorder;
-        if (m % 2 === 0) {
-          mRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-          mRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-        }
-        row++;
-      }
-
-      // ==================== SHEET 2: Absence List ====================
-      const overviewSheet = workbook.addWorksheet(`📋 ${i18n.t('schedule.absenceHistory')}`, {
+      // ==================== SHEET 1: Overview ====================
+      const overviewSheet = workbook.addWorksheet(i18n.t('schedule.absences'), {
         views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
       });
-      overviewSheet.columns = [
-        { width: 25 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 10 }, { width: 30 }
-      ];
 
-      addBrandHeader(overviewSheet, 6, `${i18n.t('schedule.absenceHistory')} – ${year}`);
+      // Header - DRÄXLMAIER branding
+      overviewSheet.mergeCells('A1:G1');
+      const titleCell = overviewSheet.getCell('A1');
+      titleCell.value = 'DRÄXLMAIER Group';
+      titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: white } };
+      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      overviewSheet.getRow(1).height = 35;
+
+      overviewSheet.mergeCells('A2:G2');
+      const subCell = overviewSheet.getCell('A2');
+      subCell.value = `Kappa Planning – ${i18n.t('schedule.absences')} ${year}`;
+      subCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: white } };
+      subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+      subCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      overviewSheet.getRow(2).height = 28;
+
+      overviewSheet.mergeCells('A3:G3');
+      const infoCell = overviewSheet.getCell('A3');
+      infoCell.value = `${i18n.t('export.generatedAt')}: ${new Date().toLocaleDateString(i18n.getDateLocale())} ${new Date().toLocaleTimeString(i18n.getDateLocale())} | ${i18n.t('export.user')}: ${this.state.settings.userName || 'System'}`;
+      infoCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
+      infoCell.alignment = { horizontal: 'center' };
+      overviewSheet.getRow(3).height = 20;
 
       // Column headers
-      const listHeaders = [
+      const headers = [
         i18n.t('schedule.absenceListEmployee'),
         i18n.t('schedule.absenceListType'),
         i18n.t('schedule.dateFrom'),
         i18n.t('schedule.dateTo'),
         i18n.t('schedule.absenceListDays'),
-        i18n.t('schedule.noteLabel')
+        i18n.t('schedule.noteLabel'),
+        i18n.t('schedule.absenceTypeLabel')
+      ];
+      overviewSheet.columns = [
+        { width: 25 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 10 }, { width: 30 }, { width: 15 }
       ];
 
-      const listHeaderRow = overviewSheet.getRow(4);
-      listHeaders.forEach((h, i) => {
-        const cell = listHeaderRow.getCell(i + 1);
+      const headerRow = overviewSheet.getRow(4);
+      headers.forEach((h, i) => {
+        const cell = headerRow.getCell(i + 1);
         cell.value = h;
         cell.font = headerFont;
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = thinBorder;
       });
-      listHeaderRow.height = 24;
+      headerRow.height = 24;
 
       // Data rows
       const sorted = [...this.absences].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
       sorted.forEach((a: any, idx: number) => {
         const emp = this.state.employees.find(e => e.id === a.employeeId);
         const type = this.absenceTypes.find((t: any) => t.id === a.absenceTypeId);
-        const r = overviewSheet.getRow(idx + 5);
-        r.getCell(1).value = `${emp?.firstName || ''} ${emp?.lastName || ''}`;
-        r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
-        r.getCell(2).value = `${type ? getAbsenceEmoji(type.id) : ''} ${type?.name || ''}`;
-        r.getCell(2).font = subFont;
-        r.getCell(3).value = a.startDate;
-        r.getCell(3).font = subFont;
-        r.getCell(4).value = a.endDate;
-        r.getCell(4).font = subFont;
-        r.getCell(5).value = a.workDays;
-        r.getCell(5).font = { name: 'Calibri', size: 11, bold: true, color: { argb: '000097AC' } };
-        r.getCell(5).alignment = { horizontal: 'center' };
-        r.getCell(6).value = a.note || '';
-        r.getCell(6).font = { name: 'Calibri', size: 9, color: { argb: 'FF475569' } };
+        const row = overviewSheet.getRow(idx + 5);
+        row.getCell(1).value = `${emp?.firstName || ''} ${emp?.lastName || ''}`;
+        row.getCell(2).value = `${type ? getAbsenceEmoji(type.id) : ''} ${type?.name || ''}`;
+        row.getCell(3).value = a.startDate;
+        row.getCell(4).value = a.endDate;
+        row.getCell(5).value = a.workDays;
+        row.getCell(6).value = a.note || '';
+        row.getCell(7).value = type?.name || '';
 
-        for (let c = 1; c <= 6; c++) {
-          r.getCell(c).border = thinBorder;
-          if (idx % 2 === 0) r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+        for (let c = 1; c <= 7; c++) {
+          const cell = row.getCell(c);
+          cell.font = subFont;
+          cell.border = thinBorder;
+          if (idx % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
         }
+        row.getCell(5).alignment = { horizontal: 'center' };
       });
 
-      // ==================== SHEET 3: Employee Summary (matching PDF page 2) ====================
-      const empSheet = workbook.addWorksheet(`👥 ${i18n.t('schedule.absenceListEmployee')}`, {
-        views: [{ state: 'frozen', xSplit: 1, ySplit: 4 }]
+      // ==================== SHEET 2: Per Employee Summary ====================
+      const empSheet = workbook.addWorksheet(i18n.t('schedule.absenceListEmployee'), {
+        views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }]
       });
+
+      empSheet.mergeCells('A1:N1');
+      empSheet.getCell('A1').value = 'DRÄXLMAIER Group';
+      empSheet.getCell('A1').font = { name: 'Calibri', size: 16, bold: true, color: { argb: white } };
+      empSheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+      empSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+      empSheet.getRow(1).height = 30;
+
+      empSheet.mergeCells('A2:N2');
+      empSheet.getCell('A2').value = `${i18n.t('schedule.absenceListEmployee')} – ${i18n.t('schedule.absences')} ${year}`;
+      empSheet.getCell('A2').font = { name: 'Calibri', size: 12, bold: true, color: { argb: white } };
+      empSheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+      empSheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
+      empSheet.getRow(2).height = 26;
+
+      // Headers: Employee, Jan, Feb, ... Dec, Total
+      const empHeaders = [i18n.t('schedule.absenceListEmployee'), ...months, i18n.t('schedule.total')];
       empSheet.columns = [
-        { width: 25 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 },
-        { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 },
-        { width: 10 }, { width: 10 }, { width: 10 }, { width: 12 }, { width: 12 },
-        { width: 12 }, { width: 12 }, { width: 10 }
+        { width: 25 }, ...months.map(() => ({ width: 10 })), { width: 12 }
       ];
-
-      addBrandHeader(empSheet, 18, `${i18n.t('schedule.absenceListEmployee')} – ${i18n.t('schedule.absences')} ${year}`);
-
-      // Headers: Employee, Jan..Dec, Total, Entitled, Used, Remaining, Count
-      const empHeaders = [
-        i18n.t('schedule.absenceListEmployee'),
-        ...months,
-        i18n.t('schedule.total'),
-        i18n.t('schedule.absenceEntitledDays'),
-        i18n.t('schedule.absenceUsedDays'),
-        i18n.t('schedule.absenceRemainingDays'),
-        i18n.t('schedule.absenceStatAbsences')
-      ];
-      const empHeaderRow = empSheet.getRow(4);
+      const empHeaderRow = empSheet.getRow(3);
       empHeaders.forEach((h, i) => {
         const cell = empHeaderRow.getCell(i + 1);
         cell.value = h;
-        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: white } };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i >= 14 ? darkSlate : brandColor } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.font = headerFont;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = thinBorder;
       });
-      empHeaderRow.height = 28;
+      empHeaderRow.height = 22;
 
       employees.forEach((emp, idx) => {
-        const r = empSheet.getRow(idx + 5);
-        r.getCell(1).value = `${emp.firstName} ${emp.lastName}`;
-        r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
-        r.getCell(1).border = thinBorder;
+        const row = empSheet.getRow(idx + 4);
+        row.getCell(1).value = `${emp.firstName} ${emp.lastName}`;
+        row.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+        row.getCell(1).border = thinBorder;
 
         let empTotal = 0;
         for (let m = 0; m < 12; m++) {
@@ -24987,13 +24428,13 @@ class KappaApp {
             }
           });
           
-          const cell = r.getCell(m + 2);
+          const cell = row.getCell(m + 2);
           cell.value = days || '';
           cell.font = subFont;
           cell.alignment = { horizontal: 'center' };
           cell.border = thinBorder;
           
-          // Color coding for days with absences
+          // Color coding
           if (days > 0) {
             const intensity = Math.min(days * 10, 80);
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${Math.round(255 - intensity * 0.6).toString(16).padStart(2, '0')}${Math.round(255 - intensity * 0.2).toString(16).padStart(2, '0')}${Math.round(255 - intensity * 0.6).toString(16).padStart(2, '0')}` } };
@@ -25003,95 +24444,66 @@ class KappaApp {
           empTotal += days;
         }
 
-        // Total column
-        const totalCell = r.getCell(14);
+        const totalCell = row.getCell(14);
         totalCell.value = empTotal;
-        totalCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000097AC' } };
+        totalCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0097AC' } };
         totalCell.alignment = { horizontal: 'center' };
         totalCell.border = thinBorder;
-
-        // Entitled days
-        const limitTotal = this.absenceLimits
-          .filter((l: any) => l.employeeId === emp.id && l.year === year)
-          .reduce((sum: number, l: any) => sum + (l.totalDays || 0), 0);
-        const usedDays = this.absences.filter((a: any) => a.employeeId === emp.id)
-          .reduce((s: number, a: any) => s + (a.workDays || 0), 0);
-        const remaining = limitTotal - usedDays;
-
-        r.getCell(15).value = limitTotal || '';
-        r.getCell(15).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF2563EB' } };
-        r.getCell(15).alignment = { horizontal: 'center' };
-        r.getCell(15).border = thinBorder;
-
-        r.getCell(16).value = usedDays;
-        r.getCell(16).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
-        r.getCell(16).alignment = { horizontal: 'center' };
-        r.getCell(16).border = thinBorder;
-
-        r.getCell(17).value = limitTotal > 0 ? remaining : '';
-        r.getCell(17).font = { name: 'Calibri', size: 10, bold: true, color: { argb: remaining < 0 ? 'FFDC2626' : remaining === 0 ? 'FFD97706' : 'FF16A34A' } };
-        r.getCell(17).alignment = { horizontal: 'center' };
-        r.getCell(17).border = thinBorder;
-
-        // Absence count
-        const empAbsCount = this.absences.filter((a: any) => a.employeeId === emp.id).length;
-        r.getCell(18).value = empAbsCount;
-        r.getCell(18).font = subFont;
-        r.getCell(18).alignment = { horizontal: 'center' };
-        r.getCell(18).border = thinBorder;
-
         if (idx % 2 === 0) {
-          r.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-          for (let c = 14; c <= 18; c++) {
-            if (!r.getCell(c).fill || (r.getCell(c).fill as any).fgColor?.argb !== medGray) {
-              r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
-            }
-          }
+          row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
         }
       });
 
-      // ==================== SHEET 4: Per Type Breakdown ====================
-      const typeSheet = workbook.addWorksheet(`📊 ${i18n.t('schedule.absenceTypeLabel')}`, {
-        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
+      // ==================== SHEET 3: Per Type Breakdown ====================
+      const typeSheet = workbook.addWorksheet(i18n.t('schedule.absenceTypeLabel'), {
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 3 }]
       });
-      typeSheet.columns = [{ width: 25 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 14 }];
 
-      addBrandHeader(typeSheet, 5, `${i18n.t('schedule.absenceTimelineByType')} – ${year}`);
+      typeSheet.mergeCells('A1:E1');
+      typeSheet.getCell('A1').value = 'DRÄXLMAIER Group';
+      typeSheet.getCell('A1').font = { name: 'Calibri', size: 16, bold: true, color: { argb: white } };
+      typeSheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+      typeSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
+      typeSheet.getRow(1).height = 30;
+
+      typeSheet.mergeCells('A2:E2');
+      typeSheet.getCell('A2').value = `${i18n.t('schedule.absenceTypeLabel')} – ${year}`;
+      typeSheet.getCell('A2').font = { name: 'Calibri', size: 12, bold: true, color: { argb: white } };
+      typeSheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+      typeSheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
+      typeSheet.getRow(2).height = 26;
 
       const typeHeaders = [i18n.t('schedule.absenceTypeLabel'), i18n.t('schedule.absenceStatAbsences'), i18n.t('schedule.absenceListDays'), i18n.t('schedule.absenceStatEmployees'), `Ø ${i18n.t('schedule.absenceListDays')}`];
-      const typeHeaderRow = typeSheet.getRow(4);
+      typeSheet.columns = [{ width: 25 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 14 }];
+      const typeHeaderRow = typeSheet.getRow(3);
       typeHeaders.forEach((h, i) => {
         const cell = typeHeaderRow.getCell(i + 1);
         cell.value = h;
         cell.font = headerFont;
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = thinBorder;
       });
-      typeHeaderRow.height = 24;
 
       this.absenceTypes.filter((t: any) => t.isActive).forEach((t: any, idx: number) => {
         const typeAbs = this.absences.filter((a: any) => a.absenceTypeId === t.id);
         const typeDays = typeAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
         const typeEmps = new Set(typeAbs.map((a: any) => a.employeeId)).size;
-        const avg = typeAbs.length > 0 ? parseFloat((typeDays / typeAbs.length).toFixed(1)) : 0;
+        const avg = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
 
-        const r = typeSheet.getRow(idx + 5);
-        r.getCell(1).value = `${getAbsenceEmoji(t.id)} ${t.name}`;
-        r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
-        r.getCell(2).value = typeAbs.length;
-        r.getCell(2).font = { name: 'Calibri', size: 11, bold: true, color: { argb: '000097AC' } };
-        r.getCell(3).value = typeDays;
-        r.getCell(3).font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF0F172A' } };
-        r.getCell(4).value = typeEmps;
-        r.getCell(4).font = subFont;
-        r.getCell(5).value = avg;
-        r.getCell(5).font = subFont;
+        const row = typeSheet.getRow(idx + 4);
+        row.getCell(1).value = `${getAbsenceEmoji(t.id)} ${t.name}`;
+        row.getCell(2).value = typeAbs.length;
+        row.getCell(3).value = typeDays;
+        row.getCell(4).value = typeEmps;
+        row.getCell(5).value = parseFloat(avg);
 
         for (let c = 1; c <= 5; c++) {
-          r.getCell(c).alignment = { horizontal: c === 1 ? 'left' : 'center' };
-          r.getCell(c).border = thinBorder;
-          if (idx % 2 === 0) r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          const cell = row.getCell(c);
+          cell.font = subFont;
+          cell.alignment = { horizontal: c === 1 ? 'left' : 'center' };
+          cell.border = thinBorder;
+          if (idx % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
         }
       });
 
@@ -25102,7 +24514,7 @@ class KappaApp {
       this.showToast(i18n.t('messages.exportSuccessfully'), 'success', 'notification');
     } catch (e) {
       console.error('Excel export error:', e);
-      this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      this.showToast('Export failed', 'error');
     }
   }
 }
