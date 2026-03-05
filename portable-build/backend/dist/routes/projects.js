@@ -1,0 +1,169 @@
+import { Router } from 'express';
+import { runQuery, getAll, getOne } from '../database/db.js';
+export const projectsRouter = Router();
+// Get all projects with weeks data
+projectsRouter.get('/', (req, res) => {
+    try {
+        const projects = getAll('SELECT * FROM projects ORDER BY created_at DESC');
+        // Fetch weeks data for each project
+        const projectsWithWeeks = projects.map(project => {
+            const weeks = getAll('SELECT week, ist, soll, stoppage, production_lack FROM project_weeks WHERE project_id = ?', [project.id]);
+            const weeksObj = {};
+            weeks.forEach(w => {
+                weeksObj[w.week] = {
+                    ist: w.ist,
+                    soll: w.soll,
+                    stoppage: w.stoppage === 1,
+                    productionLack: w.production_lack === 1
+                };
+            });
+            return {
+                id: project.id,
+                customer_id: project.customer_id,
+                type_id: project.type_id,
+                part_id: project.part_id,
+                test_id: project.test_id,
+                weeks: weeksObj,
+                timePerUnit: project.time_per_unit || 0,
+                created_at: project.created_at,
+                updated_at: project.updated_at
+            };
+        });
+        res.json(projectsWithWeeks);
+    }
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to fetch projects' });
+    }
+});
+// Get project by ID
+projectsRouter.get('/:id', (req, res) => {
+    try {
+        const project = getOne('SELECT * FROM projects WHERE id = ?', [req.params.id]);
+        if (!project) {
+            return res.status(404).json({ error: 'Project not found' });
+        }
+        const weeks = getAll('SELECT week, ist, soll, stoppage, production_lack FROM project_weeks WHERE project_id = ?', [project.id]);
+        const weeksObj = {};
+        weeks.forEach(w => {
+            weeksObj[w.week] = {
+                ist: w.ist,
+                soll: w.soll,
+                stoppage: w.stoppage === 1,
+                productionLack: w.production_lack === 1
+            };
+        });
+        res.json({
+            ...project,
+            weeks: weeksObj
+        });
+    }
+    catch (error) {
+        res.status(500).json({ error: 'Failed to fetch project' });
+    }
+});
+// Create project (upsert - INSERT OR REPLACE)
+projectsRouter.post('/', (req, res) => {
+    try {
+        const { id, customer_id, type_id, part_id, test_id, weeks, timePerUnit, created_at, updated_at } = req.body;
+        // Check if project exists
+        const existing = getOne('SELECT id FROM projects WHERE id = ?', [id]);
+        if (existing) {
+            // Update existing project
+            runQuery(`
+        UPDATE projects 
+        SET customer_id = ?, type_id = ?, part_id = ?, test_id = ?, time_per_unit = ?, updated_at = ?
+        WHERE id = ?
+      `, [customer_id, type_id, part_id, test_id, timePerUnit || 0, updated_at || Date.now(), id]);
+        }
+        else {
+            // Insert new project
+            runQuery(`
+        INSERT INTO projects (id, customer_id, type_id, part_id, test_id, time_per_unit, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, customer_id, type_id, part_id, test_id, timePerUnit || 0, created_at, updated_at]);
+        }
+        // Upsert weeks data
+        if (weeks) {
+            for (const [week, data] of Object.entries(weeks)) {
+                const weekData = data;
+                const existingWeek = getOne('SELECT id FROM project_weeks WHERE project_id = ? AND week = ?', [id, week]);
+                if (existingWeek) {
+                    runQuery('UPDATE project_weeks SET ist = ?, soll = ?, stoppage = ?, production_lack = ? WHERE project_id = ? AND week = ?', [weekData.ist, weekData.soll, weekData.stoppage ? 1 : 0, weekData.productionLack ? 1 : 0, id, week]);
+                }
+                else {
+                    runQuery(`
+            INSERT INTO project_weeks (project_id, week, ist, soll, stoppage, production_lack)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `, [id, week, weekData.ist, weekData.soll, weekData.stoppage ? 1 : 0, weekData.productionLack ? 1 : 0]);
+                }
+            }
+        }
+        res.status(201).json(req.body);
+    }
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to create project' });
+    }
+});
+// Update project
+projectsRouter.put('/:id', (req, res) => {
+    try {
+        const { customer_id, type_id, part_id, test_id, weeks, timePerUnit, updated_at } = req.body;
+        runQuery(`
+      UPDATE projects 
+      SET customer_id = ?, type_id = ?, part_id = ?, test_id = ?, time_per_unit = ?, updated_at = ?
+      WHERE id = ?
+    `, [customer_id, type_id, part_id, test_id, timePerUnit || 0, updated_at, req.params.id]);
+        // Update weeks data
+        if (weeks) {
+            // Delete existing weeks
+            runQuery('DELETE FROM project_weeks WHERE project_id = ?', [req.params.id]);
+            // Insert new weeks data
+            for (const [week, data] of Object.entries(weeks)) {
+                const weekData = data;
+                runQuery(`
+          INSERT INTO project_weeks (project_id, week, ist, soll, stoppage, production_lack)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [req.params.id, week, weekData.ist, weekData.soll, weekData.stoppage ? 1 : 0, weekData.productionLack ? 1 : 0]);
+            }
+        }
+        res.json(req.body);
+    }
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to update project' });
+    }
+});
+// Update week data
+projectsRouter.patch('/:id/weeks/:week', (req, res) => {
+    try {
+        const { ist, soll, stoppage, productionLack } = req.body;
+        const { id, week } = req.params;
+        // Check if week exists
+        const existing = getOne('SELECT * FROM project_weeks WHERE project_id = ? AND week = ?', [id, week]);
+        if (existing) {
+            runQuery('UPDATE project_weeks SET ist = ?, soll = ?, stoppage = ?, production_lack = ? WHERE project_id = ? AND week = ?', [ist, soll, stoppage ? 1 : 0, productionLack ? 1 : 0, id, week]);
+        }
+        else {
+            runQuery('INSERT INTO project_weeks (project_id, week, ist, soll, stoppage, production_lack) VALUES (?, ?, ?, ?, ?, ?)', [id, week, ist, soll, stoppage ? 1 : 0, productionLack ? 1 : 0]);
+        }
+        // Update project updated_at
+        runQuery('UPDATE projects SET updated_at = ? WHERE id = ?', [Date.now(), id]);
+        res.json({ success: true });
+    }
+    catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Failed to update week data' });
+    }
+});
+// Delete project
+projectsRouter.delete('/:id', (req, res) => {
+    try {
+        runQuery('DELETE FROM projects WHERE id = ?', [req.params.id]);
+        res.json({ success: true });
+    }
+    catch (error) {
+        res.status(500).json({ error: 'Failed to delete project' });
+    }
+});

@@ -7,6 +7,14 @@ dist/
 build/
 *.local
 
+# Portable build - include everything
+!portable-build/
+!portable-build/**
+!portable-build/node_modules/
+!portable-build/dist/
+!portable-build/backend/node_modules/
+!portable-build/node/node_modules/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
