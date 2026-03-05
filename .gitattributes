@@ -1,4 +1,2 @@
 *.bat text eol=crlf
 *.sh text eol=lf
-portable-build/node/node.exe filter=lfs diff=lfs merge=lfs -text
-*.exe filter=lfs diff=lfs merge=lfs -text
