@@ -1,0 +1,47 @@
+name: Build Electron App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm install
+
+      - name: Build backend
+        working-directory: backend
+        run: npx tsc
+
+      - name: Install backend production deps only
+        working-directory: backend
+        run: npm install --omit=dev
+
+      - name: Create data directory
+        run: mkdir -p backend/data
+        shell: bash
+
+      - name: Build Electron portable exe
+        run: npx electron-builder --win --x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KappaPlanning-Windows
+          path: release/KappaPlanning.exe
