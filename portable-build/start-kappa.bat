@@ -1,5 +1,4 @@
 @echo off
-chcp 65001 >nul 2>nul
 title Kappa Plannung
 setlocal enabledelayedexpansion
 
@@ -13,10 +12,10 @@ set "NODE_ZIP=node-%NODE_VERSION%-win-x64.zip"
 set "NODE_URL=https://nodejs.org/dist/%NODE_VERSION%/%NODE_ZIP%"
 
 echo.
-echo  ╔══════════════════════════════════════╗
-echo  ║       KAPPA PLANNUNG v1.0            ║
-echo  ║       DRAXLMAIER                     ║
-echo  ╚══════════════════════════════════════╝
+echo  ========================================
+echo    KAPPA PLANNUNG v1.0
+echo    DRAXLMAIER
+echo  ========================================
 echo.
 
 :: ============================================
@@ -129,11 +128,11 @@ if !R! geq 15 (
 start "" "http://!MY_IP!:%PORT%"
 
 echo.
-echo  ╔══════════════════════════════════════════════╗
-echo  ║  Aplikacja dziala: http://!MY_IP!:%PORT%     ║
-echo  ║                                              ║
-echo  ║  *** NIE ZAMYKAJ TEGO OKNA! ***             ║
-echo  ╚══════════════════════════════════════════════╝
+echo  ========================================
+echo   Aplikacja dziala: http://!MY_IP!:%PORT%
+echo.
+echo   *** NIE ZAMYKAJ TEGO OKNA! ***
+echo  ========================================
 echo.
 
 :keep_alive
