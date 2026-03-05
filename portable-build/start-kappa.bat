@@ -2,57 +2,28 @@
 title Kappa Plannung
 setlocal enabledelayedexpansion
 set "APP_DIR=%~dp0"
-set "NODE_DIR=%APP_DIR%node"
-set "NODE_EXE=%NODE_DIR%\node.exe"
+set "NODE_EXE=%APP_DIR%node\node.exe"
 set "LOCK_FILE=%APP_DIR%server.lock"
 set "PORT=3001"
-set "NODE_VERSION=v20.11.1"
-set "NODE_ZIP=node-%NODE_VERSION%-win-x64.zip"
-set "NODE_URL=https://nodejs.org/dist/%NODE_VERSION%/%NODE_ZIP%"
 echo.
 echo  ========================================
 echo    KAPPA PLANNUNG v1.0 - DRAXLMAIER
 echo  ========================================
 echo.
-if exist "%NODE_EXE%" goto check_modules
-echo  Pierwsze uruchomienie - pobieram Node.js...
-echo  (ok. 30 MB - moze chwile potrwac)
-echo.
-echo [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '%NODE_URL%' -OutFile '%APP_DIR%%NODE_ZIP%' -UseBasicParsing > "%APP_DIR%_download.ps1"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%APP_DIR%_download.ps1"
-if !errorlevel! neq 0 (
-    del "%APP_DIR%_download.ps1" 2>nul
-    goto node_error
-)
-del "%APP_DIR%_download.ps1" 2>nul
-if not exist "%APP_DIR%%NODE_ZIP%" goto node_error
-echo  Pobrano. Rozpakowywanie...
-if not exist "%NODE_DIR%" mkdir "%NODE_DIR%"
-echo $ProgressPreference='SilentlyContinue'; Expand-Archive -Path '%APP_DIR%%NODE_ZIP%' -DestinationPath '%APP_DIR%_tmp' -Force; $d=Get-ChildItem '%APP_DIR%_tmp' ^| Select-Object -First 1; Copy-Item (Join-Path $d.FullName '*') '%NODE_DIR%' -Recurse -Force; Remove-Item '%APP_DIR%_tmp' -Recurse -Force > "%APP_DIR%_extract.ps1"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%APP_DIR%_extract.ps1"
-if !errorlevel! neq 0 (
-    del "%APP_DIR%_extract.ps1" 2>nul
-    goto node_error
-)
-del "%APP_DIR%_extract.ps1" 2>nul
-del "%APP_DIR%%NODE_ZIP%" 2>nul
-if not exist "%NODE_EXE%" goto node_error
-echo  Node.js zainstalowany.
-echo.
-:check_modules
-if exist "%APP_DIR%backend\node_modules\express" goto check_server
-echo  Instaluje zaleznosci (jednorazowo)...
-cd /d "%APP_DIR%backend"
-"%NODE_DIR%\npm.cmd" install --production
-if !errorlevel! neq 0 (
-    echo  [BLAD] Instalacja zaleznosci nie powiodla sie.
+if not exist "%NODE_EXE%" (
+    echo  [BLAD] Nie znaleziono node\node.exe
+    echo  Sprawdz czy folder node istnieje.
     pause
     exit /b 1
 )
-cd /d "%APP_DIR%"
-echo  Zaleznosci zainstalowane.
-echo.
-:check_server
+if not exist "%APP_DIR%backend\node_modules\express" (
+    echo  Instaluje zaleznosci...
+    cd /d "%APP_DIR%backend"
+    "%APP_DIR%node\npm.cmd" install --production
+    cd /d "%APP_DIR%"
+    echo  Gotowe.
+    echo.
+)
 if not exist "%LOCK_FILE%" goto start_server
 set /p SERVER_IP=<"%LOCK_FILE%"
 echo  Sprawdzam serwer na !SERVER_IP!...
@@ -103,11 +74,3 @@ del "%LOCK_FILE%" 2>nul
 echo  Serwer zatrzymany.
 timeout /t 2 >nul
 exit /b 0
-:node_error
-echo.
-echo  [BLAD] Nie udalo sie zainstalowac Node.js.
-echo  Sprawdz polaczenie z internetem lub popros
-echo  administratora o pomoc.
-echo.
-pause
-exit /b 1
