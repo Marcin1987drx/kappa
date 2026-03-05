@@ -451,46 +451,14 @@
                 </svg>
               </button>
             </div>
-            <div class="export-dropdown-container">
-              <button class="btn-primary" id="exportAnalyticsBtn">
+            <button class="btn-primary" id="exportAnalyticsBtn">
                 <svg class="btn-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
                   <polyline points="7 10 12 15 17 10"/>
                   <line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
                 <span>Export</span>
-                <svg class="dropdown-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-                  <polyline points="6 9 12 15 18 9"/>
-                </svg>
-              </button>
-              <div class="export-dropdown-menu" id="exportDropdownMenu">
-                <button class="export-option" id="exportToPdf">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                    <line x1="16" y1="13" x2="8" y2="13"/>
-                    <line x1="16" y1="17" x2="8" y2="17"/>
-                  </svg>
-                  <div class="option-content">
-                    <span data-i18n="export.pdfGenerated">Export to PDF</span>
-                    <small></small>
-                  </div>
-                </button>
-                <button class="export-option" id="exportToExcel">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                    <line x1="3" y1="9" x2="21" y2="9"/>
-                    <line x1="3" y1="15" x2="21" y2="15"/>
-                    <line x1="9" y1="3" x2="9" y2="21"/>
-                    <line x1="15" y1="3" x2="15" y2="21"/>
-                  </svg>
-                  <div class="option-content">
-                    <span data-i18n="export.excelGenerated">Export to Excel</span>
-                    <small></small>
-                  </div>
-                </button>
-              </div>
-            </div>
+            </button>
           </div>
         </div>
 
@@ -971,8 +939,9 @@
             <button class="sched-action-btn sched-action-highlight" id="shiftPlannerBtn" data-i18n-title="schedule.shiftPlannerTooltip" title="Shift Planner – configure shifts & assign workers">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="9" y1="4" x2="9" y2="22"/><line x1="15" y1="4" x2="15" y2="22"/></svg>
             </button>
-            <button class="sched-action-btn" id="sendEmailBtn" data-i18n-title="schedulePanel.sendByEmail" title="Send schedule by email">
+            <button class="sched-action-btn" id="sendEmailBtn" data-i18n-title="schedulePanel.sendByEmail" title="Send schedule by email" style="position: relative;">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              <span id="emailUpdateBadge" style="display: none; position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; background: #f59e0b; border-radius: 50%; border: 2px solid var(--bg-main, white); animation: pulse 2s infinite;"></span>
             </button>
             <button class="sched-action-btn" id="exportSchedule" data-i18n-title="schedulePanel.exportSchedule" title="Export">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -1320,64 +1289,272 @@
         </div>
 
         <div class="settings-container">
-          <div class="setting-group">
-            <h3 data-i18n="settings.appearance">Appearance</h3>
-            <div class="setting-item">
-              <label data-i18n="settings.darkMode">Dark Mode</label>
-              <input type="checkbox" id="darkModeToggle">
-            </div>
-            <div class="setting-item">
-              <label data-i18n="settings.animations">Animations</label>
-              <input type="checkbox" id="animationsToggle" checked>
-            </div>
+          <!-- Employee Management Section -->
+          <div class="setting-group" id="settingsEmployeeSection">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                <circle cx="9" cy="7" r="4"/>
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+              </svg>
+              <span data-i18n="settings.employeeManagement">Employee Management</span>
+            </h3>
+            <p class="setting-hint" data-i18n="settings.employeeManagementHint">Add, edit and manage employees, their details and qualifications</p>
+            
+            <!-- Employee list container - dynamically rendered -->
+            <div id="settingsEmployeeList" style="margin-top: 12px;"></div>
           </div>
 
-          <div class="setting-group">
-            <h3 data-i18n="settings.notifications">Notifications</h3>
-            <div class="setting-item">
-              <label data-i18n="settings.highlightMissing">Highlight Missing Items</label>
-              <input type="checkbox" id="highlightMissingToggle" checked>
-            </div>
-            <div class="setting-item">
-              <label data-i18n="settings.blinkAlerts">Blink Alerts</label>
-              <input type="checkbox" id="blinkAlertsToggle" checked>
-            </div>
-          </div>
+          <div class="setting-group" id="settingsAppearanceSection">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+              </svg>
+              <span data-i18n="settings.appearance">Appearance</span>
+            </h3>
 
-          <div class="setting-group">
-            <h3 data-i18n="settings.security">Security</h3>
-            <!-- Admin Unlock -->
-            <div class="setting-item admin-unlock-section">
-              <div>
-                <label data-i18n="settings.unlockApp">Unlock Application</label>
-                <p class="setting-hint" data-i18n="settings.unlockAppHint">Enter password to unlock admin features (add, delete, import, export)</p>
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #EFF6FF; color: #3B82F6;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
               </div>
-              <button class="btn-primary" id="toggleAdminUnlock">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                </svg>
-                <span id="adminUnlockBtnText" data-i18n="settings.unlock">Unlock</span>
-              </button>
+              <div class="setting-item-text">
+                <label data-i18n="settings.darkMode">Dark Mode</label>
+                <p class="setting-hint" data-i18n="settings.darkModeHint">Reduce eye strain in low-light environments</p>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="darkModeToggle">
+                <span class="toggle-slider"></span>
+              </label>
             </div>
-            <div class="setting-item">
-              <div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #F5F3FF; color: #8B5CF6;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.animations">Animations</label>
+                <p class="setting-hint" data-i18n="settings.animationsHint">Smooth transitions and visual effects</p>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="animationsToggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #FEF3C7; color: #D97706;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.compactMode">Compact Mode</label>
+                <p class="setting-hint" data-i18n="settings.compactModeHint">Reduce spacing to fit more content on screen</p>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="compactModeToggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #ECFDF5; color: #10B981;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.zoomLevelSetting">Zoom Level</label>
+                <p class="setting-hint" data-i18n="settings.zoomLevelHint">Adjust the interface scale</p>
+              </div>
+              <div class="setting-zoom-control">
+                <button id="settingsZoomOut" class="setting-zoom-btn">−</button>
+                <span id="settingsZoomValue" class="setting-zoom-value">100%</span>
+                <button id="settingsZoomIn" class="setting-zoom-btn">+</button>
+              </div>
+            </div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #E0F2FE; color: #0284C7;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.languageSetting">Language</label>
+                <p class="setting-hint" data-i18n="settings.languageHint">Change the application language</p>
+              </div>
+              <select id="settingsLanguageSelect" class="setting-select-modern">
+                <option value="en">🇬🇧 English</option>
+                <option value="de">🇩🇪 Deutsch</option>
+                <option value="pl">🇵🇱 Polski</option>
+                <option value="ro">🇷🇴 Română</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="setting-group" id="settingsNotificationsSection">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+              </svg>
+              <span data-i18n="settings.notifications">Notifications</span>
+            </h3>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #FEF2F2; color: #EF4444;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.highlightMissing">Highlight Missing Items</label>
+                <p class="setting-hint" data-i18n="settings.highlightMissingHint">Show visual indicators for missing assignments</p>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="highlightMissingToggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #FFF7ED; color: #F97316;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.blinkAlerts">Blink Alerts</label>
+                <p class="setting-hint" data-i18n="settings.blinkAlertsHint">Flashing indicators for urgent warnings</p>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="blinkAlertsToggle" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #F0FDF4; color: #22C55E;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.soundAlerts">Sound Alerts</label>
+                <p class="setting-hint" data-i18n="settings.soundAlertsHint">Play sounds for important notifications</p>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="soundAlertsToggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="setting-group" id="settingsSecuritySection">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <span data-i18n="settings.security">Security</span>
+            </h3>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #FEF2F2; color: #EF4444;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.deletePassword">Delete Password</label>
                 <p class="setting-hint" data-i18n="settings.passwordHint">Password protects against accidental deletion</p>
               </div>
               <button class="btn-secondary" id="setPasswordBtn" data-i18n="settings.setPassword">Set Password</button>
             </div>
-            <div class="setting-item">
-              <div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #EFF6FF; color: #3B82F6;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.userName">User Name</label>
                 <p class="setting-hint" data-i18n="settings.userNameHint">Your name will appear in activity logs</p>
               </div>
               <input type="text" id="userNameInput" class="setting-input" placeholder="Your name">
             </div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #F0FDF4; color: #22C55E;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.recoveryEmail">Recovery Email</label>
+                <p class="setting-hint" data-i18n="settings.recoveryEmailHint">Where to send password recovery codes</p>
+              </div>
+              <input type="email" id="recoveryEmailInput" class="setting-input" placeholder="your@email.com" style="width: 240px;">
+            </div>
+          </div>
+
+          <!-- Email / SMTP Settings (admin-only) -->
+          <div class="setting-group admin-only" id="settingsSmtpSection" style="display:none">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+              </svg>
+              <span data-i18n="schedule.smtpSettings">SMTP Settings</span>
+            </h3>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #DBEAFE; color: #2563EB;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="schedule.emailMode">Email sending mode</label>
+                <p class="setting-hint" data-i18n="schedule.smtpSettingsHint">Configure SMTP server for direct email sending</p>
+              </div>
+              <select id="emailModeSelect" class="setting-select-modern" style="width: 260px;">
+                <option value="outlook" data-i18n="schedule.emailModeOutlook">Open in Outlook (copy HTML + mailto)</option>
+                <option value="smtp" data-i18n="schedule.emailModeSmtp">Send directly (SMTP)</option>
+              </select>
+            </div>
+
+            <div id="smtpConfigFields" style="display: none;">
+              <div class="setting-item-modern">
+                <div class="setting-item-icon" style="background: #F0FDF4; color: #22C55E;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                </div>
+                <div class="setting-item-text">
+                  <label data-i18n="schedule.smtpHost">SMTP Server</label>
+                </div>
+                <input type="text" id="smtpHostInput" class="setting-input" placeholder="smtp.company.com" style="width: 240px;">
+              </div>
+              <div class="setting-item-modern">
+                <div class="setting-item-icon" style="background: #FEF3C7; color: #D97706;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                </div>
+                <div class="setting-item-text">
+                  <label data-i18n="schedule.smtpPort">Port</label>
+                </div>
+                <input type="number" id="smtpPortInput" class="setting-input" placeholder="587" value="587" style="width: 100px;">
+              </div>
+              <div class="setting-item-modern">
+                <div class="setting-item-icon" style="background: #EDE9FE; color: #7C3AED;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                </div>
+                <div class="setting-item-text">
+                  <label data-i18n="schedule.smtpUser">Username</label>
+                </div>
+                <input type="text" id="smtpUserInput" class="setting-input" placeholder="user@company.com" style="width: 240px;">
+              </div>
+              <div class="setting-item-modern">
+                <div class="setting-item-icon" style="background: #FEF2F2; color: #EF4444;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                </div>
+                <div class="setting-item-text">
+                  <label data-i18n="schedule.smtpPass">Password</label>
+                </div>
+                <input type="password" id="smtpPassInput" class="setting-input" placeholder="••••••••" style="width: 240px;">
+              </div>
+              <div class="setting-item-modern">
+                <div class="setting-item-icon" style="background: #D1FAE5; color: #059669;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                </div>
+                <div class="setting-item-text">
+                  <label data-i18n="schedule.smtpTestConnection">Test Connection</label>
+                </div>
+                <button class="btn-secondary" id="testSmtpBtn" data-i18n="schedule.smtpTestConnection">Test connection</button>
+              </div>
+            </div>
           </div>
 
           <!-- Backup & Restore (admin-only) -->
-          <div class="setting-group backup-group admin-only" style="display:none">
+          <div class="setting-group backup-group admin-only" id="settingsBackupSection" style="display:none">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/>
@@ -1386,23 +1563,29 @@
             </h3>
 
             <!-- Backup path -->
-            <div class="setting-item">
-              <div>
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #FEF3C7; color: #D97706;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.backupPath">Backup Path</label>
                 <p class="setting-hint" data-i18n="settings.backupPathHint">Where to store automatic backups</p>
               </div>
               <div class="backup-path-input">
-                <input type="text" id="backupPathInput" class="setting-input" placeholder="/path/to/backups" style="width: 280px;">
+                <input type="text" id="backupPathInput" class="setting-input" placeholder="/path/to/backups" style="width: 260px;">
               </div>
             </div>
 
             <!-- Auto backup frequency -->
-            <div class="setting-item">
-              <div>
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #EDE9FE; color: #7C3AED;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.backupFrequency">Backup Frequency</label>
                 <p class="setting-hint" data-i18n="settings.backupFrequencyHint">How often to automatically create backups</p>
               </div>
-              <select id="backupFrequency" class="setting-select">
+              <select id="backupFrequency" class="setting-select-modern">
                 <option value="none" data-i18n="settings.backupNone">Disabled</option>
                 <option value="session" data-i18n="settings.backupSession">Once per session</option>
                 <option value="daily" data-i18n="settings.backupDaily">Daily</option>
@@ -1411,8 +1594,11 @@
             </div>
 
             <!-- Manual backup -->
-            <div class="setting-item">
-              <div>
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #D1FAE5; color: #059669;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.createBackup">Create Backup Now</label>
                 <p class="setting-hint" data-i18n="settings.createBackupHint">Manually create a full database backup</p>
               </div>
@@ -1425,8 +1611,11 @@
             </div>
 
             <!-- Backup list -->
-            <div class="setting-item backup-list-container">
-              <div style="width:100%">
+            <div class="setting-item-modern" style="align-items: flex-start;">
+              <div class="setting-item-icon" style="background: #EFF6FF; color: #3B82F6; margin-top: 2px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              </div>
+              <div class="setting-item-text" style="flex: 1; min-width: 0;">
                 <label data-i18n="settings.existingBackups">Existing Backups</label>
                 <div id="backupListContainer" class="backup-list">
                   <p class="setting-hint">Loading...</p>
@@ -1435,8 +1624,11 @@
             </div>
 
             <!-- Last backup info -->
-            <div class="setting-item">
-              <div>
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #F0FDF4; color: #22C55E;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.lastBackup">Last Backup</label>
                 <p class="setting-hint" id="lastBackupInfo">-</p>
               </div>
@@ -1444,7 +1636,7 @@
           </div>
 
           <!-- Import Wizard (admin-only) -->
-          <div class="setting-group import-group admin-only" style="display:none">
+          <div class="setting-group import-group admin-only" id="settingsImportSection" style="display:none">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
@@ -1453,135 +1645,177 @@
             </h3>
 
             <!-- Full database import/export -->
-            <div class="setting-item">
-              <div>
-                <label data-i18n="settings.fullDatabase">Full Database</label>
-                <p class="setting-hint" data-i18n="settings.fullDatabaseHint">Import or export the entire database as a JSON file</p>
+            <div class="ie-full-database-card">
+              <div class="ie-full-database-info">
+                <div class="setting-item-icon" style="background: #EDE9FE; color: #7C3AED;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                </div>
+                <div class="setting-item-text">
+                  <label data-i18n="settings.fullDatabase">Full Database</label>
+                  <p class="setting-hint" data-i18n="settings.fullDatabaseHint">Import or export the entire database as a JSON file</p>
+                </div>
               </div>
-              <div class="module-actions-row">
-                <button class="btn-secondary btn-module-action btn-import" id="importFullBackupBtn">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <div class="ie-full-database-actions">
+                <button class="btn-ie-action btn-ie-import" id="importFullBackupBtn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                   <span data-i18n="settings.import">Import</span>
                 </button>
-                <button class="btn-secondary btn-module-action btn-export" id="exportFullDatabaseBtn">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                <button class="btn-ie-action btn-ie-export" id="exportFullDatabaseBtn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                   <span data-i18n="settings.export">Export</span>
                 </button>
               </div>
             </div>
 
             <!-- Combined modules import/export -->
-            <div class="setting-item import-modules-container">
-              <div style="width:100%">
-                <label data-i18n="settings.moduleGroups">Module Groups</label>
-                <p class="setting-hint" data-i18n="settings.moduleGroupsHint">Import or export grouped modules</p>
-                <div class="import-modules-grid">
-                  <div class="module-card-wrapper" data-module="planning">
-                    <div class="module-card-header">
-                      <div class="module-icon">📊</div>
-                      <div class="module-name" data-i18n="settings.modulePlanning">Planning</div>
-                      <div class="module-desc" data-i18n="settings.modulePlanningDesc">Customers, types, parts, tests, projects</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModulePlanning" title="Import">⬆ Import</button>
-                      <button class="btn-sm btn-export" id="exportModulePlanning" title="Export">⬇ Export</button>
-                    </div>
-                  </div>
-                  <div class="module-card-wrapper" data-module="employees">
-                    <div class="module-card-header">
-                      <div class="module-icon">👥</div>
-                      <div class="module-name" data-i18n="settings.moduleEmployees">Employees</div>
-                      <div class="module-desc" data-i18n="settings.moduleEmployeesDesc">Workers, details, qualifications</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleEmployees" title="Import">⬆ Import</button>
-                      <button class="btn-sm btn-export" id="exportModuleEmployees" title="Export">⬇ Export</button>
-                    </div>
-                  </div>
-                  <div class="module-card-wrapper" data-module="schedule">
-                    <div class="module-card-header">
-                      <div class="module-icon">📅</div>
-                      <div class="module-name" data-i18n="settings.moduleSchedule">Schedule</div>
-                      <div class="module-desc" data-i18n="settings.moduleScheduleDesc">Shift assignments, templates</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleSchedule" title="Import">⬆ Import</button>
-                      <button class="btn-sm btn-export" id="exportModuleSchedule" title="Export">⬇ Export</button>
-                    </div>
-                  </div>
-                  <div class="module-card-wrapper" data-module="absences">
-                    <div class="module-card-header">
-                      <div class="module-icon">🏖️</div>
-                      <div class="module-name" data-i18n="settings.moduleAbsences">Absences</div>
-                      <div class="module-desc" data-i18n="settings.moduleAbsencesDesc">Absence types, vacations, holidays</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleAbsences" title="Import">⬆ Import</button>
-                      <button class="btn-sm btn-export" id="exportModuleAbsences" title="Export">⬇ Export</button>
-                    </div>
-                  </div>
-                </div>
+            <div class="ie-section-divider">
+              <span data-i18n="settings.moduleGroups">Module Groups</span>
+            </div>
+            <p class="setting-hint" style="margin: -4px 0 16px 0;" data-i18n="settings.moduleGroupsHint">Import or export grouped modules</p>
 
-                <label style="margin-top: 16px; display: block;" data-i18n="settings.individualTables">Individual Tables</label>
-                <p class="setting-hint" data-i18n="settings.individualTablesHint">Import or export a single table</p>
-                <div class="import-modules-grid import-modules-individual">
-                  <div class="module-card-wrapper module-card-small" data-module="customers">
-                    <div class="module-card-header">
-                      <div class="module-icon">👤</div>
-                      <div class="module-name" data-i18n="settings.moduleCustomers">Customers</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleCustomers" title="Import">⬆</button>
-                      <button class="btn-sm btn-export" id="exportModuleCustomers" title="Export">⬇</button>
-                    </div>
-                  </div>
-                  <div class="module-card-wrapper module-card-small" data-module="types">
-                    <div class="module-card-header">
-                      <div class="module-icon">🏷️</div>
-                      <div class="module-name" data-i18n="settings.moduleTypes">Types</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleTypes" title="Import">⬆</button>
-                      <button class="btn-sm btn-export" id="exportModuleTypes" title="Export">⬇</button>
-                    </div>
-                  </div>
-                  <div class="module-card-wrapper module-card-small" data-module="parts">
-                    <div class="module-card-header">
-                      <div class="module-icon">🔧</div>
-                      <div class="module-name" data-i18n="settings.moduleParts">Parts</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleParts" title="Import">⬆</button>
-                      <button class="btn-sm btn-export" id="exportModuleParts" title="Export">⬇</button>
-                    </div>
-                  </div>
-                  <div class="module-card-wrapper module-card-small" data-module="tests">
-                    <div class="module-card-header">
-                      <div class="module-icon">🧪</div>
-                      <div class="module-name" data-i18n="settings.moduleTests">Tests</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleTests" title="Import">⬆</button>
-                      <button class="btn-sm btn-export" id="exportModuleTests" title="Export">⬇</button>
-                    </div>
-                  </div>
-                  <div class="module-card-wrapper module-card-small" data-module="projects">
-                    <div class="module-card-header">
-                      <div class="module-icon">📋</div>
-                      <div class="module-name" data-i18n="settings.moduleProjects">Projects</div>
-                    </div>
-                    <div class="module-card-actions">
-                      <button class="btn-sm btn-import" id="importModuleProjects" title="Import">⬆</button>
-                      <button class="btn-sm btn-export" id="exportModuleProjects" title="Export">⬇</button>
-                    </div>
-                  </div>
+            <div class="ie-modules-grid">
+              <div class="ie-module-card" data-module="planning">
+                <div class="ie-module-icon" style="background: #DBEAFE; color: #2563EB;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+                </div>
+                <div class="ie-module-name" data-i18n="settings.modulePlanning">Planning</div>
+                <div class="ie-module-desc" data-i18n="settings.modulePlanningDesc">Customers, types, parts, tests, projects</div>
+                <div class="ie-module-actions">
+                  <button class="btn-ie-sm btn-ie-import" id="importModulePlanning" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Import
+                  </button>
+                  <button class="btn-ie-sm btn-ie-export" id="exportModulePlanning" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export
+                  </button>
+                </div>
+              </div>
+              <div class="ie-module-card" data-module="employees">
+                <div class="ie-module-icon" style="background: #FCE7F3; color: #DB2777;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </div>
+                <div class="ie-module-name" data-i18n="settings.moduleEmployees">Employees</div>
+                <div class="ie-module-desc" data-i18n="settings.moduleEmployeesDesc">Workers, details, qualifications</div>
+                <div class="ie-module-actions">
+                  <button class="btn-ie-sm btn-ie-import" id="importModuleEmployees" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Import
+                  </button>
+                  <button class="btn-ie-sm btn-ie-export" id="exportModuleEmployees" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export
+                  </button>
+                </div>
+              </div>
+              <div class="ie-module-card" data-module="schedule">
+                <div class="ie-module-icon" style="background: #D1FAE5; color: #059669;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                </div>
+                <div class="ie-module-name" data-i18n="settings.moduleSchedule">Schedule</div>
+                <div class="ie-module-desc" data-i18n="settings.moduleScheduleDesc">Shift assignments, templates</div>
+                <div class="ie-module-actions">
+                  <button class="btn-ie-sm btn-ie-import" id="importModuleSchedule" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Import
+                  </button>
+                  <button class="btn-ie-sm btn-ie-export" id="exportModuleSchedule" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export
+                  </button>
+                </div>
+              </div>
+              <div class="ie-module-card" data-module="absences">
+                <div class="ie-module-icon" style="background: #FEF3C7; color: #D97706;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="22" height="22"><path d="M17 2l4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></svg>
+                </div>
+                <div class="ie-module-name" data-i18n="settings.moduleAbsences">Absences</div>
+                <div class="ie-module-desc" data-i18n="settings.moduleAbsencesDesc">Absence types, vacations, holidays</div>
+                <div class="ie-module-actions">
+                  <button class="btn-ie-sm btn-ie-import" id="importModuleAbsences" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Import
+                  </button>
+                  <button class="btn-ie-sm btn-ie-export" id="exportModuleAbsences" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Export
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Individual tables -->
+            <div class="ie-section-divider" style="margin-top: 28px;">
+              <span data-i18n="settings.individualTables">Individual Tables</span>
+            </div>
+            <p class="setting-hint" style="margin: -4px 0 16px 0;" data-i18n="settings.individualTablesHint">Import or export a single table</p>
+
+            <div class="ie-tables-grid">
+              <div class="ie-table-card" data-module="customers">
+                <div class="ie-table-icon">👤</div>
+                <div class="ie-table-name" data-i18n="settings.moduleCustomers">Customers</div>
+                <div class="ie-table-actions">
+                  <button class="btn-ie-tiny btn-ie-import" id="importModuleCustomers" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  </button>
+                  <button class="btn-ie-tiny btn-ie-export" id="exportModuleCustomers" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="ie-table-card" data-module="types">
+                <div class="ie-table-icon">🏷️</div>
+                <div class="ie-table-name" data-i18n="settings.moduleTypes">Types</div>
+                <div class="ie-table-actions">
+                  <button class="btn-ie-tiny btn-ie-import" id="importModuleTypes" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  </button>
+                  <button class="btn-ie-tiny btn-ie-export" id="exportModuleTypes" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="ie-table-card" data-module="parts">
+                <div class="ie-table-icon">🔧</div>
+                <div class="ie-table-name" data-i18n="settings.moduleParts">Parts</div>
+                <div class="ie-table-actions">
+                  <button class="btn-ie-tiny btn-ie-import" id="importModuleParts" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  </button>
+                  <button class="btn-ie-tiny btn-ie-export" id="exportModuleParts" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="ie-table-card" data-module="tests">
+                <div class="ie-table-icon">🧪</div>
+                <div class="ie-table-name" data-i18n="settings.moduleTests">Tests</div>
+                <div class="ie-table-actions">
+                  <button class="btn-ie-tiny btn-ie-import" id="importModuleTests" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  </button>
+                  <button class="btn-ie-tiny btn-ie-export" id="exportModuleTests" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="ie-table-card" data-module="projects">
+                <div class="ie-table-icon">📋</div>
+                <div class="ie-table-name" data-i18n="settings.moduleProjects">Projects</div>
+                <div class="ie-table-actions">
+                  <button class="btn-ie-tiny btn-ie-import" id="importModuleProjects" title="Import">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  </button>
+                  <button class="btn-ie-tiny btn-ie-export" id="exportModuleProjects" title="Export">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                  </button>
                 </div>
               </div>
             </div>
           </div>
 
           <!-- Local Database File (SQLite) (admin-only) -->
-          <div class="setting-group local-db-group admin-only" style="display:none">
+          <div class="setting-group admin-only" id="settingsLocalDbSection" style="display:none">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
                 <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
@@ -1590,11 +1824,13 @@
               </svg>
               <span data-i18n="settings.localDatabase">Local Database File</span>
             </h3>
-            <p class="setting-hint" style="margin: -8px 0 12px 0;" data-i18n="settings.localDatabaseHint">Save the SQLite database file to your computer for safekeeping. If someone accidentally deletes the application, your data is safe.</p>
 
             <!-- Download DB file -->
-            <div class="setting-item">
-              <div>
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #D1FAE5; color: #059669;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.downloadDb">Download Database File</label>
                 <p class="setting-hint" data-i18n="settings.downloadDbHint">Save the .db file locally on your computer</p>
               </div>
@@ -1607,8 +1843,11 @@
             </div>
 
             <!-- Upload DB file -->
-            <div class="setting-item">
-              <div>
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #FEF3C7; color: #D97706;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.uploadDb">Upload Database File</label>
                 <p class="setting-hint" data-i18n="settings.uploadDbHint">Restore from a previously saved .db file. This will replace all current data!</p>
               </div>
@@ -1622,10 +1861,19 @@
             <input type="file" id="uploadDbFileInput" accept=".db,.sqlite,.sqlite3" style="display:none" />
           </div>
 
-          <div class="setting-group admin-only" style="display:none">
-            <h3 data-i18n="settings.data">Data Management</h3>
-            <div class="setting-item">
-              <div>
+          <div class="setting-group admin-only" id="settingsDataSection" style="display:none">
+            <h3>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
+                <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+              </svg>
+              <span data-i18n="settings.data">Data Management</span>
+            </h3>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #DBEAFE; color: #2563EB;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="settings.loadExampleData">Load Example Data</label>
                 <p class="setting-hint">Load sample projects to explore the application</p>
               </div>
@@ -1638,12 +1886,20 @@
                 <span>Load Example Data</span>
               </button>
             </div>
-            <div class="setting-item">
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #FEF2F2; color: #EF4444;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </div>
+              <div class="setting-item-text">
+                <label data-i18n="settings.clearData">Clear All Data</label>
+                <p class="setting-hint">Permanently delete all data from the application</p>
+              </div>
               <button class="btn-danger" id="clearAllData" data-i18n="settings.clearData">Clear All Data</button>
             </div>
           </div>
 
-          <div class="setting-group">
+          <div class="setting-group" id="settingsLogsSection">
             <h3>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="vertical-align: middle; margin-right: 8px;">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -1653,8 +1909,12 @@
               </svg>
               <span data-i18n="logs.title">Activity Logs</span>
             </h3>
-            <div class="setting-item">
-              <div>
+
+            <div class="setting-item-modern">
+              <div class="setting-item-icon" style="background: #EDE9FE; color: #7C3AED;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              </div>
+              <div class="setting-item-text">
                 <label data-i18n="logs.subtitle">Track all changes and actions</label>
                 <p class="setting-hint">View, export and manage activity history</p>
               </div>

@@ -49,6 +49,22 @@ export type EmployeeStatus = 'available' | 'vacation' | 'sick';
 
 export type EmployeeRole = 'worker' | 'leader' | 'manager';
 
+export type EmployeePosition = 'worker' | 'leader' | 'manager' | 'trainee';
+
+/** Definicja umiejętności / kwalifikacji — konfigurowalna przez użytkownika */
+export interface QualificationDefinition {
+  id: string;            // Unikalny identyfikator (np. 'audit', 'custom_1')
+  name: string;          // Nazwa wyświetlana
+  icon: string;          // Emoji ikona
+  description?: string;  // Opis umiejętności
+  sortOrder: number;     // Kolejność wyświetlania
+}
+
+/** Kwalifikacje pracownika — ocena 0-5 (0 = brak, 5 = ekspert) */
+export interface EmployeeQualifications {
+  [key: string]: number | undefined;  // Dynamiczne kwalifikacje z oceną gwiazdkową
+}
+
 export interface Employee {
   id: string;
   firstName: string;
@@ -59,6 +75,9 @@ export interface Employee {
   shiftSystem?: 1 | 2 | 3;        // System zmianowy (1=jednozmianowy, 2=dwuzmianowy, 3=trzyzmianowy)
   note?: string;                  // Notatka o pracowniku
   role?: EmployeeRole;            // Rola: pracownik, lider, kierownik
+  position?: EmployeePosition;    // Stanowisko
+  schedulable?: boolean;          // Czy pracownik ma być obsadzany w grafiku (domyślnie true)
+  qualifications?: EmployeeQualifications; // Kwalifikacje z oceną gwiazdkową
   email?: string;                 // Adres email
   phone?: string;                 // Numer telefonu
   department?: string;            // Dział
@@ -113,17 +132,23 @@ export interface AppSettings {
   language: 'en' | 'de' | 'pl' | 'ro';
   darkMode: boolean;
   animations: boolean;
+  compactMode: boolean;   // Tryb kompaktowy - mniejsze odstępy
   highlightMissing: boolean;
   blinkAlerts: boolean;
+  soundAlerts: boolean;    // Dźwiękowe powiadomienia
   deletePassword: string;
   editMode: boolean;  // Tryb edycji po wpisaniu hasła
   userName: string;   // Nazwa użytkownika dla logów
+  recoveryEmail: string;  // Email do odzyskiwania hasła
   zoomLevel: number;  // Poziom zoom siatki (50-150)
   shiftSystem: 1 | 2 | 3;  // System zmianowy (1, 2 lub 3 zmiany)
+  autoSaveInterval: number; // Auto-save in seconds (0 = disabled)
   // Backup settings
   backupPath: string;
   backupFrequency: 'none' | 'session' | 'daily' | 'weekly';
   lastBackupDate: string;
+  // Qualification definitions
+  qualificationDefinitions?: QualificationDefinition[];  // Dynamiczne definicje kwalifikacji
 }
 
 // ==================== Absence Management (Zarządzanie nieobecnościami) ====================

@@ -1,13 +1,23 @@
 import { Router } from 'express';
 import { runQuery, getAll, getOne, saveDatabase } from '../database/db.js';
+import nodemailer from 'nodemailer';
+
+// In-memory store for recovery codes (code -> { code, expiresAt })
+const recoveryCodes = new Map<string, { code: string; expiresAt: number }>();
 
 // ==================== EMPLOYEES ====================
 export const employeesRouter = Router();
 
 employeesRouter.get('/', (req, res) => {
   try {
-    const items = getAll('SELECT * FROM employees ORDER BY firstName, lastName');
-    res.json(items);
+    const items = getAll<any>('SELECT * FROM employees ORDER BY firstName, lastName');
+    // Transform DB format to frontend format
+    const transformed = items.map(emp => ({
+      ...emp,
+      schedulable: emp.schedulable === undefined ? true : !!emp.schedulable,
+      qualifications: emp.qualifications ? (typeof emp.qualifications === 'string' ? JSON.parse(emp.qualifications) : emp.qualifications) : undefined,
+    }));
+    res.json(transformed);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch employees' });
@@ -29,24 +39,28 @@ employeesRouter.get('/:id', (req, res) => {
 
 employeesRouter.post('/', (req, res) => {
   try {
-    const { id, firstName, lastName, color, status, suggestedShift, shiftSystem } = req.body;
+    const { id, firstName, lastName, color, status, suggestedShift, shiftSystem, role, email, phone, department, position, schedulable, qualifications, note } = req.body;
     const created_at = Date.now();
+    const qualificationsJson = qualifications ? (typeof qualifications === 'string' ? qualifications : JSON.stringify(qualifications)) : null;
     
     // Check if exists (upsert)
     const existing = getOne('SELECT id FROM employees WHERE id = ?', [id]);
     if (existing) {
       runQuery(`
-        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?
+        UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?,
+          role = ?, email = ?, phone = ?, department = ?, position = ?, schedulable = ?, qualifications = ?, note = ?
         WHERE id = ?
-      `, [firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2, id]);
+      `, [firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2,
+          role || 'worker', email || null, phone || null, department || null, position || 'worker', schedulable !== undefined ? (schedulable ? 1 : 0) : 1, qualificationsJson, note || null, id]);
     } else {
       runQuery(`
-        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, shiftSystem, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2, created_at]);
+        INSERT INTO employees (id, firstName, lastName, color, status, suggestedShift, shiftSystem, role, email, phone, department, position, schedulable, qualifications, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [id, firstName, lastName, color, status || 'available', suggestedShift || null, shiftSystem || 2,
+          role || 'worker', email || null, phone || null, department || null, position || 'worker', schedulable !== undefined ? (schedulable ? 1 : 0) : 1, qualificationsJson, note || null, created_at]);
     }
     
-    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, shiftSystem, created_at });
+    res.status(201).json({ id, firstName, lastName, color, status, suggestedShift, shiftSystem, role, email, phone, department, position, schedulable, qualifications, note, created_at });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to create employee' });
@@ -55,12 +69,15 @@ employeesRouter.post('/', (req, res) => {
 
 employeesRouter.put('/:id', (req, res) => {
   try {
-    const { firstName, lastName, color, status, suggestedShift, shiftSystem } = req.body;
+    const { firstName, lastName, color, status, suggestedShift, shiftSystem, role, email, phone, department, position, schedulable, qualifications, note } = req.body;
+    const qualificationsJson = qualifications ? (typeof qualifications === 'string' ? qualifications : JSON.stringify(qualifications)) : null;
     runQuery(`
-      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?
+      UPDATE employees SET firstName = ?, lastName = ?, color = ?, status = ?, suggestedShift = ?, shiftSystem = ?,
+        role = ?, email = ?, phone = ?, department = ?, position = ?, schedulable = ?, qualifications = ?, note = ?
       WHERE id = ?
-    `, [firstName, lastName, color, status, suggestedShift, shiftSystem || 2, req.params.id]);
-    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift, shiftSystem });
+    `, [firstName, lastName, color, status, suggestedShift, shiftSystem || 2,
+        role || 'worker', email || null, phone || null, department || null, position || 'worker', schedulable !== undefined ? (schedulable ? 1 : 0) : 1, qualificationsJson, note || null, req.params.id]);
+    res.json({ id: req.params.id, firstName, lastName, color, status, suggestedShift, shiftSystem, role, email, phone, department, position, schedulable, qualifications, note });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to update employee' });
@@ -803,5 +820,262 @@ extraTasksRouter.delete('/:id', (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to delete extra task' });
+  }
+});
+
+// ==================== SEND SCHEDULE EMAIL ====================
+export const emailRouter = Router();
+
+emailRouter.post('/send', async (req, res) => {
+  try {
+    const { recipients, subject, html, plainText } = req.body;
+    
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0) {
+      return res.status(400).json({ error: 'At least one recipient is required' });
+    }
+    
+    if (!subject || !html) {
+      return res.status(400).json({ error: 'Subject and HTML body are required' });
+    }
+    
+    // Get SMTP config from settings
+    const settingRow = getOne('SELECT value FROM settings WHERE key = ?', ['app-settings']) as any;
+    let smtpConfig: any = null;
+    
+    if (settingRow) {
+      const settings = JSON.parse(settingRow.value);
+      if (settings.smtpHost) {
+        smtpConfig = {
+          host: settings.smtpHost,
+          port: parseInt(settings.smtpPort || '587'),
+          secure: settings.smtpSecure === true || settings.smtpPort === '465',
+          auth: settings.smtpUser ? {
+            user: settings.smtpUser,
+            pass: settings.smtpPass || ''
+          } : undefined
+        };
+      }
+    }
+    
+    if (!smtpConfig) {
+      return res.status(400).json({ error: 'SMTP not configured. Please configure SMTP settings first.', code: 'SMTP_NOT_CONFIGURED' });
+    }
+    
+    const transporter = nodemailer.createTransport(smtpConfig);
+    
+    // Verify connection
+    try {
+      await transporter.verify();
+    } catch (verifyErr) {
+      console.error('SMTP verification failed:', verifyErr);
+      return res.status(500).json({ error: 'SMTP connection failed. Check your settings.', code: 'SMTP_CONNECTION_FAILED' });
+    }
+    
+    // Send email
+    const senderName = 'DRÄXLMAIER Kappa Planning';
+    const senderEmail = smtpConfig.auth?.user || 'kappa@draexlmaier.com';
+    
+    const info = await transporter.sendMail({
+      from: `"${senderName}" <${senderEmail}>`,
+      to: recipients.join(', '),
+      subject: subject,
+      text: plainText || '',
+      html: html
+    });
+    
+    console.log(`📧 Schedule email sent to ${recipients.length} recipients. Message ID: ${info.messageId}`);
+    
+    res.json({ 
+      success: true, 
+      messageId: info.messageId,
+      recipientCount: recipients.length
+    });
+  } catch (error) {
+    console.error('Failed to send schedule email:', error);
+    res.status(500).json({ error: 'Failed to send email' });
+  }
+});
+
+// Test SMTP connection
+emailRouter.post('/test-smtp', async (req, res) => {
+  try {
+    const { smtpHost, smtpPort, smtpUser, smtpPass, smtpSecure, testEmail } = req.body;
+    
+    if (!smtpHost) {
+      return res.status(400).json({ error: 'SMTP host is required' });
+    }
+    
+    const config: any = {
+      host: smtpHost,
+      port: parseInt(smtpPort || '587'),
+      secure: smtpSecure === true || smtpPort === '465',
+    };
+    
+    if (smtpUser) {
+      config.auth = {
+        user: smtpUser,
+        pass: smtpPass || ''
+      };
+    }
+    
+    const transporter = nodemailer.createTransport(config);
+    
+    // Verify connection
+    await transporter.verify();
+    
+    // Optionally send test email
+    if (testEmail) {
+      await transporter.sendMail({
+        from: `"DRÄXLMAIER Kappa" <${smtpUser || 'kappa@draexlmaier.com'}>`,
+        to: testEmail,
+        subject: '✅ Kappa – Test SMTP connection',
+        text: 'This is a test email from Kappa Planning. SMTP is configured correctly!',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+            <div style="background: #1a1a1a; padding: 16px 20px; border-radius: 10px 10px 0 0;">
+              <h2 style="color: white; margin: 0; font-size: 15px;">DRÄXLMAIER <span style="color: #0097AC;">Kappa</span></h2>
+            </div>
+            <div style="background: #0097AC; height: 3px;"></div>
+            <div style="background: #f8fafc; padding: 24px 20px; border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 10px 10px;">
+              <div style="text-align: center; margin-bottom: 16px;">
+                <span style="font-size: 48px;">✅</span>
+              </div>
+              <h3 style="margin: 0 0 8px; color: #0f172a; text-align: center;">SMTP works!</h3>
+              <p style="color: #64748b; font-size: 13px; margin: 0; text-align: center;">Your SMTP configuration is correct. Kappa can now send emails directly.</p>
+            </div>
+          </div>
+        `
+      });
+    }
+    
+    res.json({ success: true, message: 'SMTP connection verified successfully' });
+  } catch (error: any) {
+    console.error('SMTP test failed:', error);
+    res.status(500).json({ error: `SMTP test failed: ${error.message || 'Unknown error'}` });
+  }
+});
+
+// ==================== PASSWORD RECOVERY ====================
+export const recoveryRouter = Router();
+
+// Send recovery code to email
+recoveryRouter.post('/send-code', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    if (!email) {
+      return res.status(400).json({ error: 'Email address is required' });
+    }
+    
+    // Generate 6-digit code
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    
+    // Store code with 15min expiry
+    recoveryCodes.set(email.toLowerCase(), {
+      code,
+      expiresAt: Date.now() + 15 * 60 * 1000
+    });
+    
+    // Clean expired codes
+    for (const [key, val] of recoveryCodes.entries()) {
+      if (val.expiresAt < Date.now()) recoveryCodes.delete(key);
+    }
+    
+    // Try to send email via nodemailer (only if SMTP configured)
+    try {
+      // Check if SMTP settings exist in app settings
+      const settingRow = getOne('SELECT value FROM settings WHERE key = ?', ['app-settings']) as any;
+      let smtpConfig: any = null;
+      
+      if (settingRow) {
+        const settings = JSON.parse(settingRow.value);
+        if (settings.smtpHost) {
+          smtpConfig = {
+            host: settings.smtpHost,
+            port: parseInt(settings.smtpPort || '587'),
+            secure: settings.smtpSecure === true || settings.smtpPort === '465',
+            auth: settings.smtpUser ? {
+              user: settings.smtpUser,
+              pass: settings.smtpPass || ''
+            } : undefined
+          };
+        }
+      }
+      
+      if (!smtpConfig) {
+        // No SMTP configured - log code to console for local use
+        console.log(`🔐 Recovery code for ${email}: ${code} (no SMTP configured - code stored locally)`);
+        return res.json({ success: true, message: 'Recovery code generated' });
+      }
+
+      const transporter = nodemailer.createTransport(smtpConfig);
+      
+      await transporter.sendMail({
+        from: '"DRÄXLMAIER Kappa" <noreply@kappa.draexlmaier.com>',
+        to: email,
+        subject: `Recovery code: ${code} – DRÄXLMAIER Kappa`,
+        text: `Your password recovery code: ${code}\n\nThis code is valid for 15 minutes.\n\nIf you did not request a password reset, ignore this message.\n\n– DRÄXLMAIER Kappa Planning`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+            <div style="background: #1a1a1a; padding: 20px 24px; border-radius: 12px 12px 0 0;">
+              <h2 style="color: white; margin: 0; font-size: 16px;">DRÄXLMAIER <span style="color: #0097AC;">Kappa</span></h2>
+            </div>
+            <div style="background: #0097AC; height: 4px;"></div>
+            <div style="background: #f8fafc; padding: 32px 24px; border: 1px solid #e2e8f0; border-top: 0; border-radius: 0 0 12px 12px;">
+              <h3 style="margin: 0 0 8px; color: #0f172a;">Password Recovery</h3>
+              <p style="color: #64748b; font-size: 14px; margin: 0 0 24px;">Use the code below to reset your Kappa settings password.</p>
+              <div style="background: white; border: 2px dashed #0097AC; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
+                <div style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #0097AC; font-family: 'Courier New', monospace;">${code}</div>
+              </div>
+              <p style="color: #94a3b8; font-size: 12px; margin: 0;">This code is valid for 15 minutes. If you did not request a password reset, ignore this message.</p>
+            </div>
+          </div>
+        `
+      });
+      
+      res.json({ success: true, message: 'Recovery code sent' });
+    } catch (emailErr) {
+      console.error('Failed to send email:', emailErr);
+      // Even if email fails, we still have the code stored
+      console.log(`🔐 Recovery code for ${email}: ${code}`);
+      res.json({ success: true, message: 'Recovery code generated' });
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to send recovery code' });
+  }
+});
+
+// Verify recovery code
+recoveryRouter.post('/verify-code', (req, res) => {
+  try {
+    const { email, code } = req.body;
+    
+    if (!email || !code) {
+      return res.status(400).json({ error: 'Email and code are required' });
+    }
+    
+    const stored = recoveryCodes.get(email.toLowerCase());
+    
+    if (!stored) {
+      return res.status(400).json({ error: 'No recovery code found for this email', valid: false });
+    }
+    
+    if (stored.expiresAt < Date.now()) {
+      recoveryCodes.delete(email.toLowerCase());
+      return res.status(400).json({ error: 'Recovery code has expired', valid: false });
+    }
+    
+    if (stored.code !== code.trim()) {
+      return res.status(400).json({ error: 'Invalid recovery code', valid: false });
+    }
+    
+    // Code is valid - remove it so it can't be reused
+    recoveryCodes.delete(email.toLowerCase());
+    
+    res.json({ valid: true, message: 'Code verified successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to verify code' });
   }
 });

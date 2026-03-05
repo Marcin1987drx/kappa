@@ -155,6 +155,22 @@ async function initDatabase() {
     db.run(`ALTER TABLE employees ADD COLUMN shiftSystem INTEGER DEFAULT 2`);
     console.log('✅ Added shiftSystem column to employees table');
   } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN position TEXT DEFAULT 'worker'`);
+    console.log('✅ Added position column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN schedulable INTEGER DEFAULT 1`);
+    console.log('✅ Added schedulable column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN note TEXT`);
+    console.log('✅ Added note column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
+  try {
+    db.run(`ALTER TABLE employees ADD COLUMN qualifications TEXT`);
+    console.log('✅ Added qualifications column to employees table');
+  } catch (e) { /* kolumna istnieje */ }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS schedule_assignments (
@@ -315,19 +331,19 @@ async function initDatabase() {
   const existingTypes = getAll('SELECT id FROM absence_types');
   if (existingTypes.length === 0) {
     const defaultTypes = [
-      { id: 'vacation', name: 'Urlop wypoczynkowy', icon: '🏖️', color: '#10b981', defaultDays: 26, isPaid: 1, sortOrder: 1 },
-      { id: 'vacation-force', name: 'Urlop siła wyższa 50%', icon: '⚡', color: '#f59e0b', defaultDays: 2, isPaid: 1, sortOrder: 2 },
-      { id: 'vacation-overdue', name: 'Zaległy urlop', icon: '📅', color: '#6366f1', defaultDays: 0, isPaid: 1, sortOrder: 3 },
-      { id: 'paternity', name: 'Urlop ojcowski', icon: '👶', color: '#3b82f6', defaultDays: 14, isPaid: 1, sortOrder: 4 },
-      { id: 'parental', name: 'Urlop macierzyński/rodzicielski', icon: '👨‍👩‍👧', color: '#ec4899', defaultDays: 0, isPaid: 1, sortOrder: 5 },
-      { id: 'childcare', name: 'Opieka nad dzieckiem', icon: '👨‍👧', color: '#8b5cf6', defaultDays: 2, isPaid: 1, sortOrder: 6 },
-      { id: 'occasional', name: 'Urlop okolicznościowy', icon: '🎭', color: '#14b8a6', defaultDays: 0, isPaid: 1, sortOrder: 7 },
-      { id: 'sick', name: 'Chorobowe', icon: '🤒', color: '#ef4444', defaultDays: 0, isPaid: 1, sortOrder: 8 },
-      { id: 'medical', name: 'Badania okresowe', icon: '🏥', color: '#06b6d4', defaultDays: 1, isPaid: 1, sortOrder: 9 },
-      { id: 'unpaid', name: 'Urlop bezpłatny', icon: '💼', color: '#64748b', defaultDays: 0, isPaid: 0, sortOrder: 10 },
-      { id: 'occasional-env', name: 'Urlop okolicznościowy', icon: '🎭', color: '#14b8a6', defaultDays: 0, isPaid: 1, sortOrder: 11 },
-      { id: 'delegation', name: 'Delegacja', icon: '✈️', color: '#0ea5e9', defaultDays: 0, isPaid: 1, sortOrder: 12 },
-      { id: 'home-office', name: 'Home Office', icon: '🏠', color: '#a855f7', defaultDays: 12, isPaid: 1, sortOrder: 13 }
+      { id: 'vacation', name: 'Urlop wypoczynkowy', icon: 'svg:vacation', color: '#10b981', defaultDays: 26, isPaid: 1, sortOrder: 1 },
+      { id: 'vacation-force', name: 'Urlop siła wyższa 50%', icon: 'svg:vacation-force', color: '#f59e0b', defaultDays: 2, isPaid: 1, sortOrder: 2 },
+      { id: 'vacation-overdue', name: 'Zaległy urlop', icon: 'svg:vacation-overdue', color: '#6366f1', defaultDays: 0, isPaid: 1, sortOrder: 3 },
+      { id: 'paternity', name: 'Urlop ojcowski', icon: 'svg:paternity', color: '#3b82f6', defaultDays: 14, isPaid: 1, sortOrder: 4 },
+      { id: 'parental', name: 'Urlop macierzyński/rodzicielski', icon: 'svg:parental', color: '#ec4899', defaultDays: 0, isPaid: 1, sortOrder: 5 },
+      { id: 'childcare', name: 'Opieka nad dzieckiem', icon: 'svg:childcare', color: '#8b5cf6', defaultDays: 2, isPaid: 1, sortOrder: 6 },
+      { id: 'occasional', name: 'Urlop okolicznościowy', icon: 'svg:occasional', color: '#14b8a6', defaultDays: 0, isPaid: 1, sortOrder: 7 },
+      { id: 'sick', name: 'Chorobowe', icon: 'svg:sick', color: '#ef4444', defaultDays: 0, isPaid: 1, sortOrder: 8 },
+      { id: 'medical', name: 'Badania okresowe', icon: 'svg:medical', color: '#06b6d4', defaultDays: 1, isPaid: 1, sortOrder: 9 },
+      { id: 'unpaid', name: 'Urlop bezpłatny', icon: 'svg:unpaid', color: '#64748b', defaultDays: 0, isPaid: 0, sortOrder: 10 },
+      { id: 'occasional-env', name: 'Urlop okolicznościowy', icon: 'svg:occasional-env', color: '#14b8a6', defaultDays: 0, isPaid: 1, sortOrder: 11 },
+      { id: 'delegation', name: 'Delegacja', icon: 'svg:delegation', color: '#0ea5e9', defaultDays: 0, isPaid: 1, sortOrder: 12 },
+      { id: 'home-office', name: 'Home Office', icon: 'svg:home-office', color: '#a855f7', defaultDays: 12, isPaid: 1, sortOrder: 13 }
     ];
     
     for (const type of defaultTypes) {

@@ -1,7 +1,9 @@
 import { i18n } from './i18n';
 import { api } from './api/client';
 import { db } from './database';
-import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus, ExtraTask } from './types';
+import { sounds, SoundName } from './sounds';
+import { renderAbsenceIcon, getAbsenceIcon, getAbsenceEmoji } from './icons/absence-icons';
+import { Customer, Type, Part, Test, Project, AppState, Employee, ScheduleEntry, ScheduleAssignment, ProjectComment, AssignmentScope, EmployeeStatus, EmployeeRole, ExtraTask } from './types';
 import { Chart, registerables } from 'chart.js';
 import ExcelJS from 'exceljs';
 import { saveAs } from 'file-saver';
@@ -61,16 +63,27 @@ class KappaApp {
       language: 'en',
       darkMode: false,
       animations: true,
+      compactMode: false,
       highlightMissing: true,
       blinkAlerts: true,
+      soundAlerts: false,
       deletePassword: '',
       editMode: false,
       userName: '',
+      recoveryEmail: '',
       zoomLevel: 100,
       shiftSystem: 2,
+      autoSaveInterval: 30,
       backupPath: '',
       backupFrequency: 'none',
       lastBackupDate: '',
+      qualificationDefinitions: [
+        { id: 'audit', name: 'Product Audit', icon: '📋', description: '', sortOrder: 1 },
+        { id: 'adhesion', name: 'Adhesion (Peel-off)', icon: '🔬', description: '', sortOrder: 2 },
+        { id: 'dimensions', name: 'Dimensions / Measurements', icon: '📐', description: '', sortOrder: 3 },
+        { id: 'visual', name: 'Visual Inspection', icon: '👁️', description: '', sortOrder: 4 },
+        { id: 'laboratory', name: 'Laboratory', icon: '🧪', description: '', sortOrder: 5 },
+      ],
     },
     currentView: 'planning',
     selectedYear: new Date().getFullYear(),
@@ -110,6 +123,8 @@ class KappaApp {
 
   // Admin mode - unlocked by password in settings
   private adminUnlocked: boolean = false;
+  // Settings access - unlocked by password
+  private settingsUnlocked: boolean = false;
 
   async init(): Promise<void> {
     try {
@@ -191,7 +206,7 @@ class KappaApp {
       // Load example data
       const response = await fetch('/example-data.json');
       if (!response.ok) {
-        this.showToast('Could not load example data', 'error');
+        this.showToast(i18n.t('messages.errorOccurred'), 'error');
         return;
       }
       
@@ -223,10 +238,10 @@ class KappaApp {
       // Reload data and refresh view
       await this.loadData();
       this.renderCurrentView();
-      this.showToast('Example data loaded successfully! 🎉', 'success');
+      this.showToast(i18n.t('messages.importSuccessfully'), 'success', 'complete');
     } catch (error) {
       console.error('Failed to load example data:', error);
-      this.showToast('Failed to load example data', 'error');
+      this.showToast(i18n.t('messages.errorOccurred'), 'error');
     }
   }
 
@@ -267,6 +282,7 @@ class KappaApp {
     }
     
     i18n.setLanguage(this.state.settings.language);
+    sounds.setEnabled(this.state.settings.soundAlerts);
   }
 
   private async cleanupDuplicateAssignments(): Promise<void> {
@@ -284,9 +300,21 @@ class KappaApp {
       validProjectIds.add(`extra-${t.id}`);
     });
     
+    // Zbierz prawidłowe employee IDs
+    const validEmployeeIds = new Set<string>();
+    this.state.employees.forEach(e => {
+      validEmployeeIds.add(e.id);
+    });
+    
     for (const a of this.state.scheduleAssignments) {
       // Usuń przypisania do nieistniejących projektów (osierocone)
       if (!validProjectIds.has(a.projectId)) {
+        toRemove.push(a.id);
+        continue;
+      }
+      
+      // Usuń przypisania do nieistniejących pracowników (duchy)
+      if (!validEmployeeIds.has(a.employeeId)) {
         toRemove.push(a.id);
         continue;
       }
@@ -483,6 +511,7 @@ class KappaApp {
     document.getElementById('statsPanelTab')?.addEventListener('click', () => {
       const panel = document.getElementById('statsSlidePanel');
       panel?.classList.add('open');
+      sounds.play('swoosh');
       this.updateStatsPanel();
     });
 
@@ -490,6 +519,7 @@ class KappaApp {
     document.getElementById('statsPanelClose')?.addEventListener('click', () => {
       const panel = document.getElementById('statsSlidePanel');
       panel?.classList.remove('open');
+      sounds.play('swoosh');
     });
 
     // Click outside to close panel
@@ -521,12 +551,14 @@ class KappaApp {
       const panel = document.getElementById('projectsSlidePanel');
       if (panel) {
         panel.classList.add('open');
+        sounds.play('swoosh');
         this.renderProjectsView();
       }
     });
     document.getElementById('projectsPanelClose')?.addEventListener('click', () => {
       const panel = document.getElementById('projectsSlidePanel');
       panel?.classList.remove('open');
+      sounds.play('swoosh');
     });
 
     // Admin unlock toggle
@@ -541,25 +573,71 @@ class KappaApp {
     // Settings toggles
     document.getElementById('darkModeToggle')?.addEventListener('change', async (e) => {
       this.state.settings.darkMode = (e.target as HTMLInputElement).checked;
+      sounds.play('toggle');
       this.applyTheme();
       await this.saveSettings();
     });
 
     document.getElementById('animationsToggle')?.addEventListener('change', async (e) => {
       this.state.settings.animations = (e.target as HTMLInputElement).checked;
+      sounds.play('toggle');
       await this.saveSettings();
     });
 
     document.getElementById('highlightMissingToggle')?.addEventListener('change', async (e) => {
       this.state.settings.highlightMissing = (e.target as HTMLInputElement).checked;
+      sounds.play('toggle');
       await this.saveSettings();
       this.renderPlanningGrid();
     });
 
     document.getElementById('blinkAlertsToggle')?.addEventListener('change', async (e) => {
       this.state.settings.blinkAlerts = (e.target as HTMLInputElement).checked;
+      sounds.play('toggle');
       await this.saveSettings();
       this.renderPlanningGrid();
+    });
+
+    document.getElementById('compactModeToggle')?.addEventListener('change', async (e) => {
+      this.state.settings.compactMode = (e.target as HTMLInputElement).checked;
+      sounds.play('toggle');
+      document.body.classList.toggle('compact-mode', this.state.settings.compactMode);
+      await this.saveSettings();
+    });
+
+    document.getElementById('soundAlertsToggle')?.addEventListener('change', async (e) => {
+      this.state.settings.soundAlerts = (e.target as HTMLInputElement).checked;
+      sounds.setEnabled(this.state.settings.soundAlerts);
+      if (this.state.settings.soundAlerts) sounds.play('toggle');
+      await this.saveSettings();
+    });
+
+    document.getElementById('settingsZoomOut')?.addEventListener('click', async () => {
+      let current = parseFloat(document.getElementById('settingsZoomValue')?.textContent || '100');
+      current = Math.max(75, current - 5);
+      const valEl = document.getElementById('settingsZoomValue');
+      if (valEl) valEl.textContent = current + '%';
+      document.documentElement.style.fontSize = (current / 100 * 16) + 'px';
+      this.state.settings.autoSaveInterval = current; // reuse field for zoom
+      await this.saveSettings();
+    });
+
+    document.getElementById('settingsZoomIn')?.addEventListener('click', async () => {
+      let current = parseFloat(document.getElementById('settingsZoomValue')?.textContent || '100');
+      current = Math.min(150, current + 5);
+      const valEl = document.getElementById('settingsZoomValue');
+      if (valEl) valEl.textContent = current + '%';
+      document.documentElement.style.fontSize = (current / 100 * 16) + 'px';
+      this.state.settings.autoSaveInterval = current;
+      await this.saveSettings();
+    });
+
+    document.getElementById('settingsLanguageSelect')?.addEventListener('change', async (e) => {
+      const lang = (e.target as HTMLSelectElement).value as 'en' | 'de' | 'pl' | 'ro';
+      i18n.setLanguage(lang);
+      this.state.settings.language = lang;
+      await this.saveSettings();
+      this.renderCurrentView();
     });
 
     document.getElementById('clearAllData')?.addEventListener('click', () => this.clearAllData());
@@ -653,7 +731,67 @@ class KappaApp {
     document.getElementById('userNameInput')?.addEventListener('change', async (e) => {
       this.state.settings.userName = (e.target as HTMLInputElement).value;
       await this.saveSettings();
-      this.showToast(i18n.t('messages.savedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
+    });
+
+    // Recovery email setting
+    document.getElementById('recoveryEmailInput')?.addEventListener('change', async (e) => {
+      this.state.settings.recoveryEmail = (e.target as HTMLInputElement).value;
+      await this.saveSettings();
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
+    });
+
+    // SMTP / Email settings
+    document.getElementById('emailModeSelect')?.addEventListener('change', async (e) => {
+      const mode = (e.target as HTMLSelectElement).value;
+      await db.setPreference('kappa_email_mode', mode);
+      const smtpFields = document.getElementById('smtpConfigFields');
+      if (smtpFields) smtpFields.style.display = mode === 'smtp' ? 'block' : 'none';
+    });
+    document.getElementById('smtpHostInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_host', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('smtpPortInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_port', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('smtpUserInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_user', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('smtpPassInput')?.addEventListener('change', async (e) => {
+      const val = (e.target as HTMLInputElement).value;
+      await db.setPreference('kappa_smtp_pass', val);
+      this.syncSmtpToBackend();
+    });
+    document.getElementById('testSmtpBtn')?.addEventListener('click', async () => {
+      const host = (document.getElementById('smtpHostInput') as HTMLInputElement)?.value;
+      const port = (document.getElementById('smtpPortInput') as HTMLInputElement)?.value;
+      const user = (document.getElementById('smtpUserInput') as HTMLInputElement)?.value;
+      const pass = (document.getElementById('smtpPassInput') as HTMLInputElement)?.value;
+      if (!host) {
+        this.showToast(i18n.t('schedule.smtpHostRequired'), 'warning');
+        return;
+      }
+      try {
+        const resp = await fetch('/api/email/test-smtp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ smtpHost: host, smtpPort: port, smtpUser: user, smtpPass: pass, testEmail: user })
+        });
+        if (resp.ok) {
+          this.showToast(i18n.t('schedule.smtpTestSuccess'), 'success');
+        } else {
+          const data = await resp.json();
+          this.showToast(i18n.t('schedule.smtpConnectionError').replace('{0}', data.error || ''), 'error');
+        }
+      } catch (err) {
+        this.showToast(i18n.t('schedule.smtpTestFailed'), 'error');
+      }
     });
 
     // Logs view buttons
@@ -966,12 +1104,48 @@ class KappaApp {
     // Title for tooltip
     const totalIst = istData.reduce((a, b) => a + b, 0);
     const totalSoll = sollData.reduce((a, b) => a + b, 0);
-    svg.innerHTML = `<title>Ostatnie ${weeksToShow} tyg.: IST ${totalIst} / SOLL ${totalSoll}</title>` + svg.innerHTML;
+    svg.innerHTML = `<title>${i18n.t('planning.sparklineTooltip').replace('{0}', String(weeksToShow)).replace('{1}', String(totalIst)).replace('{2}', String(totalSoll))}</title>` + svg.innerHTML;
     
     return svg;
   }
 
   private switchView(view: string): void {
+    // Lock settings when navigating away
+    if (this.state.currentView === 'settings' && view !== 'settings' && view !== 'logs') {
+      this.settingsUnlocked = false;
+      // Also lock admin if password is set
+      if (this.state.settings.deletePassword) {
+        this.adminUnlocked = false;
+        this.updateAdminUI();
+      }
+    }
+    
+    // Intercept settings view - require password
+    if (view === 'settings' && !this.settingsUnlocked) {
+      // If no password is set yet, go directly to settings (first-time setup)
+      if (!this.state.settings.deletePassword) {
+        this.settingsUnlocked = true;
+        this.adminUnlocked = true;
+        this.updateAdminUI();
+      } else {
+        // Don't return - let the normal view switch happen, then show password gate
+        this.state.currentView = view;
+        
+        document.querySelectorAll('.nav-btn').forEach((btn) => {
+          btn.classList.remove('active');
+        });
+        document.querySelector(`[data-view="${view}"]`)?.classList.add('active');
+        
+        document.querySelectorAll('.view').forEach((v) => {
+          v.classList.remove('active');
+        });
+        document.getElementById(`${view}View`)?.classList.add('active');
+        
+        this.showSettingsPasswordGate();
+        return;
+      }
+    }
+    
     this.state.currentView = view;
     
     document.querySelectorAll('.nav-btn').forEach((btn) => {
@@ -985,6 +1159,401 @@ class KappaApp {
     document.getElementById(`${view}View`)?.classList.add('active');
     
     this.renderCurrentView();
+  }
+  
+  private showSettingsPasswordGate(): void {
+    const settingsView = document.getElementById('settingsView')!;
+    const settingsContainer = settingsView.querySelector('.settings-container') as HTMLElement;
+    if (!settingsContainer) return;
+    
+    // Hide the view header (title + subtitle)
+    const viewHeader = settingsView.querySelector('.view-header') as HTMLElement;
+    if (viewHeader) viewHeader.style.display = 'none';
+    
+    // Hide all setting groups but keep the container
+    const groups = settingsContainer.querySelectorAll('.setting-group');
+    groups.forEach(g => (g as HTMLElement).style.display = 'none');
+    
+    // Remove any existing gate
+    document.getElementById('settingsPasswordGateCard')?.remove();
+    
+    // Create the gate card as a child of settings-container
+    const gateEl = document.createElement('div');
+    gateEl.id = 'settingsPasswordGateCard';
+    gateEl.innerHTML = `
+      <div class="settings-gate-backdrop">
+        <div class="settings-gate-card">
+          <div class="settings-gate-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" width="32" height="32">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+          </div>
+          
+          <h2 class="settings-gate-title">${i18n.t('settings.settingsLocked')}</h2>
+          <p class="settings-gate-subtitle">${i18n.t('settings.enterPasswordToAccess')}</p>
+          
+          <div class="settings-gate-input-wrap">
+            <input 
+              type="password" 
+              id="settingsGatePassword" 
+              class="settings-gate-input" 
+              placeholder="${i18n.t('settings.password')}" 
+            />
+            <button id="settingsGateTogglePwd" class="settings-gate-toggle-pwd">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+          
+          <div id="settingsGateError" class="settings-gate-error" style="display: none;">
+            ${i18n.t('settings.wrongPassword')}
+          </div>
+          
+          <button id="settingsGateSubmit" class="settings-gate-submit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display: inline; vertical-align: middle; margin-right: 6px;">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+            </svg>
+            ${i18n.t('settings.unlockSettings')}
+          </button>
+          
+          <div class="settings-gate-divider">
+            <button id="settingsGateForgot" class="settings-gate-forgot">
+              ${i18n.t('settings.forgotPassword')}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    settingsContainer.prepend(gateEl);
+    
+    // Focus password input
+    setTimeout(() => {
+      const pwdInput = document.getElementById('settingsGatePassword') as HTMLInputElement;
+      if (pwdInput) {
+        pwdInput.focus();
+        
+        document.getElementById('settingsGateTogglePwd')?.addEventListener('click', () => {
+          pwdInput.type = pwdInput.type === 'password' ? 'text' : 'password';
+        });
+        
+        pwdInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            document.getElementById('settingsGateSubmit')?.click();
+          }
+        });
+      }
+      
+      document.getElementById('settingsGateSubmit')?.addEventListener('click', () => {
+        const pwd = (document.getElementById('settingsGatePassword') as HTMLInputElement)?.value;
+        if (pwd === this.state.settings.deletePassword) {
+          this.settingsUnlocked = true;
+          this.adminUnlocked = true;
+          this.updateAdminUI();
+          
+          // Remove gate, show setting groups and view header
+          document.getElementById('settingsPasswordGateCard')?.remove();
+          const viewHeader = document.querySelector('#settingsView .view-header') as HTMLElement;
+          if (viewHeader) viewHeader.style.display = '';
+          groups.forEach(g => (g as HTMLElement).style.display = '');
+          
+          this.renderSettingsView();
+          this.showToast(i18n.t('settings.settingsUnlocked'), 'success');
+        } else {
+          const errorEl = document.getElementById('settingsGateError');
+          if (errorEl) errorEl.style.display = 'block';
+          
+          const input = document.getElementById('settingsGatePassword') as HTMLInputElement;
+          if (input) {
+            input.style.borderColor = '#ef4444';
+            input.value = '';
+            input.focus();
+            input.style.animation = 'shake 0.4s ease';
+            setTimeout(() => { input.style.animation = ''; }, 400);
+          }
+        }
+      });
+      
+      document.getElementById('settingsGateForgot')?.addEventListener('click', () => {
+        this.showForgotPasswordModal();
+      });
+    }, 150);
+  }
+  
+  private showForgotPasswordModal(): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    const recoveryEmail = this.state.settings.recoveryEmail;
+    
+    // If no recovery email configured, show info message
+    if (!recoveryEmail) {
+      modalTitle.innerHTML = `🔑 ${i18n.t('settings.passwordRecovery')}`;
+      modalBody.innerHTML = `
+        <div style="text-align: center; padding: 24px 0;">
+          <div style="width: 64px; height: 64px; border-radius: 50%; background: #fef3c7; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" width="32" height="32">
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+              <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+            </svg>
+          </div>
+          <h3 style="margin: 0 0 8px; color: var(--color-text, #0f172a);">${i18n.t('settings.noRecoveryEmailTitle')}</h3>
+          <p style="color: var(--color-text-secondary, #64748b); font-size: 14px; margin: 0 0 16px; line-height: 1.6;">
+            ${i18n.t('settings.noRecoveryEmailDesc')}
+          </p>
+          <div style="background: var(--card-bg, #f1f5f9); border-radius: 10px; padding: 16px; text-align: left; font-size: 13px; color: var(--color-text-secondary, #64748b); line-height: 1.6;">
+            <strong style="color: var(--color-text, #334155);">${i18n.t('settings.emergencyRecovery')}:</strong><br/>
+            ${i18n.t('settings.emergencyRecoveryDesc')}
+          </div>
+        </div>
+      `;
+      
+      const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+      confirmBtn.style.display = 'none';
+      modal.classList.add('active');
+      return;
+    }
+    
+    // Mask email for display: user@domain.com → u***@domain.com
+    const atIdx = recoveryEmail.indexOf('@');
+    const maskedEmail = atIdx > 1 
+      ? recoveryEmail[0] + '***' + recoveryEmail.substring(atIdx) 
+      : recoveryEmail;
+    
+    modalTitle.innerHTML = `🔑 ${i18n.t('settings.passwordRecovery')}`;
+    
+    // Step 1: Confirm sending code
+    modalBody.innerHTML = `
+      <div style="text-align: center; padding: 16px 0;">
+        <div style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" width="32" height="32">
+            <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
+          </svg>
+        </div>
+        <h3 style="margin: 0 0 8px; color: var(--color-text, #0f172a);">${i18n.t('settings.sendRecoveryCode')}</h3>
+        <p style="color: var(--color-text-secondary, #64748b); font-size: 14px; margin: 0 0 24px; line-height: 1.6;">
+          ${i18n.t('settings.sendRecoveryCodeDesc').replace('{email}', `<strong>${maskedEmail}</strong>`)}
+        </p>
+        
+        <button id="recoveryBtnSend" style="
+          width: 100%; padding: 14px; background: linear-gradient(135deg, #0097AC 0%, #007A8A 100%);
+          color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 600;
+          cursor: pointer; transition: opacity 0.2s; box-shadow: 0 4px 16px rgba(0,151,172,0.3);
+        ">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display: inline; vertical-align: middle; margin-right: 6px;">
+            <path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/>
+          </svg>
+          ${i18n.t('settings.sendCode')}
+        </button>
+      </div>
+    `;
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = 'none';
+    
+    modal.classList.add('active');
+    
+    // Send code handler
+    document.getElementById('recoveryBtnSend')?.addEventListener('click', async () => {
+      const btn = document.getElementById('recoveryBtnSend') as HTMLButtonElement;
+      btn.disabled = true;
+      btn.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" style="display:inline;vertical-align:middle;margin-right:6px;animation:spin 1s linear infinite">
+          <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="32" stroke-linecap="round"/>
+        </svg>
+        ${i18n.t('settings.sendingCode')}...
+      `;
+      
+      try {
+        const resp = await fetch('/api/recovery/send-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: recoveryEmail })
+        });
+        
+        const data = await resp.json();
+        
+        if (resp.ok && data.success) {
+          // Step 2: Enter code
+          this.showRecoveryCodeStep(maskedEmail, recoveryEmail);
+        } else {
+          this.showToast(i18n.t('settings.sendCodeFailed'), 'error');
+          btn.disabled = false;
+          btn.textContent = i18n.t('settings.sendCode');
+        }
+      } catch (err) {
+        console.error('Recovery send error:', err);
+        this.showToast(i18n.t('settings.sendCodeFailed'), 'error');
+        btn.disabled = false;
+        btn.textContent = i18n.t('settings.sendCode');
+      }
+    });
+  }
+  
+  private showRecoveryCodeStep(maskedEmail: string, actualEmail: string): void {
+    const modalBody = document.getElementById('modalBody')!;
+    
+    modalBody.innerHTML = `
+      <div style="text-align: center; padding: 16px 0;">
+        <div style="width: 64px; height: 64px; border-radius: 50%; background: linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" width="32" height="32">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+        </div>
+        <h3 style="margin: 0 0 8px; color: var(--color-text, #0f172a);">${i18n.t('settings.enterRecoveryCode')}</h3>
+        <p style="color: var(--color-text-secondary, #64748b); font-size: 14px; margin: 0 0 24px; line-height: 1.6;">
+          ${i18n.t('settings.codeSentTo').replace('{email}', `<strong>${maskedEmail}</strong>`)}
+        </p>
+        
+        <!-- 6-digit code input -->
+        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 24px;">
+          ${[0,1,2,3,4,5].map(i => `
+            <input type="text" maxlength="1" class="recovery-code-digit" data-idx="${i}" 
+              style="width: 48px; height: 56px; text-align: center; font-size: 24px; font-weight: 700;
+              border: 2px solid var(--border-color, #e2e8f0); border-radius: 10px; outline: none;
+              color: var(--color-text, #0f172a); background: var(--card-bg, #f8fafc);
+              transition: border-color 0.2s, box-shadow 0.2s; font-family: 'Courier New', monospace;"
+            />
+          `).join('')}
+        </div>
+        
+        <div class="form-group" style="text-align: left; margin-bottom: 12px;">
+          <label style="font-weight: 600; font-size: 13px; color: var(--color-text, #334155);">${i18n.t('settings.newPassword')}:</label>
+          <input type="password" id="recoveryNewPassword" class="form-control" placeholder="${i18n.t('settings.newPassword')}" style="margin-top: 6px;" />
+        </div>
+        
+        <div class="form-group" style="text-align: left; margin-bottom: 20px;">
+          <label style="font-weight: 600; font-size: 13px; color: var(--color-text, #334155);">${i18n.t('settings.confirmPassword')}:</label>
+          <input type="password" id="recoveryConfirmPassword" class="form-control" placeholder="${i18n.t('settings.confirmPassword')}" style="margin-top: 6px;" />
+        </div>
+        
+        <button id="recoveryBtnVerify" style="
+          width: 100%; padding: 14px; background: linear-gradient(135deg, #0097AC 0%, #007A8A 100%);
+          color: white; border: none; border-radius: 12px; font-size: 15px; font-weight: 600;
+          cursor: pointer; transition: opacity 0.2s; box-shadow: 0 4px 16px rgba(0,151,172,0.3);
+        ">
+          ${i18n.t('settings.resetPassword')}
+        </button>
+        
+        <button id="recoveryResendCode" style="
+          background: none; border: none; color: #0097AC; font-size: 13px; margin-top: 16px;
+          cursor: pointer; text-decoration: underline;
+        ">
+          ${i18n.t('settings.resendCode')}
+        </button>
+      </div>
+    `;
+    
+    // Code digit auto-advance
+    const digits = document.querySelectorAll('.recovery-code-digit') as NodeListOf<HTMLInputElement>;
+    digits.forEach((input, idx) => {
+      input.addEventListener('input', (e) => {
+        const val = (e.target as HTMLInputElement).value;
+        if (val && idx < 5) digits[idx + 1].focus();
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !input.value && idx > 0) {
+          digits[idx - 1].focus();
+        }
+      });
+      input.addEventListener('focus', () => { input.style.borderColor = '#0097AC'; input.style.boxShadow = '0 0 0 3px rgba(0,151,172,0.12)'; });
+      input.addEventListener('blur', () => { input.style.borderColor = ''; input.style.boxShadow = ''; });
+      // Handle paste of full code
+      input.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const paste = (e.clipboardData || (window as any).clipboardData).getData('text').trim();
+        if (paste.length === 6) {
+          digits.forEach((d, i) => { d.value = paste[i] || ''; });
+          digits[5].focus();
+        }
+      });
+    });
+    digits[0].focus();
+    
+    // Verify code handler
+    document.getElementById('recoveryBtnVerify')?.addEventListener('click', async () => {
+      const code = Array.from(digits).map(d => d.value).join('');
+      const newPwd = (document.getElementById('recoveryNewPassword') as HTMLInputElement).value;
+      const confirmPwd = (document.getElementById('recoveryConfirmPassword') as HTMLInputElement).value;
+      
+      if (code.length !== 6) {
+        this.showToast(i18n.t('settings.enterFullCode'), 'error');
+        return;
+      }
+      
+      if (!newPwd) {
+        this.showToast(i18n.t('settings.enterNewPassword'), 'error');
+        return;
+      }
+      
+      if (newPwd !== confirmPwd) {
+        this.showToast(i18n.t('settings.passwordMismatch'), 'error');
+        return;
+      }
+      
+      try {
+        const resp = await fetch('/api/recovery/verify-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: actualEmail, code })
+        });
+        
+        const data = await resp.json();
+        
+        if (resp.ok && data.valid) {
+          // Code verified - update password
+          this.state.settings.deletePassword = newPwd;
+          await this.saveSettings();
+          this.hideModal();
+          
+          // Unlock settings
+          this.settingsUnlocked = true;
+          this.adminUnlocked = true;
+          this.updateAdminUI();
+          
+          // Remove gate, show setting groups and view header
+          document.getElementById('settingsPasswordGateCard')?.remove();
+          const recoveryViewHeader = document.querySelector('#settingsView .view-header') as HTMLElement;
+          if (recoveryViewHeader) recoveryViewHeader.style.display = '';
+          const settingsContainer = document.querySelector('#settingsView .settings-container') as HTMLElement;
+          if (settingsContainer) {
+            settingsContainer.querySelectorAll('.setting-group').forEach(g => (g as HTMLElement).style.display = '');
+          }
+          
+          this.renderSettingsView();
+          this.showToast(i18n.t('settings.passwordResetSuccess'), 'success');
+        } else {
+          this.showToast(data.error === 'Recovery code has expired' 
+            ? i18n.t('settings.codeExpired') 
+            : i18n.t('settings.invalidRecoveryCode'), 'error');
+          // Highlight code inputs as error
+          digits.forEach(d => { d.style.borderColor = '#ef4444'; d.value = ''; });
+          digits[0].focus();
+        }
+      } catch (err) {
+        console.error('Recovery verify error:', err);
+        this.showToast(i18n.t('settings.verifyCodeFailed'), 'error');
+      }
+    });
+    
+    // Resend code
+    document.getElementById('recoveryResendCode')?.addEventListener('click', async () => {
+      try {
+        await fetch('/api/recovery/send-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: actualEmail })
+        });
+        this.showToast(i18n.t('settings.codeResent'), 'success');
+      } catch {
+        this.showToast(i18n.t('settings.sendCodeFailed'), 'error');
+      }
+    });
   }
 
   private renderCurrentView(): void {
@@ -1466,6 +2035,9 @@ class KappaApp {
     // ==================== EXTRA TASKS IN PLANNER ====================
     this.renderExtraTasksInPlanner(container, headerContainer, currentWeek, currentYear);
 
+    // ==================== PLANNING SUMMARY ====================
+    this.renderPlanningSummary(container, filteredProjects, currentWeek, currentYear);
+
     this.updateFilterOptions();
     
     // Add row hover effect
@@ -1623,29 +2195,33 @@ class KappaApp {
         
         const weekTask = tasks.find(t => t.week === yearWeekKey);
         
-        // IST cell - pokaż liczbę przypisanych pracowników
+        // IST cell - pokaż jednostki zadania (to co jest do zrobienia)
         const istCell = document.createElement('div');
         istCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
+        if (weekTask) {
+          istCell.innerHTML = `<span class="cell-value planner-extra-ist">${weekTask.units}</span>`;
+          istCell.classList.add('planner-extra-active-cell');
+          const totalMin = weekTask.units * weekTask.timePerUnit;
+          const h = Math.floor(totalMin / 60);
+          const m = totalMin % 60;
+          const timeStr = h > 0 ? `${h}h${m > 0 ? m + 'min' : ''}` : `${totalMin}min`;
+          istCell.title = timeStr;
+        }
+        container.appendChild(istCell);
+        
+        // SOLL cell - pokaż liczbę przypisanych pracowników z ikoną
+        const sollCell = document.createElement('div');
+        sollCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
         if (weekTask) {
           const extraProjectId = `extra-${weekTask.id}`;
           const assignments = this.state.scheduleAssignments.filter(
             (a: ScheduleAssignment) => a.projectId === extraProjectId && a.week === yearWeekKey
           );
-          istCell.innerHTML = assignments.length > 0 
-            ? `<span class="cell-value planner-extra-ist">${assignments.length}</span>` 
-            : '';
-          istCell.classList.add('planner-extra-active-cell');
-          istCell.title = `${name} - ${yearWeekKey}: ${assignments.length} ${i18n.t('schedule.employeesAssigned')}`;
-        }
-        container.appendChild(istCell);
-        
-        // SOLL cell - pokaż jednostki zadania
-        const sollCell = document.createElement('div');
-        sollCell.className = `grid-cell week-cell planner-extra-week-cell ${isCurrentWeek ? 'current-week' : ''}`;
-        if (weekTask) {
-          sollCell.innerHTML = `<span class="cell-value planner-extra-soll">${weekTask.units}</span>`;
+          if (assignments.length > 0) {
+            sollCell.innerHTML = `<span class="cell-value planner-extra-soll planner-extra-employees"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>${assignments.length}</span>`;
+          }
           sollCell.classList.add('planner-extra-active-cell');
-          sollCell.title = `${weekTask.units} × ${weekTask.timePerUnit}min`;
+          sollCell.title = `${assignments.length} ${i18n.t('schedule.employeesAssigned')}`;
           
           // Kliknięcie na cell otwiera modal edycji
           sollCell.style.cursor = 'pointer';
@@ -1671,6 +2247,130 @@ class KappaApp {
         container.appendChild(sollCell);
       }
     });
+  }
+
+  // ==================== PLANNING SUMMARY ====================
+  private renderPlanningSummary(
+    container: HTMLElement,
+    filteredProjects: Project[],
+    currentWeek: number,
+    currentYear: number
+  ): void {
+    // Build per-week totals (projects + extra tasks)
+    const weekTotals: { ist: number; soll: number; timeIst: number; timeSoll: number }[] = [];
+    for (let w = 1; w <= 52; w++) {
+      weekTotals[w] = { ist: 0, soll: 0, timeIst: 0, timeSoll: 0 };
+    }
+
+    // Sum projects
+    filteredProjects.forEach(project => {
+      const tpu = project.timePerUnit || 0;
+      for (let w = 1; w <= 52; w++) {
+        const yearWeekKey = `${this.state.selectedYear}-KW${w.toString().padStart(2, '0')}`;
+        const weekData = project.weeks[yearWeekKey] || { ist: 0, soll: 0 };
+        weekTotals[w].ist += weekData.ist;
+        weekTotals[w].soll += weekData.soll;
+        weekTotals[w].timeIst += weekData.ist * tpu;
+        weekTotals[w].timeSoll += weekData.soll * tpu;
+      }
+    });
+
+    // Sum extra tasks (units go to IST, since extra tasks are work done)
+    const yearTasks = this.state.extraTasks.filter(t => {
+      const match = t.week.match(/^(\d{4})-KW/);
+      return match && parseInt(match[1]) === this.state.selectedYear;
+    });
+    yearTasks.forEach(t => {
+      const wMatch = t.week.match(/KW(\d{2})/);
+      if (wMatch) {
+        const w = parseInt(wMatch[1]);
+        if (w >= 1 && w <= 52) {
+          weekTotals[w].ist += t.units;
+          weekTotals[w].timeIst += t.units * t.timePerUnit;
+        }
+      }
+    });
+
+    // Grand totals
+    let grandIst = 0, grandSoll = 0, grandTimeIst = 0, grandTimeSoll = 0;
+    for (let w = 1; w <= 52; w++) {
+      grandIst += weekTotals[w].ist;
+      grandSoll += weekTotals[w].soll;
+      grandTimeIst += weekTotals[w].timeIst;
+      grandTimeSoll += weekTotals[w].timeSoll;
+    }
+
+    // Helper: format minutes to compact string
+    const fmtTime = (mins: number): string => {
+      if (mins === 0) return '';
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      if (h > 0 && m > 0) return `${h}h${m}m`;
+      if (h > 0) return `${h}h`;
+      return `${mins}m`;
+    };
+
+    // --- Separator row ---
+    const sepCell = document.createElement('div');
+    sepCell.className = 'grid-cell planner-summary-separator';
+    sepCell.style.gridColumn = '1 / -1';
+    sepCell.innerHTML = `
+      <div class="planner-summary-sep-content">
+        <span class="planner-summary-sep-icon">Σ</span>
+        <span class="planner-summary-sep-label">${i18n.t('planning.summaryTitle')}</span>
+      </div>
+    `;
+    container.appendChild(sepCell);
+
+    // --- TOTALS ROW (IST) ---
+    // Fixed cells: label spanning customer column
+    const labelCellIst = document.createElement('div');
+    labelCellIst.className = 'grid-cell fixed-cell col-customer planner-total-row-cell planner-total-label-cell';
+    labelCellIst.innerHTML = `<span class="planner-total-icon">Σ</span> <span class="planner-total-text">IST</span>`;
+    container.appendChild(labelCellIst);
+
+    // Empty fixed cells for type, part, test
+    ['type', 'part', 'test'].forEach(col => {
+      const emptyCell = document.createElement('div');
+      emptyCell.className = `grid-cell fixed-cell col-${col} planner-total-row-cell`;
+      container.appendChild(emptyCell);
+    });
+
+    // Grand total time IST in time column
+    const grandTimeIstCell = document.createElement('div');
+    grandTimeIstCell.className = 'grid-cell fixed-cell col-time planner-total-row-cell planner-total-grand-time';
+    grandTimeIstCell.innerHTML = `<span class="planner-total-time-val">${fmtTime(grandTimeIst)}</span>`;
+    grandTimeIstCell.title = `${i18n.t('planning.summaryTotalTime')} IST: ${grandIst} ${i18n.t('planning.summaryPieces')} = ${fmtTime(grandTimeIst)}`;
+    container.appendChild(grandTimeIstCell);
+
+    // Empty actions cell
+    const actionsEmpty1 = document.createElement('div');
+    actionsEmpty1.className = 'grid-cell actions-cell col-actions planner-total-row-cell';
+    container.appendChild(actionsEmpty1);
+
+    // Week cells - IST totals
+    for (let w = 1; w <= 52; w++) {
+      const totals = weekTotals[w];
+      const isCurrentWeek = w === currentWeek && this.state.selectedYear === currentYear;
+
+      // IST total
+      const istCell = document.createElement('div');
+      istCell.className = `grid-cell week-cell planner-total-row-cell planner-total-week-ist ${isCurrentWeek ? 'current-week' : ''}`;
+      if (totals.ist > 0) {
+        istCell.innerHTML = `<span class="planner-total-val">${totals.ist}</span>${totals.timeIst > 0 ? `<span class="planner-total-time">${fmtTime(totals.timeIst)}</span>` : ''}`;
+      }
+      istCell.title = totals.ist > 0 ? `IST: ${totals.ist} (${fmtTime(totals.timeIst)})` : '';
+      container.appendChild(istCell);
+
+      // SOLL total
+      const sollCell = document.createElement('div');
+      sollCell.className = `grid-cell week-cell planner-total-row-cell planner-total-week-soll ${isCurrentWeek ? 'current-week' : ''}`;
+      if (totals.soll > 0) {
+        sollCell.innerHTML = `<span class="planner-total-val">${totals.soll}</span>${totals.timeSoll > 0 ? `<span class="planner-total-time">${fmtTime(totals.timeSoll)}</span>` : ''}`;
+      }
+      sollCell.title = totals.soll > 0 ? `SOLL: ${totals.soll} (${fmtTime(totals.timeSoll)})` : '';
+      container.appendChild(sollCell);
+    }
   }
 
   private initYearSelector(): void {
@@ -1835,12 +2535,14 @@ class KappaApp {
     cell.addEventListener('click', async (e) => {
       if (e.shiftKey) return; // Let shift+click handle comments
       e.preventDefault();
+      sounds.play('tick');
       await this.updateProjectWeek(project.id, week, type, value + 1);
     });
 
     // RIGHT CLICK: -1
     cell.addEventListener('contextmenu', async (e) => {
       e.preventDefault();
+      if (value > 0) sounds.play('untick');
       await this.updateProjectWeek(project.id, week, type, Math.max(0, value - 1));
     });
 
@@ -1872,7 +2574,7 @@ class KappaApp {
     
     const statusName = statusType === 'stoppage' ? i18n.t('planning.stoppageLabel') : i18n.t('planning.partsMissing');
     const isActive = project.weeks[week][statusType];
-    this.showToast(`${statusName}: ${isActive ? i18n.t('planning.enabled') : i18n.t('planning.disabled')}`, 'success');
+    this.showToast(`${statusName}: ${isActive ? i18n.t('planning.enabled') : i18n.t('planning.disabled')}`, 'success', 'toggle');
   }
 
   private showCellActionPopup(
@@ -2099,7 +2801,7 @@ class KappaApp {
         popup.remove();
         this.skipNextScroll = true;
         this.renderPlanningGrid();
-        this.showToast(i18n.t('planning.statusUpdated'), 'success');
+        this.showToast(i18n.t('planning.statusUpdated'), 'success', 'click');
       });
     });
 
@@ -2168,7 +2870,7 @@ class KappaApp {
         this.comments = this.comments.filter(c => c.id !== existingComment.id);
         this.hideModal();
         this.renderPlanningGrid();
-        this.showToast(i18n.t('planning.commentDeleted'), 'success');
+        this.showToast(i18n.t('planning.commentDeleted'), 'success', 'delete');
       }
     });
 
@@ -2193,7 +2895,7 @@ class KappaApp {
           const idx = this.comments.findIndex(c => c.id === comment.id);
           if (idx >= 0) this.comments[idx] = comment;
         }
-        this.showToast(i18n.t('planning.commentSaved'), 'success');
+        this.showToast(i18n.t('planning.commentSaved'), 'success', 'click');
       }
       
       this.hideModal();
@@ -2281,7 +2983,7 @@ class KappaApp {
       if (timeValue) timeValue.textContent = newTime.toString();
       
       popup.remove();
-      this.showToast(`Czas ustawiony: ${newTime} min`, 'success');
+      this.showToast(`Czas ustawiony: ${newTime} min`, 'success', 'click');
     };
     
     popup.querySelector('.btn-save')?.addEventListener('click', saveTime);
@@ -2385,7 +3087,7 @@ class KappaApp {
       await this.addLog('updated', 'projects', `Fill down (${selectedIds.length})`);
       this.hideModal();
       this.renderPlanningGrid();
-      this.showToast(i18n.t('messages.savedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
     };
 
     modal.classList.add('active');
@@ -2537,7 +3239,7 @@ class KappaApp {
       await this.executeBulkFill(project, method);
       this.hideModal();
       this.renderPlanningGrid();
-      this.showToast(i18n.t('messages.savedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
     };
 
     modal.classList.add('active');
@@ -2657,9 +3359,9 @@ class KappaApp {
     this.renderPlanningGrid();
     
     if (this.sortColumn) {
-      this.showToast(i18n.t('planning.sortApplied').replace('{0}', this.getSortColumnName(column)).replace('{1}', this.sortDirection === 'asc' ? '↑' : '↓'), 'success');
+      this.showToast(i18n.t('planning.sortApplied').replace('{0}', this.getSortColumnName(column)).replace('{1}', this.sortDirection === 'asc' ? '↑' : '↓'), 'success', 'click');
     } else {
-      this.showToast(i18n.t('planning.sortDisabled'), 'success');
+      this.showToast(i18n.t('planning.sortDisabled'), 'success', 'click');
     }
   }
 
@@ -2987,7 +3689,7 @@ class KappaApp {
     
     // Re-render
     this.renderItemsListExtended(type, items);
-    this.showToast(i18n.t('settings.orderChanged'), 'success');
+    this.showToast(i18n.t('settings.orderChanged'), 'success', 'click');
   }
   
   private showTagPicker(target: HTMLElement, itemId: string, type: string): void {
@@ -3126,7 +3828,7 @@ class KappaApp {
     
     await this.loadData();
     this.renderProjectsView();
-    this.showToast(i18n.t('settings.deletedNItems').replace('{0}', totalSelected.toString()), 'success');
+    this.showToast(i18n.t('settings.deletedNItems').replace('{0}', totalSelected.toString()), 'success', 'delete');
   }
   
   private exportCategoryCSV(type: string): void {
@@ -3147,7 +3849,7 @@ class KappaApp {
     a.click();
     URL.revokeObjectURL(url);
     
-    this.showToast(i18n.t('messages.exportedType').replace('{0}', type), 'success');
+    this.showToast(i18n.t('messages.exportedType').replace('{0}', type), 'success', 'notification');
   }
   
   private exportAllProjectsCSV(): void {
@@ -3170,7 +3872,7 @@ class KappaApp {
     a.click();
     URL.revokeObjectURL(url);
     
-    this.showToast(i18n.t('messages.exportedAll'), 'success');
+    this.showToast(i18n.t('messages.exportedAll'), 'success', 'notification');
   }
   
   private importProjectsCSV(): void {
@@ -3217,7 +3919,7 @@ class KappaApp {
       if (imported > 0) {
         await this.loadData();
         this.renderProjectsView();
-        this.showToast(i18n.t('settings.importedNItems').replace('{0}', imported.toString()), 'success');
+        this.showToast(i18n.t('settings.importedNItems').replace('{0}', imported.toString()), 'success', 'complete');
       } else {
         this.showToast(i18n.t('settings.noNewItems'), 'warning');
       }
@@ -3438,32 +4140,11 @@ class KappaApp {
       this.toggleAnalyticsOptions();
     });
 
-    // Export dropdown toggle
+    // Export modal for analytics
     const exportBtn = document.getElementById('exportAnalyticsBtn');
-    const exportDropdownContainer = exportBtn?.closest('.export-dropdown-container');
     
-    exportBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      exportDropdownContainer?.classList.toggle('open');
-    });
-    
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-      if (exportDropdownContainer && !exportDropdownContainer.contains(e.target as Node)) {
-        exportDropdownContainer.classList.remove('open');
-      }
-    });
-    
-    // Export to PDF button
-    document.getElementById('exportToPdf')?.addEventListener('click', () => {
-      exportDropdownContainer?.classList.remove('open');
-      this.exportAnalyticsToPdf();
-    });
-    
-    // Export to Excel button
-    document.getElementById('exportToExcel')?.addEventListener('click', () => {
-      exportDropdownContainer?.classList.remove('open');
-      this.exportAnalyticsToExcel();
+    exportBtn?.addEventListener('click', () => {
+      this.showAnalyticsExportModal();
     });
 
     // Legacy export analytics button (fallback)
@@ -3513,7 +4194,7 @@ class KappaApp {
         this.resetWeekFiltersForYear();
         // Refresh all analytics
         this.renderAnalyticsView();
-        this.showToast(`Rok zmieniony na ${yearSelect.value}`, 'success');
+        this.showToast(`Rok zmieniony na ${yearSelect.value}`, 'success', 'click');
       });
     }
     
@@ -3622,7 +4303,7 @@ class KappaApp {
     this.renderAnalyticsTable();
     this.renderAdvancedAnalytics();
     
-    this.showToast(`Filtr zastosowany: KW${fromWeek.toString().padStart(2, '0')} - KW${toWeek.toString().padStart(2, '0')}`, 'success');
+    this.showToast(`Filtr zastosowany: KW${fromWeek.toString().padStart(2, '0')} - KW${toWeek.toString().padStart(2, '0')}`, 'success', 'click');
   }
 
   private isWeekInFilter(weekKey: string): boolean {
@@ -3942,7 +4623,7 @@ class KappaApp {
 
         popup.remove();
         this.renderAnalyticsTable();
-        this.showToast('Status postoju zaktualizowany', 'success');
+        this.showToast(i18n.t('planning.statusUpdated'), 'success', 'toggle');
       });
     });
 
@@ -3963,13 +4644,13 @@ class KappaApp {
     grid.innerHTML = '';
 
     const weeklyData: { [week: string]: { ist: number; soll: number } } = {};
-    for (let i = 1; i <= 52; i++) {
+    for (let i = this.analyticsWeekFrom; i <= this.analyticsWeekTo; i++) {
       weeklyData[`KW${i.toString().padStart(2, '0')}`] = { ist: 0, soll: 0 };
     }
 
     // Use year-aware week data lookup
     this.state.projects.forEach((project) => {
-      for (let i = 1; i <= 52; i++) {
+      for (let i = this.analyticsWeekFrom; i <= this.analyticsWeekTo; i++) {
         const weekKey = `KW${i.toString().padStart(2, '0')}`;
         const data = this.getWeekData(project, weekKey);
         weeklyData[weekKey].ist += data.ist;
@@ -4630,11 +5311,28 @@ class KappaApp {
     set('animationsToggle', this.state.settings.animations);
     set('highlightMissingToggle', this.state.settings.highlightMissing);
     set('blinkAlertsToggle', this.state.settings.blinkAlerts);
+    set('compactModeToggle', this.state.settings.compactMode);
+    set('soundAlertsToggle', this.state.settings.soundAlerts);
+
+    // Update zoom level display
+    const zoomVal = this.state.settings.autoSaveInterval || 100;
+    const zoomEl = document.getElementById('settingsZoomValue');
+    if (zoomEl) zoomEl.textContent = zoomVal + '%';
+
+    // Update language select
+    const langSelect = document.getElementById('settingsLanguageSelect') as HTMLSelectElement;
+    if (langSelect) langSelect.value = this.state.settings.language || 'en';
     
     // Update user name input
     const userNameInput = document.getElementById('userNameInput') as HTMLInputElement;
     if (userNameInput) {
       userNameInput.value = this.state.settings.userName || '';
+    }
+    
+    // Update recovery email input
+    const recoveryEmailInput = document.getElementById('recoveryEmailInput') as HTMLInputElement;
+    if (recoveryEmailInput) {
+      recoveryEmailInput.value = this.state.settings.recoveryEmail || '';
     }
     
     // Update password button text
@@ -4670,8 +5368,780 @@ class KappaApp {
     // Load backup list
     this.loadBackupList();
     
-    // Update admin unlock button state
-    this.updateAdminUnlockButton();
+    // Load SMTP settings
+    this.loadSmtpSettings();
+    
+    // Render employee management section
+    this.renderSettingsEmployeeList();
+    
+    // Show tile-based navigation
+    this.showSettingsTiles();
+  }
+
+  private showSettingsTiles(): void {
+    const settingsView = document.getElementById('settingsView')!;
+    const settingsContainer = settingsView.querySelector('.settings-container') as HTMLElement;
+    if (!settingsContainer) return;
+    
+    // Hide the view header on tile overview
+    const viewHeader = settingsView.querySelector('.view-header') as HTMLElement;
+    if (viewHeader) viewHeader.style.display = 'none';
+    
+    // Hide all setting groups
+    const groups = settingsContainer.querySelectorAll('.setting-group');
+    groups.forEach(g => (g as HTMLElement).style.display = 'none');
+    
+    // Remove any existing tiles and back buttons
+    document.getElementById('settingsTilesContainer')?.remove();
+    document.querySelectorAll('.settings-section-back').forEach(el => el.remove());
+    
+    // Define tiles
+    const tiles = [
+      {
+        id: 'employees',
+        icon: '👥',
+        iconBg: '#EFF6FF',
+        iconColor: '#3B82F6',
+        titleKey: 'settings.employeeManagement',
+        descKey: 'settings.tileEmployeesDesc',
+        targetId: 'settingsEmployeeSection',
+      },
+      {
+        id: 'appearance',
+        icon: '🎨',
+        iconBg: '#F5F3FF',
+        iconColor: '#8B5CF6',
+        titleKey: 'settings.tileAppearance',
+        descKey: 'settings.tileAppearanceDesc',
+        targetIds: ['settingsAppearanceSection', 'settingsNotificationsSection'],
+      },
+      {
+        id: 'security',
+        icon: '🔒',
+        iconBg: '#FEF3C7',
+        iconColor: '#D97706',
+        titleKey: 'settings.security',
+        descKey: 'settings.tileSecurityDesc',
+        targetId: 'settingsSecuritySection',
+      },
+      {
+        id: 'backup',
+        icon: '💾',
+        iconBg: '#ECFDF5',
+        iconColor: '#10B981',
+        titleKey: 'settings.tileBackupRestore',
+        descKey: 'settings.tileBackupDesc',
+        targetIds: ['settingsBackupSection', 'settingsLocalDbSection'],
+        adminOnly: true,
+      },
+      {
+        id: 'import',
+        icon: '📤',
+        iconBg: '#FFF7ED',
+        iconColor: '#F97316',
+        titleKey: 'settings.importExportWizard',
+        descKey: 'settings.tileImportDesc',
+        targetId: 'settingsImportSection',
+        adminOnly: true,
+      },
+      {
+        id: 'data',
+        icon: '🗑️',
+        iconBg: '#FEF2F2',
+        iconColor: '#EF4444',
+        titleKey: 'settings.data',
+        descKey: 'settings.tileDataDesc',
+        targetId: 'settingsDataSection',
+        adminOnly: true,
+      },
+      {
+        id: 'logs',
+        icon: '📋',
+        iconBg: '#F0FDF4',
+        iconColor: '#22C55E',
+        titleKey: 'logs.title',
+        descKey: 'settings.tileLogsDesc',
+        targetId: 'settingsLogsSection',
+      },
+    ];
+    
+    const tilesEl = document.createElement('div');
+    tilesEl.id = 'settingsTilesContainer';
+    tilesEl.innerHTML = `
+      <div class="settings-tiles-grid">
+        ${tiles.map(tile => {
+          // Skip admin-only tiles if not unlocked
+          if (tile.adminOnly && !this.adminUnlocked) return '';
+          return `
+            <div class="settings-tile" data-tile-id="${tile.id}">
+              <div class="settings-tile-icon" style="background: ${tile.iconBg};">
+                ${tile.icon}
+              </div>
+              <div class="settings-tile-content">
+                <div class="settings-tile-title">${i18n.t(tile.titleKey)}</div>
+                <div class="settings-tile-desc">${i18n.t(tile.descKey)}</div>
+              </div>
+              <div class="settings-tile-arrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                  <polyline points="9 18 15 12 9 6"/>
+                </svg>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+    
+    settingsContainer.prepend(tilesEl);
+    
+    // Add click listeners for tiles
+    tiles.forEach(tile => {
+      const tileEl = tilesEl.querySelector(`[data-tile-id="${tile.id}"]`);
+      if (!tileEl) return;
+      tileEl.addEventListener('click', () => {
+        sounds.play('click');
+        this.openSettingsSection(tile);
+      });
+    });
+  }
+
+  private openSettingsSection(tile: { id: string; titleKey: string; targetId?: string; targetIds?: string[] }): void {
+    const settingsView = document.getElementById('settingsView')!;
+    const settingsContainer = settingsView.querySelector('.settings-container') as HTMLElement;
+    if (!settingsContainer) return;
+    
+    // Show the view header when inside a section
+    const viewHeader = settingsView.querySelector('.view-header') as HTMLElement;
+    if (viewHeader) viewHeader.style.display = '';
+    
+    // Hide tiles
+    const tilesEl = document.getElementById('settingsTilesContainer');
+    if (tilesEl) tilesEl.style.display = 'none';
+    
+    // Remove any existing back button
+    document.querySelectorAll('.settings-section-back').forEach(el => el.remove());
+    
+    // Create back button
+    const backBtn = document.createElement('button');
+    backBtn.className = 'settings-section-back';
+    backBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+        <polyline points="15 18 9 12 15 6"/>
+      </svg>
+      ${i18n.t('settings.backToSettings')}
+    `;
+    backBtn.addEventListener('click', () => {
+      this.showSettingsTiles();
+    });
+    settingsContainer.prepend(backBtn);
+    
+    // Show target group(s)
+    const ids = tile.targetIds || (tile.targetId ? [tile.targetId] : []);
+    ids.forEach(id => {
+      const group = document.getElementById(id);
+      if (group) group.style.display = '';
+    });
+    
+    // Scroll to top of settings
+    settingsView.scrollTop = 0;
+  }
+
+  private renderSettingsEmployeeList(): void {
+    const container = document.getElementById('settingsEmployeeList');
+    if (!container) return;
+    
+    const employees = this.state.employees;
+    
+    container.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <input type="text" id="settingsEmpSearch" class="form-control" placeholder="🔍 ${i18n.t('settings.searchEmployees')}" style="width: 260px; padding: 8px 12px; font-size: 13px;" />
+          <span style="color: #64748b; font-size: 13px;">${employees.length} ${i18n.t('settings.employeesCount')}</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn-secondary" id="settingsManageQuals" style="padding: 8px 14px; font-size: 13px; border: 1px solid #e2e8f0; border-radius: 8px; background: white; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+            ⭐ ${i18n.t('settings.manageQualifications')}
+          </button>
+          <button class="btn-primary" id="settingsAddEmployee" style="padding: 8px 16px; font-size: 13px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display:inline;vertical-align:middle;margin-right:4px;">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/>
+            </svg>
+            ${i18n.t('settings.addEmployee')}
+          </button>
+        </div>
+      </div>
+      
+      <div class="settings-employee-grid" id="settingsEmpGrid">
+        ${employees.length === 0 ? `
+          <div style="text-align: center; padding: 40px; color: #94a3b8;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48" style="margin-bottom: 12px; opacity: 0.5;">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <line x1="19" y1="10" x2="19" y2="16"/>
+              <line x1="16" y1="13" x2="22" y2="13"/>
+            </svg>
+            <p style="margin: 0; font-size: 14px;">${i18n.t('settings.noEmployeesYet')}</p>
+            <p style="margin: 4px 0 0; font-size: 12px;">${i18n.t('settings.addFirstEmployee')}</p>
+          </div>
+        ` : employees.map(emp => `
+          <div class="settings-emp-card" data-emp-id="${emp.id}" style="
+            display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+            background: var(--card-bg, #ffffff); border: 1px solid var(--border-color, #e2e8f0);
+            border-radius: 10px; transition: all 0.2s; cursor: pointer;
+            position: relative;
+          ">
+            <div style="
+              width: 42px; height: 42px; border-radius: 50%; 
+              background: ${emp.color}; color: white; 
+              font-size: 15px; font-weight: 700; 
+              display: flex; align-items: center; justify-content: center;
+              flex-shrink: 0;
+            ">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
+            
+            <div style="flex: 1; min-width: 0;">
+              <div style="font-weight: 600; font-size: 14px; color: var(--text-primary, #0f172a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                ${emp.firstName} ${emp.lastName}
+              </div>
+              <div style="font-size: 12px; color: var(--text-secondary, #64748b); display: flex; gap: 8px; align-items: center; margin-top: 2px;">
+                ${emp.email ? `<span>📧 ${emp.email}</span>` : ''}
+                ${emp.phone ? `<span>📱 ${emp.phone}</span>` : ''}
+                ${emp.department ? `<span>🏢 ${emp.department}</span>` : ''}
+                ${!emp.email && !emp.phone && !emp.department ? `<span style="color: #cbd5e1;">${i18n.t('settings.noDetailsYet')}</span>` : ''}
+              </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+              <span style="
+                display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;
+                background: ${emp.position === 'manager' ? '#EFF6FF' : emp.position === 'leader' ? '#fef3c7' : emp.position === 'trainee' ? '#f3e8ff' : '#dcfce7'};
+                color: ${emp.position === 'manager' ? '#2563EB' : emp.position === 'leader' ? '#d97706' : emp.position === 'trainee' ? '#7c3aed' : '#16a34a'};
+              ">${emp.position === 'manager' ? '📋' : emp.position === 'leader' ? '🎯' : emp.position === 'trainee' ? '🎓' : '👷'} ${i18n.t('settings.position' + (emp.position ? emp.position.charAt(0).toUpperCase() + emp.position.slice(1) : 'Worker'))}</span>
+              
+              ${emp.schedulable === false ? '<span style="display: inline-block; padding: 3px 8px; border-radius: 12px; font-size: 11px; background: #fee2e2; color: #dc2626;">📅 ✗</span>' : ''}
+              
+              ${emp.qualifications ? '<span style="font-size: 12px; color: #f59e0b;">' + Object.values(emp.qualifications).filter(v => v && v > 0).map(() => '★').join('') + '</span>' : ''}
+              
+              <button class="settings-emp-edit" data-emp-id="${emp.id}" style="
+                background: none; border: 1px solid #e2e8f0; border-radius: 6px; 
+                padding: 4px 8px; cursor: pointer; color: #64748b;
+                display: flex; align-items: center; gap: 4px; font-size: 12px;
+              " title="${i18n.t('common.edit')}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+              </button>
+              
+              <button class="settings-emp-delete" data-emp-id="${emp.id}" style="
+                background: none; border: 1px solid #fee2e2; border-radius: 6px; 
+                padding: 4px 8px; cursor: pointer; color: #ef4444;
+                display: flex; align-items: center; gap: 4px; font-size: 12px;
+              " title="${i18n.t('common.delete')}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+                  <polyline points="3 6 5 6 21 6"/>
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    
+    // Search handler
+    document.getElementById('settingsEmpSearch')?.addEventListener('input', (e) => {
+      const query = (e.target as HTMLInputElement).value.toLowerCase();
+      const cards = document.querySelectorAll('.settings-emp-card');
+      cards.forEach(card => {
+        const name = card.querySelector('div[style*="font-weight: 600"]')?.textContent?.toLowerCase() || '';
+        (card as HTMLElement).style.display = name.includes(query) ? '' : 'none';
+      });
+    });
+    
+    // Add employee button
+    document.getElementById('settingsAddEmployee')?.addEventListener('click', () => {
+      this.showSettingsEmployeeModal();
+    });
+    
+    // Manage qualifications button
+    document.getElementById('settingsManageQuals')?.addEventListener('click', () => {
+      this.showManageQualificationsModal();
+    });
+    
+    // Edit buttons
+    document.querySelectorAll('.settings-emp-edit').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const empId = (btn as HTMLElement).dataset.empId;
+        const emp = this.state.employees.find(x => x.id === empId);
+        if (emp) this.showSettingsEmployeeModal(emp);
+      });
+    });
+    
+    // Delete buttons
+    document.querySelectorAll('.settings-emp-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const empId = (btn as HTMLElement).dataset.empId;
+        if (empId) await this.deleteEmployee(empId);
+        this.renderSettingsEmployeeList();
+      });
+    });
+    
+    // Card click → edit
+    document.querySelectorAll('.settings-emp-card').forEach(card => {
+      card.addEventListener('click', () => {
+        const empId = (card as HTMLElement).dataset.empId;
+        const emp = this.state.employees.find(x => x.id === empId);
+        if (emp) this.showSettingsEmployeeModal(emp);
+      });
+    });
+  }
+  
+  /** Pobiera definicje kwalifikacji z ustawień (z domyślnymi fallbackami) */
+  private getQualificationDefinitions(): { id: string; name: string; icon: string; description?: string; sortOrder: number }[] {
+    const defs = this.state.settings.qualificationDefinitions;
+    if (defs && defs.length > 0) {
+      return [...defs].sort((a, b) => a.sortOrder - b.sortOrder);
+    }
+    // Default fallback
+    return [
+      { id: 'audit', name: 'Product Audit', icon: '📋', description: '', sortOrder: 1 },
+      { id: 'adhesion', name: 'Adhesion (Peel-off)', icon: '🔬', description: '', sortOrder: 2 },
+      { id: 'dimensions', name: 'Dimensions / Measurements', icon: '📐', description: '', sortOrder: 3 },
+      { id: 'visual', name: 'Visual Inspection', icon: '👁️', description: '', sortOrder: 4 },
+      { id: 'laboratory', name: 'Laboratory', icon: '🧪', description: '', sortOrder: 5 },
+    ];
+  }
+  
+  /** Modal zarządzania definicjami kwalifikacji */
+  private showManageQualificationsModal(): void {
+    const overlay = document.createElement('div');
+    overlay.className = 'absence-modal-overlay';
+    overlay.style.zIndex = '10001';
+    
+    const defs = this.getQualificationDefinitions();
+    
+    const renderList = (items: typeof defs) => {
+      return items.map((q, idx) => `
+        <div class="qual-def-row" data-id="${q.id}" style="display: flex; align-items: center; gap: 10px; padding: 12px; background: var(--color-bg-secondary); border-radius: 10px; margin-bottom: 8px; transition: all 0.15s;">
+          <span class="qual-def-drag" style="cursor: grab; font-size: 16px; color: #94a3b8;">⠿</span>
+          <span class="qual-def-icon" style="font-size: 1.3rem; min-width: 28px; text-align: center; cursor: pointer;" title="${i18n.t('settings.qualChangeIcon')}">${q.icon}</span>
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-weight: 600; font-size: 0.85rem;">${q.name}</div>
+            ${q.description ? '<div style="font-size: 0.7rem; color: var(--color-text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' + q.description + '</div>' : ''}
+          </div>
+          <button class="qual-def-edit" data-idx="${idx}" style="background: none; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; color: #64748b;" title="${i18n.t('common.edit')}">✏️</button>
+          <button class="qual-def-delete" data-idx="${idx}" style="background: none; border: 1px solid #fee2e2; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; color: #ef4444;" title="${i18n.t('common.delete')}">🗑️</button>
+        </div>
+      `).join('');
+    };
+    
+    overlay.innerHTML = `
+      <div class="absence-modal" style="max-width: 580px;">
+        <div class="absence-modal-header">
+          <h2 style="display: flex; align-items: center; gap: 10px;">
+            ⭐ ${i18n.t('settings.manageQualifications')}
+          </h2>
+          <button class="absence-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div class="absence-modal-body">
+          <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 16px;">
+            ${i18n.t('settings.qualManageHint')}
+          </p>
+          <div id="qualDefList">
+            ${renderList(defs)}
+          </div>
+          <button id="qualDefAdd" style="width: 100%; padding: 12px; border: 2px dashed #cbd5e1; border-radius: 10px; background: transparent; cursor: pointer; font-size: 0.85rem; color: #64748b; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; transition: all 0.15s;">
+            ➕ ${i18n.t('settings.qualAddNew')}
+          </button>
+        </div>
+        <div class="absence-modal-footer">
+          <button class="absence-modal-btn secondary" id="qualDefCancel">${i18n.t('schedule.cancel')}</button>
+          <button class="absence-modal-btn primary" id="qualDefSave">${i18n.t('common.save')}</button>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Working copy of definitions
+    let workingDefs = defs.map(d => ({ ...d }));
+    
+    const rerender = () => {
+      const list = overlay.querySelector('#qualDefList');
+      if (list) list.innerHTML = renderList(workingDefs);
+      attachRowHandlers();
+    };
+    
+    const showEditForm = (idx: number, isNew: boolean) => {
+      const def = workingDefs[idx] || { id: '', name: '', icon: '⭐', description: '', sortOrder: workingDefs.length + 1 };
+      
+      const editOverlay = document.createElement('div');
+      editOverlay.className = 'absence-modal-overlay';
+      editOverlay.style.zIndex = '10002';
+      
+      const COMMON_ICONS = ['📋', '🔬', '📐', '👁️', '🧪', '⭐', '🎯', '🔧', '🛡️', '📊', '🏭', '💡', '🔍', '📦', '🧰', '🎓', '🏗️', '⚙️', '🔑', '📌'];
+      
+      editOverlay.innerHTML = `
+        <div class="absence-modal" style="max-width: 440px;">
+          <div class="absence-modal-header">
+            <h2>${isNew ? i18n.t('settings.qualAddNew') : i18n.t('settings.qualEdit')}</h2>
+            <button class="absence-modal-close">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+              </svg>
+            </button>
+          </div>
+          <div class="absence-modal-body">
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label style="font-weight: 600; font-size: 13px;">${i18n.t('settings.qualIcon')}:</label>
+              <div id="qualIconPicker" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;">
+                ${COMMON_ICONS.map(ic => '<span class="qual-icon-option' + (ic === def.icon ? ' selected' : '') + '" data-icon="' + ic + '" style="font-size: 1.3rem; padding: 6px 8px; border-radius: 8px; cursor: pointer; border: 2px solid ' + (ic === def.icon ? '#0097AC' : 'transparent') + '; background: ' + (ic === def.icon ? '#0097AC15' : 'var(--color-bg-secondary)') + ';">' + ic + '</span>').join('')}
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label style="font-weight: 600; font-size: 13px;">${i18n.t('settings.qualName')}:</label>
+              <input type="text" id="qualEditName" class="form-control" value="${def.name}" placeholder="${i18n.t('settings.qualNamePlaceholder')}" style="padding: 10px 12px; margin-top: 4px;" />
+            </div>
+            <div class="form-group">
+              <label style="font-weight: 600; font-size: 13px;">${i18n.t('settings.qualDescription')}:</label>
+              <textarea id="qualEditDesc" class="form-control" rows="3" placeholder="${i18n.t('settings.qualDescPlaceholder')}" style="padding: 10px 12px; margin-top: 4px; resize: vertical;">${def.description || ''}</textarea>
+            </div>
+          </div>
+          <div class="absence-modal-footer">
+            <button class="absence-modal-btn secondary" id="qualEditCancel">${i18n.t('schedule.cancel')}</button>
+            <button class="absence-modal-btn primary" id="qualEditConfirm">${i18n.t('common.save')}</button>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(editOverlay);
+      
+      let selectedIcon = def.icon;
+      
+      // Icon picker
+      editOverlay.querySelectorAll('.qual-icon-option').forEach(el => {
+        el.addEventListener('click', () => {
+          editOverlay.querySelectorAll('.qual-icon-option').forEach(o => {
+            (o as HTMLElement).style.border = '2px solid transparent';
+            (o as HTMLElement).style.background = 'var(--color-bg-secondary)';
+          });
+          (el as HTMLElement).style.border = '2px solid #0097AC';
+          (el as HTMLElement).style.background = '#0097AC15';
+          selectedIcon = (el as HTMLElement).dataset.icon || '⭐';
+        });
+      });
+      
+      // Confirm
+      editOverlay.querySelector('#qualEditConfirm')?.addEventListener('click', () => {
+        const name = (editOverlay.querySelector('#qualEditName') as HTMLInputElement).value.trim();
+        const desc = (editOverlay.querySelector('#qualEditDesc') as HTMLTextAreaElement).value.trim();
+        
+        if (!name) {
+          this.showToast(i18n.t('settings.qualNameRequired'), 'error');
+          return;
+        }
+        
+        if (isNew) {
+          workingDefs.push({
+            id: 'custom_' + Date.now(),
+            name,
+            icon: selectedIcon,
+            description: desc,
+            sortOrder: workingDefs.length + 1,
+          });
+        } else {
+          workingDefs[idx].name = name;
+          workingDefs[idx].icon = selectedIcon;
+          workingDefs[idx].description = desc;
+        }
+        
+        editOverlay.remove();
+        rerender();
+      });
+      
+      // Cancel / close
+      editOverlay.querySelector('#qualEditCancel')?.addEventListener('click', () => editOverlay.remove());
+      editOverlay.querySelector('.absence-modal-close')?.addEventListener('click', () => editOverlay.remove());
+      editOverlay.addEventListener('click', (e) => {
+        if (e.target === editOverlay) editOverlay.remove();
+      });
+      
+      // Focus name input
+      setTimeout(() => (editOverlay.querySelector('#qualEditName') as HTMLInputElement)?.focus(), 50);
+    };
+    
+    const attachRowHandlers = () => {
+      overlay.querySelectorAll('.qual-def-edit').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt((btn as HTMLElement).dataset.idx || '0');
+          showEditForm(idx, false);
+        });
+      });
+      
+      overlay.querySelectorAll('.qual-def-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt((btn as HTMLElement).dataset.idx || '0');
+          const defName = workingDefs[idx]?.name || '';
+          if (confirm(i18n.t('settings.qualDeleteConfirm').replace('{0}', defName))) {
+            workingDefs.splice(idx, 1);
+            // Reindex sortOrder
+            workingDefs.forEach((d, i) => d.sortOrder = i + 1);
+            rerender();
+          }
+        });
+      });
+    };
+    
+    attachRowHandlers();
+    
+    // Add new 
+    overlay.querySelector('#qualDefAdd')?.addEventListener('click', () => {
+      showEditForm(-1, true);
+    });
+    
+    // Save all
+    overlay.querySelector('#qualDefSave')?.addEventListener('click', async () => {
+      // Update sortOrder based on current order
+      workingDefs.forEach((d, i) => d.sortOrder = i + 1);
+      this.state.settings.qualificationDefinitions = workingDefs;
+      await db.put('settings', { key: 'appSettings', value: this.state.settings });
+      overlay.remove();
+      this.showToast(i18n.t('settings.qualSaved'), 'success');
+      // Re-render employee list to reflect any qualification name changes
+      this.renderSettingsEmployeeList();
+    });
+    
+    // Cancel / close
+    overlay.querySelector('#qualDefCancel')?.addEventListener('click', () => overlay.remove());
+    overlay.querySelector('.absence-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+  }
+  
+  private showSettingsEmployeeModal(employee?: Employee): void {
+    const modal = document.getElementById('modal')!;
+    const modalTitle = document.getElementById('modalTitle')!;
+    const modalBody = document.getElementById('modalBody')!;
+    
+    const isEdit = !!employee;
+    const selectedColor = employee?.color || EMPLOYEE_COLORS[this.state.employees.length % EMPLOYEE_COLORS.length];
+    
+    modalTitle.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
+        ${isEdit ? '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>' : '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="10" x2="19" y2="16"/><line x1="16" y1="13" x2="22" y2="13"/>'}
+      </svg>
+      ${i18n.t(isEdit ? 'settings.editEmployee' : 'settings.addEmployee')}
+    `;
+    
+    modalBody.innerHTML = `
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="form-group">
+          <label style="font-weight: 600; font-size: 13px;">${i18n.t('schedule.firstName')}:</label>
+          <input type="text" id="settEmpFirstName" class="form-control" value="${employee?.firstName || ''}" placeholder="${i18n.t('schedule.firstName')}..." style="padding: 10px 12px;" />
+        </div>
+        <div class="form-group">
+          <label style="font-weight: 600; font-size: 13px;">${i18n.t('schedule.lastName')}:</label>
+          <input type="text" id="settEmpLastName" class="form-control" value="${employee?.lastName || ''}" placeholder="${i18n.t('schedule.lastName')}..." style="padding: 10px 12px;" />
+        </div>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="form-group">
+          <label style="font-weight: 600; font-size: 13px;">📧 ${i18n.t('settings.email')}:</label>
+          <input type="email" id="settEmpEmail" class="form-control" value="${employee?.email || ''}" placeholder="name@draexlmaier.com" style="padding: 10px 12px;" />
+        </div>
+        <div class="form-group">
+          <label style="font-weight: 600; font-size: 13px;">📱 ${i18n.t('settings.phone')}:</label>
+          <input type="tel" id="settEmpPhone" class="form-control" value="${employee?.phone || ''}" placeholder="+48 ..." style="padding: 10px 12px;" />
+        </div>
+      </div>
+      
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+        <div class="form-group">
+          <label style="font-weight: 600; font-size: 13px;">🏢 ${i18n.t('settings.department')}:</label>
+          <input type="text" id="settEmpDepartment" class="form-control" value="${employee?.department || ''}" placeholder="${i18n.t('settings.department')}..." style="padding: 10px 12px;" />
+        </div>
+        <div class="form-group">
+          <label style="font-weight: 600; font-size: 13px;">👔 ${i18n.t('settings.position')}:</label>
+          <select id="settEmpPosition" class="form-control" style="padding: 10px 12px;">
+            <option value="worker" ${(!employee?.position || employee?.position === 'worker') ? 'selected' : ''}>👷 ${i18n.t('settings.positionWorker')}</option>
+            <option value="leader" ${employee?.position === 'leader' ? 'selected' : ''}>🎯 ${i18n.t('settings.positionLeader')}</option>
+            <option value="manager" ${employee?.position === 'manager' ? 'selected' : ''}>📋 ${i18n.t('settings.positionManager')}</option>
+            <option value="trainee" ${employee?.position === 'trainee' ? 'selected' : ''}>🎓 ${i18n.t('settings.positionTrainee')}</option>
+          </select>
+        </div>
+      </div>
+      
+      <div class="form-group" style="display: flex; align-items: center; gap: 10px; padding: 8px 0;">
+        <label class="toggle-switch" style="margin: 0;">
+          <input type="checkbox" id="settEmpSchedulable" ${(employee?.schedulable !== false) ? 'checked' : ''} />
+          <span class="toggle-slider"></span>
+        </label>
+        <label for="settEmpSchedulable" style="font-weight: 600; font-size: 13px; cursor: pointer;">📅 ${i18n.t('settings.schedulable')}</label>
+        <span style="font-size: 11px; color: #64748b;">${i18n.t('settings.schedulableHint')}</span>
+      </div>
+      
+      <div class="form-group">
+        <label style="font-weight: 600; font-size: 13px; margin-bottom: 8px; display: block;">⭐ ${i18n.t('settings.qualifications')}:</label>
+        <div class="qualifications-grid">
+          ${this.getQualificationDefinitions().map(q => {
+            const rating = employee?.qualifications?.[q.id] || 0;
+            const stars = [1,2,3,4,5].map(s => '<span class="qual-star ' + (s <= rating ? 'active' : '') + '" data-star="' + s + '">★</span>').join('');
+            return '<div class="qual-row"><span class="qual-label">' + q.icon + ' ' + q.name + '</span><div class="qual-stars" data-qual="' + q.id + '" data-rating="' + rating + '">' + stars + '</div></div>';
+          }).join('')}
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label style="font-weight: 600; font-size: 13px;">🎨 ${i18n.t('schedule.employeeColor')}:</label>
+        <div class="employee-color-picker" id="settEmpColorPicker" style="margin-top: 6px;">
+          ${EMPLOYEE_COLORS.map(color => '<div class="employee-color-option ' + (color === selectedColor ? 'selected' : '') + '" data-color="' + color + '" style="background: ' + color + '; width: 28px; height: 28px; border-radius: 50%; cursor: pointer; border: 3px solid ' + (color === selectedColor ? '#0097AC' : 'transparent') + ';"></div>').join('')}
+        </div>
+      </div>
+      
+      <div class="form-group">
+        <label style="font-weight: 600; font-size: 13px;">📝 ${i18n.t('settings.notes')}:</label>
+        <textarea id="settEmpNote" class="form-control" rows="2" placeholder="${i18n.t('settings.employeeNotes')}" style="padding: 10px 12px; resize: vertical;">${employee?.note || ''}</textarea>
+      </div>
+    `;
+    
+    // Color picker logic
+    document.querySelectorAll('#settEmpColorPicker .employee-color-option').forEach(el => {
+      el.addEventListener('click', () => {
+        document.querySelectorAll('#settEmpColorPicker .employee-color-option').forEach(e => {
+          (e as HTMLElement).style.border = '3px solid transparent';
+          e.classList.remove('selected');
+        });
+        (el as HTMLElement).style.border = '3px solid #0097AC';
+        el.classList.add('selected');
+      });
+    });
+    
+    // Star rating logic for qualifications
+    document.querySelectorAll('.qual-stars').forEach(container => {
+      container.querySelectorAll('.qual-star').forEach(star => {
+        star.addEventListener('click', () => {
+          const starVal = parseInt((star as HTMLElement).dataset.star || '0');
+          const currentRating = parseInt((container as HTMLElement).dataset.rating || '0');
+          // Click same star = toggle off (set to 0)
+          const newRating = starVal === currentRating ? 0 : starVal;
+          (container as HTMLElement).dataset.rating = String(newRating);
+          container.querySelectorAll('.qual-star').forEach(s => {
+            const sv = parseInt((s as HTMLElement).dataset.star || '0');
+            s.classList.toggle('active', sv <= newRating);
+          });
+        });
+        star.addEventListener('mouseenter', () => {
+          const sv = parseInt((star as HTMLElement).dataset.star || '0');
+          container.querySelectorAll('.qual-star').forEach(s => {
+            const ssv = parseInt((s as HTMLElement).dataset.star || '0');
+            s.classList.toggle('hover', ssv <= sv);
+          });
+        });
+        star.addEventListener('mouseleave', () => {
+          container.querySelectorAll('.qual-star').forEach(s => s.classList.remove('hover'));
+        });
+      });
+    });
+    
+    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
+    confirmBtn.style.display = '';
+    confirmBtn.textContent = i18n.t('common.save');
+    confirmBtn.onclick = async () => {
+      const firstName = (document.getElementById('settEmpFirstName') as HTMLInputElement).value.trim();
+      const lastName = (document.getElementById('settEmpLastName') as HTMLInputElement).value.trim();
+      const email = (document.getElementById('settEmpEmail') as HTMLInputElement).value.trim();
+      const phone = (document.getElementById('settEmpPhone') as HTMLInputElement).value.trim();
+      const department = (document.getElementById('settEmpDepartment') as HTMLInputElement).value.trim();
+      const position = (document.getElementById('settEmpPosition') as HTMLSelectElement).value as any;
+      const schedulable = (document.getElementById('settEmpSchedulable') as HTMLInputElement).checked;
+      const colorEl = document.querySelector('#settEmpColorPicker .employee-color-option.selected') as HTMLElement;
+      const color = colorEl?.dataset.color || EMPLOYEE_COLORS[0];
+      const note = (document.getElementById('settEmpNote') as HTMLTextAreaElement).value.trim();
+      
+      // Collect qualifications from star ratings
+      const qualifications: any = {};
+      document.querySelectorAll('.qual-stars').forEach(container => {
+        const key = (container as HTMLElement).dataset.qual;
+        const rating = parseInt((container as HTMLElement).dataset.rating || '0');
+        if (key && rating > 0) qualifications[key] = rating;
+      });
+      
+      if (!firstName || !lastName) {
+        this.showToast(i18n.t('messages.errorOccurred'), 'error');
+        return;
+      }
+      
+      if (isEdit && employee) {
+        employee.firstName = firstName;
+        employee.lastName = lastName;
+        employee.email = email || undefined;
+        employee.phone = phone || undefined;
+        employee.department = department || undefined;
+        employee.color = color;
+        employee.position = position;
+        employee.schedulable = schedulable;
+        employee.qualifications = Object.keys(qualifications).length > 0 ? qualifications : undefined;
+        employee.note = note || undefined;
+        // Sync role from position for backward compatibility
+        employee.role = position === 'manager' ? 'manager' : position === 'leader' ? 'leader' : 'worker';
+        await db.put('employees', employee);
+        await this.addLog('updated', 'Employee', `${firstName} ${lastName}`);
+      } else {
+        const newEmployee: Employee = {
+          id: this.generateId(),
+          firstName,
+          lastName,
+          color,
+          status: 'available',
+          position,
+          schedulable,
+          qualifications: Object.keys(qualifications).length > 0 ? qualifications : undefined,
+          role: position === 'manager' ? 'manager' : position === 'leader' ? 'leader' : 'worker',
+          email: email || undefined,
+          phone: phone || undefined,
+          department: department || undefined,
+          note: note || undefined,
+          createdAt: Date.now(),
+        };
+        this.state.employees.push(newEmployee);
+        await db.put('employees', newEmployee);
+        await this.addLog('created', 'Employee', `${firstName} ${lastName}`);
+      }
+      
+      this.hideModal();
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
+      this.renderSettingsEmployeeList();
+      // Also refresh schedule view if active, so changes are reflected there too
+      if (this.state.currentView === 'schedule') {
+        this.renderScheduleView();
+      }
+    };
+    
+    // Make modal wider
+    const modalContent = modal.querySelector('.modal-content') as HTMLElement;
+    if (modalContent) {
+      modalContent.style.maxWidth = '560px';
+      const origClose = modal.querySelector('.modal-close') as HTMLElement;
+      if (origClose) {
+        const origHandler = origClose.onclick;
+        origClose.onclick = (e) => {
+          modalContent.style.maxWidth = '';
+          if (origHandler) (origHandler as Function).call(origClose, e);
+        };
+      }
+    }
+    
+    modal.classList.add('active');
   }
 
   private toggleAdminUnlock(): void {
@@ -4943,7 +6413,7 @@ class KappaApp {
     const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
     saveAs(blob, `Kappaplannung_Logs_${new Date().toISOString().split('T')[0]}.xlsx`);
     
-    this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+    this.showToast(i18n.t('messages.exportSuccessfully'), 'success', 'notification');
   }
 
   private async clearLogs(): Promise<void> {
@@ -4953,7 +6423,7 @@ class KappaApp {
     await db.clear('logs');
     this.logs = [];
     this.renderLogsView();
-    this.showToast(i18n.t('messages.deletedSuccessfully'), 'success');
+    this.showToast(i18n.t('messages.deletedSuccessfully'), 'success', 'delete');
   }
 
   private showAddModal(type: string): void {
@@ -5029,7 +6499,7 @@ class KappaApp {
 
       this.hideModal();
       this.renderProjectsView();
-      this.showToast(i18n.t('messages.savedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'assign');
     };
 
     modal.classList.add('active');
@@ -5116,7 +6586,7 @@ class KappaApp {
       this.hideModal();
       this.renderProjectsView();
       this.renderPlanningGrid();
-      this.showToast(i18n.t('messages.savedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
     };
 
     modal.classList.add('active');
@@ -5190,7 +6660,7 @@ class KappaApp {
       
       this.hideModal();
       this.renderPlanningGrid();
-      this.showToast(i18n.t('messages.savedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'assign');
     };
 
     modal.classList.add('active');
@@ -5215,7 +6685,7 @@ class KappaApp {
     
     if (showConfirm) {
       this.renderProjectsView();
-      this.showToast(i18n.t('messages.deletedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.deletedSuccessfully'), 'success', 'delete');
     }
   }
 
@@ -5242,7 +6712,7 @@ class KappaApp {
 
     await this.addLog('deleted', 'project', customer?.name || id);
     this.renderPlanningGrid();
-    this.showToast(i18n.t('messages.deletedSuccessfully'), 'success');
+    this.showToast(i18n.t('messages.deletedSuccessfully'), 'success', 'delete');
   }
 
   private confirmDeletion(): Promise<boolean> {
@@ -5379,7 +6849,7 @@ class KappaApp {
       modal.classList.add('active');
     } catch (error) {
       console.error('Error generating weekly report:', error);
-      this.showToast('Error generating weekly report', 'error');
+      this.showToast(i18n.t('messages.errorOccurred'), 'error');
     }
   }
 
@@ -6000,7 +7470,7 @@ class KappaApp {
       const filename = `Kappaplannung_${this.state.selectedYear}_${new Date().toISOString().split('T')[0]}.xlsx`;
       saveAs(blob, filename);
       
-      this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.exportSuccessfully'), 'success', 'notification');
     } catch (error) {
       console.error('Export error:', error);
       this.showToast(i18n.t('messages.errorOccurred'), 'error');
@@ -6062,6 +7532,66 @@ class KappaApp {
       : `KW${weekFrom.toString().padStart(2, '0')} - KW${weekTo.toString().padStart(2, '0')} ${year}`;
     
     return { year, weekFrom, weekTo, rangeText };
+  }
+
+  private showAnalyticsExportModal(): void {
+    const t = (key: string) => i18n.t(key);
+    const { rangeText } = this.getFilterInfo();
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal" style="max-width: 450px;">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📥 ${t('export.exportAnalytics')}</h2>
+            <div class="employee-modal-stats">
+              <span class="employee-modal-stat">${rangeText}</span>
+            </div>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+        <div class="employee-modal-body">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button class="sched-export-btn" data-format="pdf">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2v2z"/></svg>
+              <div>
+                <strong>PDF</strong>
+                <span>${t('export.pdfDescription')}</span>
+              </div>
+            </button>
+            <button class="sched-export-btn" data-format="excel">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              <div>
+                <strong>Excel</strong>
+                <span>${t('export.excelDescription')}</span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
+    });
+    
+    overlay.querySelectorAll('.sched-export-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const format = (btn as HTMLElement).dataset.format;
+        if (format === 'pdf') {
+          this.exportAnalyticsToPdf();
+        } else if (format === 'excel') {
+          this.exportAnalyticsToExcel();
+        }
+        overlay.remove();
+      });
+    });
   }
 
   private async exportAnalyticsToPdf(): Promise<void> {
@@ -6528,7 +8058,8 @@ class KappaApp {
           const remaining = Math.max(0, soll - ist);
           const isComplete = soll > 0 && ist >= soll;
           const cellBg = soll === 0 ? '#f8fafc' : isComplete ? '#bbf7d0' : remaining <= 2 ? '#fef3c7' : remaining <= 5 ? '#fed7aa' : '#fecaca';
-          analyticsHtml += `<td style="padding: 2px; text-align: center; background: ${cellBg}; font-size: 7px; font-weight: 600;">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</td>`;
+          const cellColor = soll === 0 ? '#94a3b8' : isComplete ? '#15803d' : remaining <= 2 ? '#92400e' : remaining <= 5 ? '#9a3412' : '#991b1b';
+          analyticsHtml += `<td style="padding: 2px; text-align: center; background: ${cellBg}; font-size: 7px; font-weight: 700; color: ${cellColor};">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</td>`;
         });
         analyticsHtml += `</tr>`;
       });
@@ -6915,7 +8446,7 @@ class KappaApp {
       pdf.save(filename);
       
       this.showExportProgress(false);
-      this.showToast(t('export.pdfGenerated'), 'success');
+      this.showToast(t('export.pdfGenerated'), 'success', 'notification');
       
     } catch (error) {
       console.error('PDF export error:', error);
@@ -7361,7 +8892,7 @@ class KappaApp {
       saveAs(blob, filename);
       
       this.showExportProgress(false);
-      this.showToast(t('export.excelGenerated'), 'success');
+      this.showToast(t('export.excelGenerated'), 'success', 'notification');
       
     } catch (error) {
       console.error('Excel export error:', error);
@@ -7483,11 +9014,62 @@ class KappaApp {
         this.state.settings.lastBackupDate = new Date().toISOString();
         await this.saveSettings();
         this.renderSettingsView();
-        this.showToast(`${i18n.t('settings.backupCreated')} (${this.formatFileSize(result.size)})`, 'success');
+        this.showToast(`${i18n.t('settings.backupCreated')} (${this.formatFileSize(result.size)})`, 'success', 'complete');
       }
     } catch (error) {
       console.error('Backup error:', error);
       this.showToast(i18n.t('settings.backupFailed'), 'error');
+    }
+  }
+
+  private async loadSmtpSettings(): Promise<void> {
+    const emailMode = await db.getPreference('kappa_email_mode') as string || 'outlook';
+    const smtpHost = await db.getPreference('kappa_smtp_host') as string || '';
+    const smtpPort = await db.getPreference('kappa_smtp_port') as string || '587';
+    const smtpUser = await db.getPreference('kappa_smtp_user') as string || '';
+    const smtpPass = await db.getPreference('kappa_smtp_pass') as string || '';
+    
+    const modeSelect = document.getElementById('emailModeSelect') as HTMLSelectElement;
+    if (modeSelect) modeSelect.value = emailMode;
+    
+    const hostInput = document.getElementById('smtpHostInput') as HTMLInputElement;
+    if (hostInput) hostInput.value = smtpHost;
+    
+    const portInput = document.getElementById('smtpPortInput') as HTMLInputElement;
+    if (portInput) portInput.value = smtpPort;
+    
+    const userInput = document.getElementById('smtpUserInput') as HTMLInputElement;
+    if (userInput) userInput.value = smtpUser;
+    
+    const passInput = document.getElementById('smtpPassInput') as HTMLInputElement;
+    if (passInput) passInput.value = smtpPass;
+    
+    const smtpFields = document.getElementById('smtpConfigFields');
+    if (smtpFields) smtpFields.style.display = emailMode === 'smtp' ? 'block' : 'none';
+  }
+
+  private async syncSmtpToBackend(): Promise<void> {
+    const smtpHost = await db.getPreference('kappa_smtp_host') as string || '';
+    const smtpPort = await db.getPreference('kappa_smtp_port') as string || '587';
+    const smtpUser = await db.getPreference('kappa_smtp_user') as string || '';
+    const smtpPass = await db.getPreference('kappa_smtp_pass') as string || '';
+    
+    try {
+      // Get current backend settings, merge SMTP fields
+      const resp = await fetch('/api/settings');
+      const settings = resp.ok ? await resp.json() : {};
+      settings.smtpHost = smtpHost;
+      settings.smtpPort = smtpPort;
+      settings.smtpUser = smtpUser;
+      settings.smtpPass = smtpPass;
+      
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      });
+    } catch (err) {
+      console.error('Failed to sync SMTP settings to backend:', err);
     }
   }
 
@@ -7550,7 +9132,7 @@ class KappaApp {
         await db.importData(JSON.stringify(result.data));
         await this.loadData();
         this.renderCurrentView();
-        this.showToast(i18n.t('settings.backupRestored'), 'success');
+        this.showToast(i18n.t('settings.backupRestored'), 'success', 'complete');
       }
     } catch (error) {
       console.error('Restore error:', error);
@@ -7587,7 +9169,7 @@ class KappaApp {
       }
 
       this.renderCurrentView();
-      this.showToast(i18n.t('settings.importSuccess'), 'success');
+      this.showToast(i18n.t('settings.importSuccess'), 'success', 'complete');
     } catch (error) {
       console.error('Import error:', error);
       this.showToast(i18n.t('settings.invalidFileFormat'), 'error');
@@ -7663,7 +9245,7 @@ class KappaApp {
       await db.importModule(moduleName, moduleData);
       await this.loadData();
       this.renderCurrentView();
-      this.showToast(`${i18n.t('settings.importModuleSuccess')}: ${moduleLabels[moduleName] || moduleName}`, 'success');
+      this.showToast(`${i18n.t('settings.importModuleSuccess')}: ${moduleLabels[moduleName] || moduleName}`, 'success', 'complete');
     } catch (error) {
       console.error('Module import error:', error);
       this.showToast(i18n.t('settings.invalidFileFormat'), 'error');
@@ -7681,7 +9263,7 @@ class KappaApp {
       a.download = `kappa-export-${timestamp}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.exportSuccessfully'), 'success', 'notification');
     } catch (error) {
       console.error('Export error:', error);
       this.showToast(i18n.t('common.error'), 'error');
@@ -7712,7 +9294,7 @@ class KappaApp {
       a.download = `kappa-${moduleName}-${timestamp}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      this.showToast(`${i18n.t('settings.exportModuleSuccess')}: ${moduleLabels[moduleName] || moduleName}`, 'success');
+      this.showToast(`${i18n.t('settings.exportModuleSuccess')}: ${moduleLabels[moduleName] || moduleName}`, 'success', 'notification');
     } catch (error) {
       console.error('Module export error:', error);
       this.showToast(i18n.t('common.error'), 'error');
@@ -7735,7 +9317,7 @@ class KappaApp {
       a.download = `kappa-database-${timestamp}.db`;
       a.click();
       URL.revokeObjectURL(url);
-      this.showToast(i18n.t('settings.downloadDbSuccess'), 'success');
+      this.showToast(i18n.t('settings.downloadDbSuccess'), 'success', 'notification');
     } catch (error) {
       console.error('Download DB error:', error);
       this.showToast(i18n.t('common.error'), 'error');
@@ -7766,7 +9348,7 @@ class KappaApp {
       // Reload everything from the new database
       await this.loadData();
       this.renderCurrentView();
-      this.showToast(i18n.t('settings.uploadDbSuccess'), 'success');
+      this.showToast(i18n.t('settings.uploadDbSuccess'), 'success', 'complete');
     } catch (error) {
       console.error('Upload DB error:', error);
       this.showToast(i18n.t('settings.invalidDbFile'), 'error');
@@ -7953,7 +9535,7 @@ class KappaApp {
 
     } catch (error) {
       console.error('Error loading file:', error);
-      this.showToast('Error loading Excel file', 'error');
+      this.showToast(i18n.t('messages.errorOccurred'), 'error');
     }
   }
 
@@ -8382,11 +9964,11 @@ class KappaApp {
       this.renderCurrentView();
       this.closeImportWizard();
       
-      this.showToast(`Import complete: ${importedCount} new, ${updatedCount} updated, ${skippedCount} skipped`, 'success');
+      this.showToast(i18n.t('messages.importComplete').replace('{0}', String(importedCount)).replace('{1}', String(updatedCount)).replace('{2}', String(skippedCount)), 'success', 'complete');
 
     } catch (error) {
       console.error('Import error:', error);
-      this.showToast('Error during import', 'error');
+      this.showToast(i18n.t('messages.errorOccurred'), 'error');
     }
   }
 
@@ -8395,14 +9977,14 @@ class KappaApp {
     const buffer = await file.arrayBuffer();
     await workbook.xlsx.load(buffer);
     
-    const sheet = workbook.getWorksheet('Produkt Audyt');
+    const sheet = workbook.getWorksheet('Kappa Planning');
     if (!sheet) {
-      this.showToast('Invalid Excel file format', 'error');
+      this.showToast(i18n.t('messages.errorOccurred'), 'error');
       return;
     }
 
     // For now, show success - full import would require matching customer/type/etc names
-    this.showToast(i18n.t('messages.importSuccessfully'), 'success');
+    this.showToast(i18n.t('messages.importSuccessfully'), 'success', 'complete');
   }
 
   private async importJson(file: File): Promise<void> {
@@ -8442,7 +10024,7 @@ class KappaApp {
 
     await this.loadData();
     this.renderCurrentView();
-    this.showToast(`${i18n.t('messages.importSuccessfully')} - ${data.projects?.length || 0} projects`, 'success');
+    this.showToast(`${i18n.t('messages.importSuccessfully')} - ${data.projects?.length || 0} projects`, 'success', 'complete');
   }
 
   private async clearAllData(): Promise<void> {
@@ -8455,7 +10037,7 @@ class KappaApp {
 
     await this.loadData();
     this.renderCurrentView();
-    this.showToast(i18n.t('settings.dataDeleted'), 'success');
+    this.showToast(i18n.t('settings.dataDeleted'), 'success', 'delete');
   }
 
   private escapeHtml(text: string): string {
@@ -8464,7 +10046,10 @@ class KappaApp {
     return div.innerHTML;
   }
 
-  private showToast(message: string, type: 'success' | 'error' | 'warning'): void {
+  private showToast(message: string, type: 'success' | 'error' | 'warning', sound?: SoundName): void {
+    // Play specific sound if provided, otherwise match the toast type
+    sounds.play(sound || type);
+
     const container = document.getElementById('toastContainer');
     if (!container) return;
     
@@ -8783,6 +10368,7 @@ class KappaApp {
       if (container) {
         container.classList.add('sidebar-open');
       }
+      sounds.play('swoosh');
     });
     
     document.getElementById('schedSidebarClose')?.addEventListener('click', () => {
@@ -8798,6 +10384,7 @@ class KappaApp {
       if (container) {
         container.classList.remove('sidebar-open');
       }
+      sounds.play('swoosh');
     });
   }
   
@@ -8829,10 +10416,10 @@ class KappaApp {
     if (!dropdown) return;
     
     const months = [
-      i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-      i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-      i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-      i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+      i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+      i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+      i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+      i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
     ];
     const monthsFull = [
       i18n.t('schedule.monthFullJan'), i18n.t('schedule.monthFullFeb'), i18n.t('schedule.monthFullMar'),
@@ -9008,11 +10595,16 @@ class KappaApp {
                     hour: '2-digit', minute: '2-digit' 
                   });
                   
+                  const actionLabel = isAdded ? i18n.t('schedule.logAdded') : isRemoved ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged');
+                  const displayText = log.details 
+                    ? `<strong>${actionLabel}</strong> ${log.entityName}: ${log.details}`
+                    : `<strong>${actionLabel}</strong> ${log.entityName || ''}`;
+                  
                   return `
                     <div class="sched-history-item">
                       <div class="sched-history-icon ${iconClass}">${iconSvg}</div>
                       <div class="sched-history-content">
-                        <div class="sched-history-text">${log.entityName || ''}${log.details ? ` - ${log.details}` : ''}</div>
+                        <div class="sched-history-text">${displayText}</div>
                         <div class="sched-history-time">${time}</div>
                       </div>
                     </div>
@@ -9395,7 +10987,7 @@ class KappaApp {
       pdf.save(`grafik_${data.weekKey}.pdf`);
 
       this.showExportProgress(false, 100);
-      this.showToast(t('export.pdfExported'), 'success');
+      this.showToast(t('export.pdfExported'), 'success', 'notification');
 
     } catch (error) {
       console.error('Schedule PDF export error:', error);
@@ -9408,105 +11000,304 @@ class KappaApp {
     try {
       const t = (key: string) => i18n.t(key);
       const ExcelJS = await import('exceljs');
+      const lang = i18n.getLanguage();
+      const dateLocale = lang === 'de' ? 'de-DE' : lang === 'pl' ? 'pl-PL' : lang === 'ro' ? 'ro-RO' : 'en-US';
 
       this.showExportProgress(true, 10, t('export.preparingData'));
 
       const data = this.getScheduleExportData();
+      const dateStr = new Date().toLocaleDateString(dateLocale);
+      const timeStr = new Date().toLocaleTimeString(dateLocale);
 
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'Produkt Audit 360';
+      workbook.creator = 'Kappa Planning – DRÄXLMAIER Group';
       workbook.created = new Date();
 
-      // Colors
-      const headerBg = '000000';
-      const headerText = 'FFFFFF';
-      const tealBg = '0097AC';
-      const altRowBg = 'F8FAFC';
+      // Shared styles
+      const black = 'FF000000';
+      const white = 'FFFFFFFF';
+      const brandColor = 'FF0097AC';
+      const lightGray = 'FFF8FAFC';
+      const medGray = 'FFF1F5F9';
+      const darkSlate = 'FF1E293B';
+      const headerFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
+      const subFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, color: { argb: 'FF334155' } };
+      const thinBorder: Partial<ExcelJS.Borders> = {
+        top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+        right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+      };
 
-      this.showExportProgress(true, 30, t('export.creatingSheets'));
+      const addBrandHeader = (sheet: ExcelJS.Worksheet, colCount: number, subtitle: string) => {
+        const lastCol = String.fromCharCode(64 + colCount);
+        sheet.mergeCells(`A1:${lastCol}1`);
+        const titleCell = sheet.getCell('A1');
+        titleCell.value = 'DRÄXLMAIER Group';
+        titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: white } };
+        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.getRow(1).height = 35;
 
-      // Sheet 1: Summary
-      const summarySheet = workbook.addWorksheet(t('export.summary'));
-      summarySheet.columns = [
-        { header: '', key: 'label', width: 30 },
-        { header: '', key: 'value', width: 25 }
+        sheet.mergeCells(`A2:${lastCol}2`);
+        const subCell = sheet.getCell('A2');
+        subCell.value = subtitle;
+        subCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: white } };
+        subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        subCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.getRow(2).height = 28;
+
+        sheet.mergeCells(`A3:${lastCol}3`);
+        const infoCell = sheet.getCell('A3');
+        infoCell.value = `${t('export.generatedAt')}: ${dateStr} ${timeStr} | ${t('export.user')}: ${this.state.settings.userName || 'System'}`;
+        infoCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
+        infoCell.alignment = { horizontal: 'center' };
+        sheet.getRow(3).height = 20;
+      };
+
+      this.showExportProgress(true, 20, t('export.creatingSheets'));
+
+      // ==================== SHEET 1: Overview ====================
+      const overviewSheet = workbook.addWorksheet(`Kappa - ${t('export.summary')}`, {
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
+      });
+      overviewSheet.columns = [
+        { width: 22 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 18 }, { width: 14 }
       ];
 
-      summarySheet.addRow([t('export.scheduleReport'), '']);
-      summarySheet.getRow(1).font = { bold: true, size: 16 };
-      summarySheet.addRow([t('export.week'), data.weekKey]);
-      summarySheet.addRow([t('export.dateRange'), `${data.weekDates.start} - ${data.weekDates.end}`]);
-      summarySheet.addRow([t('export.generatedAt'), new Date().toLocaleString()]);
-      summarySheet.addRow(['', '']);
-      summarySheet.addRow([t('export.totalEmployees'), data.stats.totalEmployees]);
-      summarySheet.addRow([t('export.assignedEmployees'), data.stats.assignedEmployees]);
-      summarySheet.addRow([t('export.projectsCount'), data.stats.totalProjects]);
-      summarySheet.addRow([t('export.coverage'), `${data.stats.coveragePercent}%`]);
+      addBrandHeader(overviewSheet, 7, `Kappa Planning – ${t('export.scheduleReport')} | ${data.weekKey} (${data.weekDates.start} - ${data.weekDates.end})`);
+
+      // KPI Section
+      let row = 5;
+      overviewSheet.mergeCells(`A${row}:G${row}`);
+      const kpiTitle = overviewSheet.getCell(`A${row}`);
+      kpiTitle.value = `📊 ${t('export.kpiTitle')}`;
+      kpiTitle.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF1E293B' } };
+      overviewSheet.getRow(row).height = 24;
+      row++;
+
+      const kpiLabels = [t('export.totalEmployees'), t('export.assignedEmployees'), t('export.projectsCount'), t('export.coverage')];
+      const kpiValues = [data.stats.totalEmployees, data.stats.assignedEmployees, data.stats.totalProjects, `${data.stats.coveragePercent}%`];
+      const kpiColors = ['FF0097AC', 'FF10B981', 'FF6366F1', data.stats.coveragePercent >= 80 ? 'FF10B981' : data.stats.coveragePercent >= 50 ? 'FFF59E0B' : 'FFEF4444'];
+
+      // KPI row with values
+      const kpiLabelRow = overviewSheet.getRow(row);
+      const kpiValueRow = overviewSheet.getRow(row + 1);
+      for (let k = 0; k < 4; k++) {
+        const col = k + 1;
+        const labelCell = kpiLabelRow.getCell(col);
+        labelCell.value = kpiLabels[k];
+        labelCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF475569' } };
+        labelCell.alignment = { horizontal: 'center' };
+        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
+        labelCell.border = thinBorder;
+
+        const valCell = kpiValueRow.getCell(col);
+        valCell.value = kpiValues[k];
+        valCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: kpiColors[k] } };
+        valCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
+        valCell.border = thinBorder;
+      }
+      kpiValueRow.height = 32;
+      row += 3;
+
+      // Shift Summary Section
+      overviewSheet.mergeCells(`A${row}:G${row}`);
+      const shiftTitle = overviewSheet.getCell(`A${row}`);
+      shiftTitle.value = `👥 ${t('export.assignmentsByShift')}`;
+      shiftTitle.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF1E293B' } };
+      overviewSheet.getRow(row).height = 24;
+      row++;
+
+      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
+      const shiftColors = ['FF3B82F6', 'FF8B5CF6', 'FFF97316'];
+
+      // Shift header row
+      const shiftHeaderRow = overviewSheet.getRow(row);
+      for (let s = 0; s < 3; s++) {
+        const col = s * 2 + 1;
+        overviewSheet.mergeCells(row, col, row, col + 1);
+        const cell = shiftHeaderRow.getCell(col);
+        const shiftData = data.byShift.get(s + 1) || [];
+        cell.value = `${t('export.shift')} ${s + 1} - ${shiftNames[s]} (${shiftData.length})`;
+        cell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: shiftColors[s] } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      }
+      shiftHeaderRow.height = 26;
+      row++;
+
+      // Shift employee lists (up to 15 rows)
+      const maxShiftRows = 15;
+      for (let r = 0; r < maxShiftRows; r++) {
+        const dataRow = overviewSheet.getRow(row + r);
+        for (let s = 0; s < 3; s++) {
+          const shiftData = data.byShift.get(s + 1) || [];
+          const col = s * 2 + 1;
+          if (r < shiftData.length) {
+            const item = shiftData[r];
+            dataRow.getCell(col).value = item.employee;
+            dataRow.getCell(col).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+            dataRow.getCell(col).border = thinBorder;
+            dataRow.getCell(col + 1).value = `${item.customer} • ${item.type}`;
+            dataRow.getCell(col + 1).font = { name: 'Calibri', size: 9, color: { argb: 'FF64748B' } };
+            dataRow.getCell(col + 1).border = thinBorder;
+          } else if (r === shiftData.length && shiftData.length === 0) {
+            overviewSheet.mergeCells(row + r, col, row + r, col + 1);
+            dataRow.getCell(col).value = t('export.noAssignments');
+            dataRow.getCell(col).font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
+            dataRow.getCell(col).alignment = { horizontal: 'center' };
+            dataRow.getCell(col).border = thinBorder;
+          }
+          if (r % 2 === 0 && r < shiftData.length) {
+            dataRow.getCell(col).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+            dataRow.getCell(col + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          }
+        }
+      }
+      row += maxShiftRows + 1;
+
+      // Project Assignments Section
+      overviewSheet.mergeCells(`A${row}:G${row}`);
+      const projTitle = overviewSheet.getCell(`A${row}`);
+      projTitle.value = `🏢 ${t('export.projectAssignments')}`;
+      projTitle.font = { name: 'Calibri', size: 13, bold: true, color: { argb: 'FF1E293B' } };
+      overviewSheet.getRow(row).height = 24;
+      row++;
+
+      // Project table headers
+      const projHeaders = [t('export.customer'), t('export.type'), t('export.employees'), '', '', '', t('export.count')];
+      const projHeaderRow = overviewSheet.getRow(row);
+      projHeaders.forEach((h, i) => {
+        const cell = projHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = headerFont;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
+        cell.alignment = { horizontal: i === 6 ? 'center' : 'left', vertical: 'middle' };
+        cell.border = thinBorder;
+      });
+      overviewSheet.mergeCells(row, 3, row, 6);
+      projHeaderRow.height = 22;
+      row++;
+
+      // Project data rows
+      const projectRows = Array.from(data.byProject.entries());
+      projectRows.forEach(([key, proj], idx) => {
+        const empList = proj.employees.map(e => `${e.name} (${t('export.shift')} ${e.shift})`).join(', ');
+        const dataRow = overviewSheet.getRow(row);
+        dataRow.getCell(1).value = proj.customerName;
+        dataRow.getCell(1).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+        dataRow.getCell(2).value = proj.typeName;
+        dataRow.getCell(2).font = subFont;
+        overviewSheet.mergeCells(row, 3, row, 6);
+        dataRow.getCell(3).value = empList;
+        dataRow.getCell(3).font = { name: 'Calibri', size: 9, color: { argb: 'FF475569' } };
+        dataRow.getCell(7).value = proj.employees.length;
+        dataRow.getCell(7).font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF0097AC' } };
+        dataRow.getCell(7).alignment = { horizontal: 'center' };
+
+        for (let c = 1; c <= 7; c++) {
+          dataRow.getCell(c).border = thinBorder;
+          if (idx % 2 === 0) {
+            dataRow.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          }
+        }
+        row++;
+      });
 
       this.showExportProgress(true, 50, t('export.creatingSheets'));
 
-      // Sheet 2: All Assignments
-      const assignmentsSheet = workbook.addWorksheet(t('export.assignments'));
+      // ==================== SHEET 2: All Assignments ====================
+      const assignmentsSheet = workbook.addWorksheet(t('export.assignments'), {
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
+      });
       assignmentsSheet.columns = [
-        { header: t('export.employee'), key: 'employee', width: 25 },
-        { header: t('export.customer'), key: 'customer', width: 25 },
-        { header: t('export.type'), key: 'type', width: 20 },
-        { header: t('export.shift'), key: 'shift', width: 12 },
-        { header: t('export.scope'), key: 'scope', width: 20 }
+        { width: 25 }, { width: 25 }, { width: 20 }, { width: 14 }, { width: 22 }
       ];
 
-      // Style header
-      const headerRow = assignmentsSheet.getRow(1);
-      headerRow.font = { bold: true, color: { argb: headerText } };
-      headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: headerBg } };
-      headerRow.alignment = { horizontal: 'center' };
+      addBrandHeader(assignmentsSheet, 5, `${t('export.assignments')} – ${data.weekKey}`);
 
-      // Add data rows
-      let rowIndex = 2;
+      // Column headers at row 4
+      const assHeaders = [t('export.employee'), t('export.customer'), t('export.type'), t('export.shift'), t('export.scope')];
+      const assHeaderRow = assignmentsSheet.getRow(4);
+      assHeaders.forEach((h, i) => {
+        const cell = assHeaderRow.getCell(i + 1);
+        cell.value = h;
+        cell.font = headerFont;
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.border = thinBorder;
+      });
+      assHeaderRow.height = 24;
+
+      let assRow = 5;
       [1, 2, 3].forEach(shift => {
         const shiftData = data.byShift.get(shift) || [];
         shiftData.forEach(item => {
-          assignmentsSheet.addRow({
-            employee: item.employee,
-            customer: item.customer,
-            type: item.type,
-            shift: shift,
-            scope: item.scope
-          });
-          if (rowIndex % 2 === 0) {
-            assignmentsSheet.getRow(rowIndex).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
+          const r = assignmentsSheet.getRow(assRow);
+          r.getCell(1).value = item.employee;
+          r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+          r.getCell(2).value = item.customer;
+          r.getCell(2).font = subFont;
+          r.getCell(3).value = item.type;
+          r.getCell(3).font = subFont;
+          r.getCell(4).value = `${shift} - ${shiftNames[shift - 1]}`;
+          r.getCell(4).font = subFont;
+          r.getCell(4).alignment = { horizontal: 'center' };
+          r.getCell(5).value = item.scope;
+          r.getCell(5).font = subFont;
+          for (let c = 1; c <= 5; c++) {
+            r.getCell(c).border = thinBorder;
+            if (assRow % 2 === 0) {
+              r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+            }
           }
-          rowIndex++;
+          assRow++;
         });
       });
 
       this.showExportProgress(true, 70, t('export.creatingSheets'));
 
-      // Sheet 3: By Shift
-      const shiftNames = [t('schedule.morning'), t('schedule.afternoon'), t('schedule.night')];
+      // ==================== SHEETS 3-5: Per Shift ====================
       for (let shift = 1; shift <= 3; shift++) {
-        const shiftSheet = workbook.addWorksheet(`${t('export.shift')} ${shift} - ${shiftNames[shift - 1]}`);
+        const shiftSheet = workbook.addWorksheet(`${t('export.shift')} ${shift} - ${shiftNames[shift - 1]}`, {
+          views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
+        });
         shiftSheet.columns = [
-          { header: t('export.employee'), key: 'employee', width: 25 },
-          { header: t('export.customer'), key: 'customer', width: 25 },
-          { header: t('export.type'), key: 'type', width: 20 },
-          { header: t('export.scope'), key: 'scope', width: 20 }
+          { width: 25 }, { width: 25 }, { width: 20 }, { width: 22 }
         ];
 
-        const shiftHeaderRow = shiftSheet.getRow(1);
-        shiftHeaderRow.font = { bold: true, color: { argb: headerText } };
-        shiftHeaderRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: tealBg } };
+        addBrandHeader(shiftSheet, 4, `${t('export.shift')} ${shift} - ${shiftNames[shift - 1]} | ${data.weekKey}`);
+
+        const shHeaders = [t('export.employee'), t('export.customer'), t('export.type'), t('export.scope')];
+        const shHeaderRow = shiftSheet.getRow(4);
+        shHeaders.forEach((h, i) => {
+          const cell = shHeaderRow.getCell(i + 1);
+          cell.value = h;
+          cell.font = headerFont;
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: shiftColors[shift - 1] } };
+          cell.alignment = { horizontal: 'center', vertical: 'middle' };
+          cell.border = thinBorder;
+        });
+        shHeaderRow.height = 24;
 
         const shiftData = data.byShift.get(shift) || [];
         shiftData.forEach((item, idx) => {
-          shiftSheet.addRow({
-            employee: item.employee,
-            customer: item.customer,
-            type: item.type,
-            scope: item.scope
-          });
-          if (idx % 2 === 1) {
-            shiftSheet.getRow(idx + 2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: altRowBg } };
+          const r = shiftSheet.getRow(idx + 5);
+          r.getCell(1).value = item.employee;
+          r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+          r.getCell(2).value = item.customer;
+          r.getCell(2).font = subFont;
+          r.getCell(3).value = item.type;
+          r.getCell(3).font = subFont;
+          r.getCell(4).value = item.scope;
+          r.getCell(4).font = subFont;
+          for (let c = 1; c <= 4; c++) {
+            r.getCell(c).border = thinBorder;
+            if (idx % 2 === 0) {
+              r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+            }
           }
         });
       }
@@ -9524,7 +11315,7 @@ class KappaApp {
       URL.revokeObjectURL(url);
 
       this.showExportProgress(false, 100);
-      this.showToast(t('export.excelExported'), 'success');
+      this.showToast(t('export.excelExported'), 'success', 'notification');
 
     } catch (error) {
       console.error('Schedule Excel export error:', error);
@@ -9577,6 +11368,41 @@ class KappaApp {
     fill.style.width = `${percent}%`;
     fill.className = 'sched-coverage-fill ' + (percent < 50 ? 'low' : percent < 80 ? 'medium' : 'high');
     text.textContent = `${assignedCount}/${total}`;
+    
+    // Also update email badge
+    this.updateEmailUpdateBadge();
+  }
+  
+  private async updateEmailUpdateBadge(): Promise<void> {
+    const badge = document.getElementById('emailUpdateBadge');
+    if (!badge) return;
+    
+    const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    const lastSentData = await db.getPreference(`kappa_email_sent_${weekKey}`) as any;
+    const lastSentHash = lastSentData?.hash || '';
+    const lastSentTimestamp = lastSentData?.timestamp || 0;
+    
+    const currentHash = weekAssignments
+      .map(a => `${a.employeeId}:${a.projectId}:${a.shift}:${a.scope}`)
+      .sort()
+      .join('|');
+    
+    const hasChanges = lastSentTimestamp > 0 && currentHash !== lastSentHash;
+    const neverSent = lastSentTimestamp === 0 && weekAssignments.length > 0;
+    
+    if (hasChanges) {
+      badge.style.display = 'block';
+      badge.style.background = '#f59e0b'; // orange for update
+      badge.title = i18n.t('schedule.scheduleUpdated');
+    } else if (neverSent) {
+      badge.style.display = 'block';
+      badge.style.background = '#3b82f6'; // blue for never sent
+      badge.title = i18n.t('schedule.neverSent');
+    } else {
+      badge.style.display = 'none';
+    }
   }
   
   private getWeekDateRange(year: number, week: number): { start: string; end: string } {
@@ -9609,9 +11435,9 @@ class KappaApp {
     // Get all assignments for this week
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     
-    // Check for unassigned employees
+    // Check for unassigned employees (exclude managers - they are assigned manually)
     const assignedEmployeeIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
-    const unassignedEmployees = this.state.employees.filter(e => !assignedEmployeeIds.has(e.id));
+    const unassignedEmployees = this.state.employees.filter(e => !assignedEmployeeIds.has(e.id) && e.role !== 'manager');
     
     if (unassignedEmployees.length > 0) {
       alerts.push({
@@ -10269,7 +12095,7 @@ class KappaApp {
     headerContainer.innerHTML = `
       <div class="header-cell project-col">${i18n.t('schedule.project')}</div>
       <div class="header-cell months-row">
-        ${[i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'), i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'), i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'), i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')].map((m, i) => 
+        ${[i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'), i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'), i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'), i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')].map((m, i) => 
           `<span class="month-label" style="left: ${(i / 12) * 100}%">${m}</span>`
         ).join('')}
       </div>
@@ -10483,11 +12309,13 @@ class KappaApp {
       return name.includes('peel') || name.includes('adhesion') || name.includes('przyczep');
     }).length;
     
-    // Count available employees (not absent)
+    // Count available employees (not absent, not managers) — partial absences count as available
     const availableEmpCount = this.state.employees.filter(e => {
+      if (e.schedulable === false) return false;
+      if (e.role === 'manager') return false;
       if (e.status && e.status !== 'available') return false;
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      return !absence;
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !details.absence || details.isPartial;
     }).length;
 
     modalBody.innerHTML = `
@@ -10647,12 +12475,14 @@ class KappaApp {
       return;
     }
     
-    // Assign employees to unassigned projects
+    // Assign employees to unassigned projects (skip managers - they are assigned manually only)
+    const plannerEmployees = this.state.employees.filter(e => e.role !== 'manager');
     let employeeIndex = 0;
     let shift = 1;
     
     for (const groupKey of unassignedGroups) {
-      const employee = this.state.employees[employeeIndex % this.state.employees.length];
+      if (plannerEmployees.length === 0) break;
+      const employee = plannerEmployees[employeeIndex % plannerEmployees.length];
       
       if (strategy === 'rotate') {
         // Get previous week's shift for this employee, respecting shiftSystem
@@ -10684,7 +12514,8 @@ class KappaApp {
       }
     }
     
-    this.showToast(i18n.t('schedule.assignedNProjects').replace('{0}', String(unassignedGroups.length)), 'success');
+    
+    this.showToast(i18n.t('schedule.assignedNProjects').replace('{0}', String(unassignedGroups.length)), 'success', 'complete');
     this.renderScheduleAlerts();
     this.renderScheduleContent();
   }
@@ -10734,11 +12565,13 @@ class KappaApp {
       });
     }
     
-    // 4. Get available employees (not absent, available status)
+    // 4. Get available employees (not fully absent, available status, not managers) — partial absences included
     const availableEmployees = this.state.employees.filter(e => {
+      if (e.schedulable === false) return false;
+      if (e.role === 'manager') return false;
       if (e.status && e.status !== 'available') return false;
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      return !absence;
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !details.absence || details.isPartial;
     });
     
     if (unassignedGroups.length === 0 || availableEmployees.length === 0) {
@@ -10875,25 +12708,21 @@ class KappaApp {
     }
     
     // ==================== SECOND PASS: Ensure everyone gets an assignment ====================
-    // Find available employees who still have no assignment this week
+    // Skip second pass for specific test assignments - one person per group is enough
     const allWeekAssignmentsAfter = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const assignedEmpIdsAfter = new Set(allWeekAssignmentsAfter.map((a: ScheduleAssignment) => a.employeeId));
     
     const stillUnassigned = availableEmployees.filter(emp => !assignedEmpIdsAfter.has(emp.id));
     
-    if (stillUnassigned.length > 0 && projectGroups.size > 0) {
+    if (stillUnassigned.length > 0 && projectGroups.size > 0 && !scopeTestId) {
       // Calculate workload (in minutes) per project group
       const groupWorkloadMinutes = new Map<string, number>();
       
-      allWeekAssignmentsAfter.forEach((a: ScheduleAssignment) => {
-        const gKey = a.projectId;
-        if (!projectGroups.has(gKey)) return; // skip extra tasks etc.
-        const empCount = allWeekAssignmentsAfter.filter(x => x.projectId === gKey).length;
-        // We'll compute total project minutes and divide by employees on it
-      });
-      
       // For each project group: total minutes / number of assigned employees
       projectGroups.forEach((group, gKey) => {
+        // Skip groups that don't have the selected test (when test scope is active)
+        if (scopeTestId && !group.items.some(p => p.test_id === scopeTestId)) return;
+        
         let totalMinutes = 0;
         group.items.forEach(p => {
           const wd = p.weeks?.[weekKey];
@@ -10902,7 +12731,6 @@ class KappaApp {
           }
         });
         const empCount = allWeekAssignmentsAfter.filter(x => x.projectId === gKey).length;
-        // Workload per person on this project (higher = more overloaded = needs help)
         groupWorkloadMinutes.set(gKey, empCount > 0 ? totalMinutes / empCount : totalMinutes);
       });
       
@@ -10975,9 +12803,11 @@ class KappaApp {
       }
     }
     
+    
     this.showToast(
       i18n.t('schedule.fairAssignComplete').replace('{0}', String(assignedCount)),
-      'success'
+      'success',
+      'complete'
     );
     this.renderScheduleAlerts();
     this.renderScheduleContent();
@@ -11054,11 +12884,12 @@ class KappaApp {
       return;
     }
     
-    // 4. Get available employees
+    // 4. Get available employees — partial absences included with reduced capacity
     const availableEmployees = this.state.employees.filter(e => {
+      if (e.schedulable === false) return false;
       if (e.status && e.status !== 'available') return false;
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      return !absence;
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !details.absence || details.isPartial;
     });
     
     if (availableEmployees.length === 0) {
@@ -11180,9 +13011,11 @@ class KappaApp {
       assignedCount++;
     }
     
+    
     this.showToast(
       i18n.t('schedule.fairPeelOffComplete').replace('{0}', String(assignedCount)),
-      'success'
+      'success',
+      'complete'
     );
     this.renderScheduleAlerts();
     this.renderScheduleContent();
@@ -11360,11 +13193,13 @@ class KappaApp {
       }
     });
     
-    // Get available employees
+    // Get available employees (exclude managers - manual assignment only) — partial absences included
     const availableEmployees = this.state.employees.filter(e => {
+      if (e.schedulable === false) return false;
+      if (e.role === 'manager') return false;
       if (e.status && e.status !== 'available') return false;
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      return !absence;
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !details.absence || details.isPartial;
     });
     
     // Initialize employee shifts
@@ -11921,52 +13756,89 @@ class KappaApp {
       return weekData && weekData.soll > 0 && !p.hidden;
     });
     
-    // 2. Build project groups
+    // 2. Build project groups (for scheduling logic)
+    // Always use customer-type as internal groupKey for actual assignments (grid compatibility)
     const projectGroups = new Map<string, { items: Project[] }>();
     weekProjects.forEach(p => {
-      const groupKey = this.shiftPlannerGroupMode === 'customer' 
-        ? String(p.customer_id) 
-        : `${p.customer_id}-${p.type_id}`;
+      const groupKey = `${p.customer_id}-${p.type_id}`;
       if (!projectGroups.has(groupKey)) {
         projectGroups.set(groupKey, { items: [] });
       }
       projectGroups.get(groupKey)!.items.push(p);
     });
     
-    // 3. Get already assigned groups
-    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    const assignedGroupIds = new Set<string>();
-    weekAssignments.forEach((a: ScheduleAssignment) => {
-      if (scopeTestId) {
-        // Only block if this exact test is already assigned to the group
-        if (a.scope === 'specific' && a.testId === scopeTestId) {
-          assignedGroupIds.add(a.projectId);
+    // Build customer-level groups for "wg klientów" mode
+    // Maps customerId -> list of customer_id-type_id groupKeys
+    const customerToSubGroups = new Map<string, string[]>();
+    if (this.shiftPlannerGroupMode === 'customer') {
+      weekProjects.forEach(p => {
+        const custId = String(p.customer_id);
+        const subGroupKey = `${p.customer_id}-${p.type_id}`;
+        if (!customerToSubGroups.has(custId)) {
+          customerToSubGroups.set(custId, []);
         }
-      } else {
-        assignedGroupIds.add(a.projectId);
-      }
-    });
-    
-    let unassignedGroups = Array.from(projectGroups.keys()).filter(g => !assignedGroupIds.has(g));
-    
-    // When assigning specific test, only include groups that actually have that test
-    if (scopeTestId) {
-      unassignedGroups = unassignedGroups.filter(g => {
-        const group = projectGroups.get(g)!;
-        return group.items.some(p => p.test_id === scopeTestId);
+        const list = customerToSubGroups.get(custId)!;
+        if (!list.includes(subGroupKey)) {
+          list.push(subGroupKey);
+        }
       });
     }
     
-    if (unassignedGroups.length === 0) {
+    // Determine assignment groups based on grouping mode
+    // In customer mode: iterate by customer, but create assignments for each sub-group
+    // In project mode: iterate by customer-type groups directly
+    const iterationGroups: Array<{ key: string; subGroupKeys: string[] }> = [];
+    if (this.shiftPlannerGroupMode === 'customer') {
+      customerToSubGroups.forEach((subKeys, custId) => {
+        iterationGroups.push({ key: custId, subGroupKeys: subKeys });
+      });
+    } else {
+      projectGroups.forEach((_, groupKey) => {
+        iterationGroups.push({ key: groupKey, subGroupKeys: [groupKey] });
+      });
+    }
+    
+    // 3. Get already assigned groups (check at sub-group level)
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    // Filter iteration groups to only those that need assignment
+    let unassignedIterGroups = iterationGroups.filter(ig => {
+      // Check if ALL sub-groups under this iteration group are already assigned
+      const allSubsCovered = ig.subGroupKeys.every(sgk => {
+        if (scopeTestId) {
+          // For specific test: sub-group is covered only if this test is already assigned there
+          return weekAssignments.some((a: ScheduleAssignment) =>
+            a.projectId === sgk && a.scope === 'specific' && a.testId === scopeTestId
+          );
+        } else {
+          return weekAssignments.some((a: ScheduleAssignment) => a.projectId === sgk);
+        }
+      });
+      return !allSubsCovered;
+    });
+    
+    // When assigning specific test, only include groups that actually have that test
+    if (scopeTestId) {
+      unassignedIterGroups = unassignedIterGroups.filter(ig => {
+        // At least one sub-group must have a project with this test
+        return ig.subGroupKeys.some(sgk => {
+          const group = projectGroups.get(sgk);
+          return group && group.items.some(p => p.test_id === scopeTestId);
+        });
+      });
+    }
+    
+    if (unassignedIterGroups.length === 0) {
       this.showToast(i18n.t('schedule.allCoveredOrNoEmp'), 'warning');
       return;
     }
     
-    // 4. Get available employees grouped by their assigned shift
+    // 4. Get available employees grouped by their assigned shift — partial absences included
     const availableEmployees = this.state.employees.filter(e => {
+      if (e.schedulable === false) return false;
       if (e.status && e.status !== 'available') return false;
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      return !absence;
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !details.absence || details.isPartial;
     });
     
     const empByShift = new Map<number, Employee[]>();
@@ -12006,21 +13878,15 @@ class KappaApp {
       }
     });
     
-    // 6. For each unassigned project, assign worker from matching shift
+    // 6. For each unassigned iteration group, assign worker from matching shift
     let assignedCount = 0;
     
-    for (const groupKey of unassignedGroups) {
-      const projectShifts = this.projectShiftConfig.get(groupKey) || new Set([1, 2]);
-      
-      // Determine which employee shift pool to use
-      // If project runs on shift 1 and/or 2 -> use those employees
-      // PRIORITY: Employee's shift determines which projects they can work on.
-      // A Z2 employee can ONLY be assigned to projects running on Z2 (or Z3 night).
-      // A Z1 employee can ONLY be assigned to projects running on Z1 (or Z3 night).
-      // The assignment shift is always the employee's own shift.
+    for (const iterGroup of unassignedIterGroups) {
+      // Get shift config: use customer-level key if customer mode, otherwise project-level
+      const shiftConfigKey = this.shiftPlannerGroupMode === 'customer' ? iterGroup.key : iterGroup.subGroupKeys[0];
+      const projectShifts = this.projectShiftConfig.get(shiftConfigKey) || new Set([1, 2]);
       
       // Build candidate pool: only employees whose shift matches the project's shift(s)
-      // Also respect employee's shiftSystem: a 2-shift employee cannot work on Z3
       let candidatePool: Employee[] = [];
       
       if (projectShifts.has(1)) {
@@ -12030,16 +13896,14 @@ class KappaApp {
         candidatePool.push(...(empByShift.get(2) || []));
       }
       if (projectShifts.has(3)) {
-        // Z3 projects: only employees in 3-shift system can be directly on Z3
         candidatePool.push(...(empByShift.get(3) || []));
-        // If no Z3 employees available, Z1/Z2 employees from 3-shift system can cover
         if (candidatePool.length === 0) {
           const threeShiftEmps = availableEmployees.filter(e => (e.shiftSystem || 2) >= 3);
           candidatePool.push(...threeShiftEmps);
         }
       }
       
-      // Remove duplicates (in case project runs on both Z1 and Z2)
+      // Remove duplicates
       const seenIds = new Set<string>();
       candidatePool = candidatePool.filter(e => {
         if (seenIds.has(e.id)) return false;
@@ -12047,13 +13911,16 @@ class KappaApp {
         return true;
       });
       
-      // NO cross-shift fallback: if no matching employees, skip this project
       if (candidatePool.length === 0) continue;
       
       // Score each candidate (lower = better)
       const scored = candidatePool.map(emp => {
         const totalThisWeek = empTotalThisWeek.get(emp.id) || 0;
-        const historyOnProject = empProjectHistory.get(emp.id)?.get(groupKey) || 0;
+        // Sum history across all sub-groups for better scoring in customer mode
+        let historyOnProject = 0;
+        iterGroup.subGroupKeys.forEach(sgk => {
+          historyOnProject += empProjectHistory.get(emp.id)?.get(sgk) || 0;
+        });
         const score = (totalThisWeek * 100) + (historyOnProject * 10);
         return { employee: emp, score };
       });
@@ -12069,39 +13936,52 @@ class KappaApp {
       
       // ALWAYS use the employee's actual shift as the assignment shift
       const empShift = this.employeeWeekShift.get(bestEmployee.id) || 1;
-      // Exception: night-only projects (Z3) get shift 3
       const assignShift: 1 | 2 | 3 = (projectShifts.size === 1 && projectShifts.has(3))
         ? 3
         : (empShift as 1 | 2 | 3);
       
-      await this.addScopedAssignment(
-        groupKey,
-        bestEmployee.id,
-        weekKey,
-        assignShift,
-        defaultScope,
-        scopeTestId
-      );
+      // Create assignments for each sub-group (in customer mode: one per project-type under the customer)
+      // In test scope mode, only assign to sub-groups that have the selected test
+      for (const sgk of iterGroup.subGroupKeys) {
+        if (scopeTestId) {
+          const group = projectGroups.get(sgk);
+          if (!group || !group.items.some(p => p.test_id === scopeTestId)) continue;
+        }
+        await this.addScopedAssignment(
+          sgk,
+          bestEmployee.id,
+          weekKey,
+          assignShift,
+          defaultScope,
+          scopeTestId
+        );
+      }
       
       // Update counters
       empTotalThisWeek.set(bestEmployee.id, (empTotalThisWeek.get(bestEmployee.id) || 0) + 1);
       const histMap = empProjectHistory.get(bestEmployee.id)!;
-      histMap.set(groupKey, (histMap.get(groupKey) || 0) + 1);
+      iterGroup.subGroupKeys.forEach(sgk => {
+        histMap.set(sgk, (histMap.get(sgk) || 0) + 1);
+      });
       
       assignedCount++;
     }
     
     // ==================== SECOND PASS: Ensure everyone gets an assignment ====================
+    // Skip second pass for specific test assignments - one person per group is enough
     const allWeekAssignmentsAfter = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const assignedEmpIdsAfter = new Set(allWeekAssignmentsAfter.map((a: ScheduleAssignment) => a.employeeId));
     
     const stillUnassigned = availableEmployees.filter(emp => !assignedEmpIdsAfter.has(emp.id));
     
-    if (stillUnassigned.length > 0 && projectGroups.size > 0) {
-      // Calculate workload per project group (total minutes / assigned employees)
+    if (stillUnassigned.length > 0 && projectGroups.size > 0 && !scopeTestId) {
+      // Calculate workload per project group
       const groupWorkload: Array<[string, number]> = [];
       
       projectGroups.forEach((group, gKey) => {
+        // Skip groups that don't have the selected test (when test scope is active)
+        if (scopeTestId && !group.items.some(p => p.test_id === scopeTestId)) return;
+        
         let totalMinutes = 0;
         group.items.forEach(p => {
           const wd = p.weeks?.[weekKey];
@@ -12116,6 +13996,16 @@ class KappaApp {
       // Sort by per-person workload descending (most loaded = needs help most)
       groupWorkload.sort((a, b) => b[1] - a[1]);
       
+      // In customer mode, group the sub-groups by customer for round-robin assignment
+      const secondPassCustomerMap = new Map<string, string[]>();
+      if (this.shiftPlannerGroupMode === 'customer') {
+        groupWorkload.forEach(([gKey]) => {
+          const custId = gKey.split('-')[0];
+          if (!secondPassCustomerMap.has(custId)) secondPassCustomerMap.set(custId, []);
+          secondPassCustomerMap.get(custId)!.push(gKey);
+        });
+      }
+      
       let gIdx = 0;
       for (const unassignedEmp of stillUnassigned) {
         if (groupWorkload.length === 0) break;
@@ -12127,14 +14017,34 @@ class KappaApp {
         const configuredShift = this.employeeWeekShift.get(unassignedEmp.id) || 1;
         const empShiftVal = configuredShift <= empMaxShiftVal ? configuredShift : 1;
         
-        await this.addScopedAssignment(
-          groupKey,
-          unassignedEmp.id,
-          weekKey,
-          empShiftVal as 1 | 2 | 3,
-          defaultScope,
-          scopeTestId
-        );
+        if (this.shiftPlannerGroupMode === 'customer') {
+          // In customer mode: assign to all sub-groups of this customer
+          const custId = groupKey.split('-')[0];
+          const subKeys = secondPassCustomerMap.get(custId) || [groupKey];
+          for (const sgk of subKeys) {
+            if (scopeTestId) {
+              const group = projectGroups.get(sgk);
+              if (!group || !group.items.some(p => p.test_id === scopeTestId)) continue;
+            }
+            await this.addScopedAssignment(
+              sgk,
+              unassignedEmp.id,
+              weekKey,
+              empShiftVal as 1 | 2 | 3,
+              defaultScope,
+              scopeTestId
+            );
+          }
+        } else {
+          await this.addScopedAssignment(
+            groupKey,
+            unassignedEmp.id,
+            weekKey,
+            empShiftVal as 1 | 2 | 3,
+            defaultScope,
+            scopeTestId
+          );
+        }
         
         empTotalThisWeek.set(unassignedEmp.id, (empTotalThisWeek.get(unassignedEmp.id) || 0) + 1);
         
@@ -12182,6 +14092,83 @@ class KappaApp {
     }) || null;
   }
 
+  /**
+   * Returns detailed absence info for an employee in a given week.
+   * Calculates how many work days (Mon-Fri, excl holidays) are absent vs available.
+   */
+  private getEmployeeAbsenceDetailsInWeek(employeeId: string, year: number, week: number): {
+    absence: any | null;
+    absentDays: number;
+    availableDays: number;
+    totalWorkDays: number;
+    isPartial: boolean;
+  } {
+    const jan4 = new Date(year, 0, 4);
+    const dayOfWeek = jan4.getDay() || 7;
+    const weekStart = new Date(jan4);
+    weekStart.setDate(jan4.getDate() - dayOfWeek + 1 + (week - 1) * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 4); // Mon-Fri
+    
+    // Count total work days in the week (Mon-Fri, excl holidays)
+    let totalWorkDays = 0;
+    const current = new Date(weekStart);
+    while (current <= weekEnd) {
+      const dow = current.getDay();
+      const dateStr = current.toISOString().split('T')[0];
+      const isHoliday = this.holidays.some(h => h.date === dateStr);
+      if (dow !== 0 && dow !== 6 && !isHoliday) {
+        totalWorkDays++;
+      }
+      current.setDate(current.getDate() + 1);
+    }
+    
+    // Find overlapping absences and count absent work days
+    const overlappingAbsences = this.absences.filter(a => {
+      if (a.employeeId !== employeeId) return false;
+      const absStart = new Date(a.startDate);
+      const absEnd = new Date(a.endDate);
+      return absStart <= weekEnd && absEnd >= weekStart;
+    });
+    
+    if (overlappingAbsences.length === 0) {
+      return { absence: null, absentDays: 0, availableDays: totalWorkDays, totalWorkDays, isPartial: false };
+    }
+    
+    // Count actual absent work days (a day is absent if any absence covers it)
+    let absentDays = 0;
+    const dayCheck = new Date(weekStart);
+    while (dayCheck <= weekEnd) {
+      const dow = dayCheck.getDay();
+      const dateStr = dayCheck.toISOString().split('T')[0];
+      const isHoliday = this.holidays.some(h => h.date === dateStr);
+      
+      if (dow !== 0 && dow !== 6 && !isHoliday) {
+        // Check if this day falls within any absence
+        const isAbsent = overlappingAbsences.some(a => {
+          const absStart = new Date(a.startDate);
+          const absEnd = new Date(a.endDate);
+          absStart.setHours(0, 0, 0, 0);
+          absEnd.setHours(23, 59, 59, 999);
+          return dayCheck >= absStart && dayCheck <= absEnd;
+        });
+        if (isAbsent) absentDays++;
+      }
+      dayCheck.setDate(dayCheck.getDate() + 1);
+    }
+    
+    const availableDays = totalWorkDays - absentDays;
+    const isPartial = absentDays > 0 && availableDays > 0;
+    
+    return {
+      absence: overlappingAbsences[0],
+      absentDays,
+      availableDays,
+      totalWorkDays,
+      isPartial
+    };
+  }
+
   private renderScheduleEmployeePanel(): void {
     const assignedList = document.getElementById('assignedList');
     const unassignedList = document.getElementById('unassignedList');
@@ -12189,27 +14176,87 @@ class KappaApp {
     const uncoveredList = document.getElementById('uncoveredProjectsList');
     
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
-    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    
+    // Zbierz prawidłowe projekty aktywne w tym tygodniu (soll > 0 i nie ukryte)
+    const activeProjectIds = new Set<string>();
+    this.state.projects.forEach(p => {
+      const weekData = p.weeks?.[weekKey];
+      if (weekData && weekData.soll > 0 && !p.hidden) {
+        activeProjectIds.add(p.id);
+        activeProjectIds.add(`${p.customer_id}-${p.type_id}`);
+      }
+    });
+    // Extra tasks też są prawidłowe
+    this.state.extraTasks.forEach(t => {
+      activeProjectIds.add(`extra-${t.id}`);
+    });
+    
+    // Zbierz prawidłowe employee IDs
+    const validEmployeeIds = new Set(this.state.employees.map(e => e.id));
+    
+    // Filtruj przypisania - tylko aktywne projekty i istniejący pracownicy (zapobiega duchom)
+    const allWeekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const weekAssignments = allWeekAssignments.filter((a: ScheduleAssignment) => 
+      activeProjectIds.has(a.projectId) && validEmployeeIds.has(a.employeeId)
+    );
+    
+    // Automatycznie usuń osierocone przypisania z bazy (duchy)
+    const orphanedAssignments = allWeekAssignments.filter((a: ScheduleAssignment) => 
+      !activeProjectIds.has(a.projectId) || !validEmployeeIds.has(a.employeeId)
+    );
+    if (orphanedAssignments.length > 0) {
+      console.log(`[Kappa] Cleaning ${orphanedAssignments.length} ghost assignment(s) for week ${weekKey}`);
+      orphanedAssignments.forEach(async (a) => {
+        const idx = this.state.scheduleAssignments.findIndex((x: ScheduleAssignment) => x.id === a.id);
+        if (idx !== -1) this.state.scheduleAssignments.splice(idx, 1);
+        await db.delete('scheduleAssignments', a.id);
+      });
+    }
+    
     const assignedEmployeeIds = new Set(weekAssignments.map((a: ScheduleAssignment) => a.employeeId));
     
-    // Check employees with absences from absence module
+    // Check employees with absences from absence module - now with partial day support
     const employeesWithAbsences = new Map<string, any>();
+    const employeeAbsenceDetails = new Map<string, { absence: any; absentDays: number; availableDays: number; totalWorkDays: number; isPartial: boolean }>();
     this.state.employees.forEach(e => {
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      if (absence) {
-        employeesWithAbsences.set(e.id, absence);
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      if (details.absence) {
+        employeesWithAbsences.set(e.id, details.absence);
+        employeeAbsenceDetails.set(e.id, details);
       }
     });
     
     // Podziel pracowników - uwzględnij nieobecności z modułu urlopów
-    const availableEmployees = this.state.employees.filter(e => 
-      (!e.status || e.status === 'available') && !employeesWithAbsences.has(e.id)
-    );
-    const absentEmployees = this.state.employees.filter(e => 
-      e.status === 'vacation' || e.status === 'sick' || employeesWithAbsences.has(e.id)
-    );
+    // Pracownicy z częściową nieobecnością (np. 2 dni urlopu = 3 dni dostępny) trafiają do „dostępnych"
+    // Pracownicy z schedulable=false są pomijani w grafiku
+    const schedulableEmployees = this.state.employees.filter(e => e.schedulable !== false);
+    const availableEmployees = schedulableEmployees.filter(e => {
+      if (e.status === 'vacation' || e.status === 'sick') return false;
+      if (!e.status || e.status === 'available') {
+        const details = employeeAbsenceDetails.get(e.id);
+        if (!details) return true; // No absence at all
+        return details.isPartial; // Partial absence = still available (with reduced capacity)
+      }
+      return false;
+    });
+    const absentEmployees = schedulableEmployees.filter(e => {
+      if (e.status === 'vacation' || e.status === 'sick') return true;
+      const details = employeeAbsenceDetails.get(e.id);
+      if (details && !details.isPartial) return true; // Fully absent the entire week
+      return false;
+    });
     const assignedAvailable = availableEmployees.filter(e => assignedEmployeeIds.has(e.id));
     const unassignedAvailable = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id));
+    
+    // Helper: get per-employee available minutes based on their available days
+    const getEmployeeAvailableMinutes = (empId: string): number => {
+      const details = employeeAbsenceDetails.get(empId);
+      if (details && details.isPartial) {
+        // Partial absence: scale capacity by available days (8h per day = 480 min)
+        return details.availableDays * 480;
+      }
+      return WEEKLY_AVAILABLE_MINUTES; // Default 5 days × 8h = 2400 min
+    };
     
     // Helper: calculate weekly workload in minutes for an employee
     const calcEmployeeWorkloadMinutes = (empId: string): number => {
@@ -12252,25 +14299,31 @@ class KappaApp {
         });
       const uniqueTasks = [...new Set(tasks)];
       
-      // Calculate workload
+      // Calculate workload — use per-employee available minutes (partial absence aware)
       const workloadMin = calcEmployeeWorkloadMinutes(emp.id);
-      const workloadPct = WEEKLY_AVAILABLE_MINUTES > 0 ? Math.round((workloadMin / WEEKLY_AVAILABLE_MINUTES) * 100) : 0;
+      const empAvailableMin = getEmployeeAvailableMinutes(emp.id);
+      const workloadPct = empAvailableMin > 0 ? Math.round((workloadMin / empAvailableMin) * 100) : 0;
       const isOverloaded = workloadPct > 100;
       const workloadClass = workloadPct === 0 ? 'workload-empty' : workloadPct <= 60 ? 'workload-low' : workloadPct <= 90 ? 'workload-medium' : workloadPct <= 100 ? 'workload-high' : 'workload-over';
       const shiftSystemBadge = emp.shiftSystem || 2;
+      
+      // Partial absence badge
+      const absDetails = employeeAbsenceDetails.get(emp.id);
+      const partialBadge = absDetails?.isPartial ? 
+        `<span class="emp-partial-badge" title="${absDetails.absentDays} ${i18n.t('absence.days')} ${i18n.t('schedule.absent').toLowerCase()}">${absDetails.availableDays}/${absDetails.totalWorkDays} ${i18n.t('absence.days')}</span>` : '';
       
       return `
         <div class="sched-emp-card" ${isDraggable ? 'draggable="true"' : ''} data-employee-id="${emp.id}">
           <div class="sched-emp-avatar" style="background: ${emp.color}">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
           <div class="sched-emp-info">
-            <span class="sched-emp-name">${emp.firstName} ${emp.lastName} <span class="emp-shift-sys-tag">${shiftSystemBadge}Z</span></span>
+            <span class="sched-emp-name">${emp.firstName} ${emp.lastName} <span class="emp-shift-sys-tag">${shiftSystemBadge}Z</span>${partialBadge}</span>
             ${uniqueTasks.length > 0 ? `<span class="sched-emp-tasks">${uniqueTasks.slice(0, 2).join(', ')}${uniqueTasks.length > 2 ? '...' : ''}</span>` : ''}
             ${workloadMin > 0 ? `
               <div class="sched-emp-workload">
                 <div class="workload-bar-bg">
                   <div class="workload-bar-fill ${workloadClass}" style="width: ${Math.min(workloadPct, 100)}%"></div>
                 </div>
-                <span class="workload-text ${workloadClass}">${workloadMin} / ${WEEKLY_AVAILABLE_MINUTES} min (${workloadPct}%)${isOverloaded ? ' ⚠️' : ''}</span>
+                <span class="workload-text ${workloadClass}">${workloadMin} / ${empAvailableMin} min (${workloadPct}%)${isOverloaded ? ' ⚠️' : ''}</span>
               </div>
             ` : ''}
           </div>
@@ -12313,7 +14366,7 @@ class KappaApp {
           let badgeClass: string;
           
           if (absenceType) {
-            icon = `<span style="font-size: 1.1rem;">${absenceType.icon}</span>`;
+            icon = renderAbsenceIcon(absenceType.id, absenceType.color, 18);
             label = absenceType.name.length > 15 ? absenceType.name.substring(0, 12) + '...' : absenceType.name;
             badgeClass = isVacation ? 'vacation' : isSick ? 'sick' : 'vacation';
           } else {
@@ -12346,7 +14399,7 @@ class KappaApp {
               if (emp) {
                 emp.status = 'available';
                 await db.put('employees', emp);
-                this.showToast(i18n.t('schedule.returnedToWork').replace('{0}', emp.firstName), 'success');
+                this.showToast(i18n.t('schedule.returnedToWork').replace('{0}', emp.firstName), 'success', 'assign');
                 this.renderScheduleEmployeePanel();
               }
             }
@@ -12517,7 +14570,7 @@ class KappaApp {
     });
     
     // Quick add
-    document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showAddEmployeeModal());
+    document.getElementById('addEmployeeQuick')?.addEventListener('click', () => this.showSettingsEmployeeModal());
     
     // Render stats and history panels
     this.renderScheduleStatsPanel();
@@ -12537,14 +14590,15 @@ class KappaApp {
     
     // ===== PODSTAWOWE STATYSTYKI =====
     const availableEmployees = this.state.employees.filter(e => {
+      if (e.schedulable === false) return false;
       if (e.status && e.status !== 'available') return false;
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      return !absence;
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return !details.absence || details.isPartial;
     });
     const absentEmployees = this.state.employees.filter(e => {
       if (e.status === 'vacation' || e.status === 'sick') return true;
-      const absence = this.getEmployeeAbsenceInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
-      return !!absence;
+      const details = this.getEmployeeAbsenceDetailsInWeek(e.id, this.scheduleCurrentYear, this.scheduleCurrentWeek);
+      return details.absence ? !details.isPartial : false;
     });
     const assignedEmployeeIds = new Set(weekAssignments.map(a => a.employeeId));
     const unassignedCount = availableEmployees.filter(e => !assignedEmployeeIds.has(e.id)).length;
@@ -13016,11 +15070,16 @@ class KappaApp {
             day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' 
           });
           
+          const actionLbl = isAdded ? i18n.t('schedule.logAdded') : isRemoved ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged');
+          const miniText = log.details 
+            ? `<strong>${actionLbl}</strong> ${log.entityName}: ${log.details}`
+            : `<strong>${actionLbl}</strong> ${log.entityName || ''}`;
+          
           return `
             <div class="sched-history-mini-item">
               <div class="sched-history-mini-icon ${iconClass}">${iconSvg}</div>
               <div class="sched-history-mini-content">
-                <span class="sched-history-mini-text">${log.entityName}${log.details ? ` - ${log.details}` : ''}</span>
+                <span class="sched-history-mini-text">${miniText}</span>
                 <span class="sched-history-mini-time">${time}</span>
               </div>
             </div>
@@ -13373,11 +15432,11 @@ class KappaApp {
     if (emp.status === type) {
       emp.status = 'available';
       await db.put('employees', emp);
-      this.showToast(i18n.t('schedule.returnedToWork').replace('{0}', emp.firstName + ' ' + emp.lastName), 'success');
+      this.showToast(i18n.t('schedule.returnedToWork').replace('{0}', emp.firstName + ' ' + emp.lastName), 'success', 'assign');
     } else {
       emp.status = type;
       await db.put('employees', emp);
-      this.showToast(type === 'vacation' ? i18n.t('schedule.onVacation').replace('{0}', emp.firstName + ' ' + emp.lastName) : i18n.t('schedule.onSickLeave').replace('{0}', emp.firstName + ' ' + emp.lastName), 'success');
+      this.showToast(type === 'vacation' ? i18n.t('schedule.onVacation').replace('{0}', emp.firstName + ' ' + emp.lastName) : i18n.t('schedule.onSickLeave').replace('{0}', emp.firstName + ' ' + emp.lastName), 'success', 'toggle');
     }
     
     this.renderScheduleEmployeePanel();
@@ -13885,13 +15944,13 @@ class KappaApp {
         } else if (action === 'vacation') {
           emp.status = emp.status === 'vacation' ? 'available' : 'vacation';
           await db.put('employees', emp);
-          this.showToast(emp.status === 'vacation' ? i18n.t('schedule.onVacation').replace('{0}', emp.firstName) : i18n.t('schedule.returnedFromVacation').replace('{0}', emp.firstName), 'success');
+          this.showToast(emp.status === 'vacation' ? i18n.t('schedule.onVacation').replace('{0}', emp.firstName) : i18n.t('schedule.returnedFromVacation').replace('{0}', emp.firstName), 'success', 'toggle');
           overlay.remove();
           this.renderScheduleEmployeePanel();
         } else if (action === 'sick') {
           emp.status = emp.status === 'sick' ? 'available' : 'sick';
           await db.put('employees', emp);
-          this.showToast(emp.status === 'sick' ? i18n.t('schedule.onSickLeave').replace('{0}', emp.firstName) : i18n.t('schedule.returnedFromSickLeave').replace('{0}', emp.firstName), 'success');
+          this.showToast(emp.status === 'sick' ? i18n.t('schedule.onSickLeave').replace('{0}', emp.firstName) : i18n.t('schedule.returnedFromSickLeave').replace('{0}', emp.firstName), 'success', 'toggle');
           overlay.remove();
           this.renderScheduleEmployeePanel();
         }
@@ -13986,6 +16045,9 @@ class KappaApp {
     
     const sourceAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === sourceWeekKey);
     
+    // Zbierz prawidłowe employee IDs (zapobiega kopiowaniu duchów)
+    const validEmployeeIds = new Set(this.state.employees.map(e => e.id));
+    
     if (overwrite) {
       // Usuń istniejące
       const existing = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === targetWeekKey);
@@ -14000,6 +16062,9 @@ class KappaApp {
     
     let copied = 0;
     for (const src of sourceAssignments) {
+      // Pomiń przypisania do nieistniejących pracowników (duchy)
+      if (!validEmployeeIds.has(src.employeeId)) continue;
+      
       const exists = !overwrite && this.state.scheduleAssignments.find((a: ScheduleAssignment) =>
         a.projectId === src.projectId && a.employeeId === src.employeeId && 
         a.week === targetWeekKey && a.shift === src.shift
@@ -14020,7 +16085,7 @@ class KappaApp {
     }
     
     this.logScheduleChange('added', `${copied} ${i18n.t('schedule.assignmentsLabel').toLowerCase()}`, `${i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', sourceWeekKey)}`);
-    this.showToast(i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', sourceWeekKey), 'success');
+    this.showToast(i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', sourceWeekKey), 'success', 'assign');
     this.renderScheduleContent();
     this.renderScheduleEmployeePanel();
     this.updateCoverageBar();
@@ -14103,7 +16168,7 @@ class KappaApp {
       const template = { id: crypto.randomUUID(), name, data: assignments, createdAt: Date.now() };
       await db.addTemplate(template);
       
-      this.showToast(i18n.t('schedule.templateSaved').replace('{0}', name), 'success');
+      this.showToast(i18n.t('schedule.templateSaved').replace('{0}', name), 'success', 'click');
       this.hideModal();
     });
     
@@ -14126,7 +16191,7 @@ class KappaApp {
           await db.put('scheduleAssignments', newAssign);
         }
         
-        this.showToast(i18n.t('schedule.templateApplied').replace('{0}', template.name), 'success');
+        this.showToast(i18n.t('schedule.templateApplied').replace('{0}', template.name), 'success', 'complete');
         this.hideModal();
         this.renderScheduleContent();
         this.renderScheduleEmployeePanel();
@@ -14141,7 +16206,7 @@ class KappaApp {
         const template = templates.find(t => t.id === id);
         if (template) {
           await db.deleteTemplate(id!);
-          this.showToast(i18n.t('schedule.templateDeleted').replace('{0}', template.name), 'success');
+          this.showToast(i18n.t('schedule.templateDeleted').replace('{0}', template.name), 'success', 'delete');
           this.showTemplatesModal(); // Refresh
         }
       });
@@ -14235,7 +16300,7 @@ class KappaApp {
         dailyDigest: (document.getElementById('notifyDailyDigest') as HTMLInputElement).checked
       };
       await db.setPreference('kappa_notification_settings', newSettings);
-      this.showToast(i18n.t('schedule.notificationsSaved'), 'success');
+      this.showToast(i18n.t('schedule.notificationsSaved'), 'success', 'click');
       this.hideModal();
     };
     
@@ -14251,24 +16316,659 @@ class KappaApp {
 
   // ==================== WYSYŁANIE GRAFIKU MAILEM ====================
   private async showSendEmailModal(): Promise<void> {
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
-    
     const weekKey = `${this.scheduleCurrentYear}-KW${this.scheduleCurrentWeek.toString().padStart(2, '0')}`;
+    const weekNum = this.scheduleCurrentWeek.toString().padStart(2, '0');
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     
-    // Pobierz zapisane adresy email z bazy danych
-    const savedEmails = await db.getPreference('kappa_email_addresses') || '';
+    // Check for changes since last send
+    const lastSentData = await db.getPreference(`kappa_email_sent_${weekKey}`) as any;
+    const lastSentTimestamp = lastSentData?.timestamp || 0;
+    const lastSentHash = lastSentData?.hash || '';
     
-    modalTitle.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px">
-        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>
-      </svg>
-      ${i18n.t('schedule.sendScheduleEmail')}
+    const currentHash = weekAssignments
+      .map(a => `${a.employeeId}:${a.projectId}:${a.shift}:${a.scope}`)
+      .sort()
+      .join('|');
+    const hasChanges = lastSentTimestamp > 0 && currentHash !== lastSentHash;
+    
+    // ALL employees with email, regardless of schedule assignment
+    const allEmpsWithEmail = this.state.employees
+      .filter(e => e.email)
+      .sort((a, b) => a.firstName.localeCompare(b.firstName));
+    const recipientEmails = allEmpsWithEmail.map(e => e.email!);
+    const allEmpsWithoutEmail = this.state.employees.filter(e => !e.email);
+    
+    if (recipientEmails.length === 0) {
+      this.showToast(i18n.t('schedule.noEmployeeEmailsWarning'), 'error');
+      return;
+    }
+    
+    // Show brief preparing modal, then auto-send via Outlook
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 99999;
+      background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center;
+      animation: fadeIn 0.2s ease;
     `;
     
-    // Grupuj przypisania wg pracownika
+    // 4-step timeline for psychological pacing (~7s total)
+    const steps = [
+      { icon: '📋', label: i18n.t('schedule.prepStep1') },
+      { icon: '📧', label: i18n.t('schedule.prepStep2') },
+      { icon: '✅', label: i18n.t('schedule.prepStep3ready') },
+      { icon: '📨', label: i18n.t('schedule.prepStep4') },
+    ];
+    
+    overlay.innerHTML = `
+      <div style="
+        background: var(--modal-bg, white); border-radius: 24px; padding: 40px 48px; text-align: center;
+        box-shadow: 0 25px 60px rgba(0,0,0,0.3); max-width: 440px; animation: scaleIn 0.3s ease;
+      ">
+        <div id="emailPrepIcon" style="font-size: 56px; margin-bottom: 16px;">
+          <div style="display: inline-block; animation: pulse 1s infinite;">📧</div>
+        </div>
+        <h3 id="emailPrepTitle" style="margin: 0 0 8px; font-size: 20px; font-weight: 700; color: var(--text-primary, #1a1a2e);">
+          ${i18n.t('schedule.sendScheduleEmail')} – KW${weekNum}
+        </h3>
+        
+        <!-- Recipient avatars -->
+        <div style="display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; max-height: 40px; overflow: hidden; margin: 14px 0 10px;">
+          ${allEmpsWithEmail.slice(0, 10).map(e => `
+            <div style="width: 30px; height: 30px; border-radius: 50%; background: ${e.color || '#94a3b8'}; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: white; border: 2px solid var(--modal-bg, white);" title="${e.firstName} ${e.lastName}">
+              ${e.firstName.charAt(0)}${e.lastName.charAt(0)}
+            </div>
+          `).join('')}
+          ${allEmpsWithEmail.length > 10 ? `<div style="width: 30px; height: 30px; border-radius: 50%; background: var(--border-color, #e2e8f0); display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 600; color: var(--text-secondary, #64748b);">+${allEmpsWithEmail.length - 10}</div>` : ''}
+        </div>
+        <div style="font-size: 11px; color: var(--text-secondary, #94a3b8); margin-bottom: 20px;">
+          → ${allEmpsWithEmail.length} ${i18n.t('schedule.recipientsCount')}
+          ${allEmpsWithoutEmail.length > 0 ? ` · <span style="color: #f59e0b;">⚠ ${allEmpsWithoutEmail.length} ${i18n.t('schedule.withoutEmailShort')}</span>` : ''}
+        </div>
+        
+        <!-- Step timeline -->
+        <div style="display: flex; flex-direction: column; gap: 0; text-align: left; margin: 0 auto; max-width: 300px;">
+          ${steps.map((s, idx) => `
+            <div id="emailStep${idx}" style="display: flex; align-items: center; gap: 12px; padding: 7px 0; opacity: 0.3; transition: opacity 0.4s ease, transform 0.3s ease; transform: translateX(-4px);">
+              <div style="width: 32px; height: 32px; border-radius: 10px; background: var(--border-color, #e9ecef); display: flex; align-items: center; justify-content: center; font-size: 15px; flex-shrink: 0; transition: background 0.4s ease;" id="emailStepIcon${idx}">
+                ${s.icon}
+              </div>
+              <div style="font-size: 13px; font-weight: 500; color: var(--text-primary, #334155);">${s.label}</div>
+              <div id="emailStepCheck${idx}" style="margin-left: auto; font-size: 14px; opacity: 0; transition: opacity 0.3s ease; color: #10b981;">✓</div>
+            </div>
+          `).join('')}
+        </div>
+        
+        <!-- Paste reminder (hidden initially, shown before opening Outlook) -->
+        <div id="emailPasteReminder" style="margin-top: 16px; padding: 14px 20px; background: linear-gradient(135deg, #ecfdf5, #d1fae5); border: 1px solid #a7f3d0; border-radius: 12px; opacity: 0; transform: translateY(8px); transition: opacity 0.5s ease, transform 0.5s ease;">
+          <div style="font-size: 13px; font-weight: 700; color: #065f46;">📋 ${i18n.t('schedule.pasteReminderTitle')}</div>
+          <div style="font-size: 11px; color: #047857; margin-top: 4px;">${i18n.t('schedule.pasteReminderDesc')}</div>
+        </div>
+        
+        <!-- Progress bar -->
+        <div style="margin-top: 16px; height: 4px; border-radius: 4px; background: var(--border-color, #e2e8f0); overflow: hidden;">
+          <div style="height: 100%; width: 0%; background: linear-gradient(90deg, #0097AC, #007A8A); border-radius: 4px; transition: width 0.8s ease;" id="emailPrepBar"></div>
+        </div>
+        <p id="emailPrepCountdown" style="margin: 8px 0 0; font-size: 11px; color: var(--text-secondary, #94a3b8);">
+          ${i18n.t('schedule.openingOutlookIn')} <span id="emailCountdownNum">7</span>s...
+        </p>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Staged animation sequence (total ~4s)
+    const activateStep = (idx: number) => {
+      const step = document.getElementById(`emailStep${idx}`);
+      const icon = document.getElementById(`emailStepIcon${idx}`);
+      if (step) { step.style.opacity = '1'; step.style.transform = 'translateX(0)'; }
+      if (icon) icon.style.background = 'linear-gradient(135deg, #e0f7fa, #b2ebf2)';
+    };
+    
+    const completeStep = (idx: number) => {
+      const check = document.getElementById(`emailStepCheck${idx}`);
+      const icon = document.getElementById(`emailStepIcon${idx}`);
+      if (check) check.style.opacity = '1';
+      if (icon) icon.style.background = 'linear-gradient(135deg, #d1fae5, #a7f3d0)';
+    };
+    
+    // Countdown (7 seconds total)
+    const countdownEl = document.getElementById('emailCountdownNum');
+    let countdown = 7;
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      if (countdownEl && countdown > 0) countdownEl.textContent = String(countdown);
+    }, 1000);
+    
+    // Step 1: Generating schedule (0ms)
+    const bar = document.getElementById('emailPrepBar');
+    activateStep(0);
+    if (bar) bar.style.width = '10%';
+    
+    // Generate PNG image and copy to clipboard
+    const subject = `📅 ${hasChanges ? '🔄 ' : ''}Grafik KW${weekNum} ${this.scheduleCurrentYear} | DRÄXLMAIER Kappa`;
+    
+    let clipboardOk = false;
+    try {
+      clipboardOk = await this.generateAndCopyScheduleImage(weekKey, hasChanges);
+    } catch { /* ignore */ }
+    
+    // Step 1 complete (after 1.2s)
+    setTimeout(() => {
+      completeStep(0);
+      if (bar) bar.style.width = '25%';
+      activateStep(1);
+    }, 1200);
+    
+    // Step 2 complete (after 2.5s)
+    setTimeout(() => {
+      completeStep(1);
+      if (bar) bar.style.width = '50%';
+      activateStep(2);
+    }, 2500);
+    
+    // Step 3 complete (after 3.8s)
+    setTimeout(() => {
+      completeStep(2);
+      if (bar) bar.style.width = '70%';
+      activateStep(3);
+    }, 3800);
+    
+    // Step 4 complete + show paste reminder (after 5s)
+    setTimeout(() => {
+      completeStep(3);
+      if (bar) bar.style.width = '90%';
+      
+      // Show the paste reminder panel
+      const reminder = document.getElementById('emailPasteReminder');
+      if (reminder) {
+        reminder.style.opacity = '1';
+        reminder.style.transform = 'translateY(0)';
+      }
+    }, 5000);
+    
+    // Fill bar + final pause (after 6.2s)
+    setTimeout(() => {
+      if (bar) bar.style.width = '100%';
+    }, 6200);
+    
+    // Actually open mailto & transition (7.2s)
+    setTimeout(async () => {
+      clearInterval(countdownInterval);
+      
+      // Open mailto
+      const mailtoUrl = `mailto:${encodeURIComponent(recipientEmails.join('; '))}?subject=${encodeURIComponent(subject)}`;
+      const a = document.createElement('a');
+      a.href = mailtoUrl;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      
+      // Mark as sent
+      await db.setPreference(`kappa_email_sent_${weekKey}`, { timestamp: Date.now(), hash: currentHash });
+      this.updateEmailUpdateBadge();
+      
+      // Remove preparing modal
+      overlay.remove();
+      
+      // Show paste instruction overlay
+      if (clipboardOk) {
+        this.showPasteInstructionOverlay();
+      }
+    }, 7200);
+  }
+
+  /**
+   * Show a prominent overlay instructing the user to paste with Ctrl+V in Outlook
+   */
+  private showPasteInstructionOverlay(): void {
+    const autoCloseSeconds = 12;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 99999;
+      background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center;
+      animation: fadeIn 0.2s ease;
+    `;
+    overlay.innerHTML = `
+      <div style="
+        background: white; border-radius: 24px; padding: 44px 52px; text-align: center;
+        box-shadow: 0 25px 60px rgba(0,0,0,0.3); max-width: 460px; animation: scaleIn 0.3s ease;
+      ">
+        <div style="font-size: 60px; margin-bottom: 12px;">\uD83D\uDCCB</div>
+        <h2 style="margin: 0 0 8px; font-size: 22px; color: #1a1a2e; font-family: Arial, sans-serif;">
+          ${i18n.t('schedule.pasteInstructionTitle')}
+        </h2>
+        <p style="margin: 0 0 6px; color: #64748b; font-size: 14px; line-height: 1.6; font-family: Arial, sans-serif;">
+          ${i18n.t('schedule.pasteInstructionDesc')}
+        </p>
+        
+        <!-- Step-by-step instructions -->
+        <div style="text-align: left; margin: 16px auto 20px; max-width: 320px;">
+          <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #e0f2fe; color: #0284c7; font-size: 12px; font-weight: 700; flex-shrink: 0;">1</span>
+            <span style="font-size: 13px; color: #334155; font-family: Arial, sans-serif;">${i18n.t('schedule.pasteStep1')}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #e0f2fe; color: #0284c7; font-size: 12px; font-weight: 700; flex-shrink: 0;">2</span>
+            <span style="font-size: 13px; color: #334155; font-family: Arial, sans-serif;">${i18n.t('schedule.pasteStep2')}</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; padding: 7px 0;">
+            <span style="display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: #dcfce7; color: #16a34a; font-size: 12px; font-weight: 700; flex-shrink: 0;">3</span>
+            <span style="font-size: 13px; color: #334155; font-family: Arial, sans-serif;">${i18n.t('schedule.pasteStep3')}</span>
+          </div>
+        </div>
+        
+        <div style="
+          display: inline-flex; align-items: center; gap: 10px;
+          background: linear-gradient(135deg, #0097AC, #007A8A); color: white;
+          padding: 16px 36px; border-radius: 14px; font-size: 22px; font-weight: 700;
+          letter-spacing: 1px; box-shadow: 0 4px 15px rgba(0,151,172,0.4);
+          animation: pulse 2s infinite;
+        ">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <rect x="2" y="2" width="8" height="8" rx="1"/><path d="M14 2h4a2 2 0 012 2v4"/><path d="M20 14v4a2 2 0 01-2 2h-4"/><rect x="14" y="14" width="8" height="8" rx="1"/>
+          </svg>
+          Ctrl + V
+        </div>
+        
+        <p style="margin: 14px 0 0; color: #94a3b8; font-size: 11px; font-family: Arial, sans-serif;">
+          ${i18n.t('schedule.pasteInstructionHint')}
+        </p>
+        
+        <!-- Countdown timer bar -->
+        <div style="margin-top: 18px;">
+          <div style="height: 3px; border-radius: 3px; background: #e2e8f0; overflow: hidden;">
+            <div id="pasteTimerBar" style="height: 100%; width: 100%; background: linear-gradient(90deg, #0097AC, #007A8A); border-radius: 3px; transition: width ${autoCloseSeconds}s linear;"></div>
+          </div>
+          <div style="font-size: 10px; color: #cbd5e1; margin-top: 6px; font-family: Arial, sans-serif;">
+            ${i18n.t('schedule.autoCloseIn')} <span id="pasteCountdownNum">${autoCloseSeconds}</span>s
+          </div>
+        </div>
+        
+        <button style="
+          margin-top: 14px; padding: 10px 30px; border: none; border-radius: 8px;
+          background: #f1f5f9; color: #64748b; font-size: 13px; cursor: pointer;
+          transition: all 0.2s; font-family: Arial, sans-serif;
+        " onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">
+          ${i18n.t('common.close')}
+        </button>
+      </div>
+    `;
+    
+    document.body.appendChild(overlay);
+    
+    // Start countdown bar animation
+    requestAnimationFrame(() => {
+      const bar = document.getElementById('pasteTimerBar');
+      if (bar) bar.style.width = '0%';
+    });
+    
+    // Countdown number
+    let remaining = autoCloseSeconds;
+    const countdownEl = document.getElementById('pasteCountdownNum');
+    const countdownInterval = setInterval(() => {
+      remaining--;
+      if (countdownEl && remaining >= 0) countdownEl.textContent = String(remaining);
+      if (remaining <= 0) clearInterval(countdownInterval);
+    }, 1000);
+    
+    // Close on button click or overlay click
+    const closeOverlay = () => {
+      clearInterval(countdownInterval);
+      overlay.remove();
+    };
+    overlay.querySelector('button')?.addEventListener('click', closeOverlay);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeOverlay();
+    });
+    
+    // Auto-close
+    setTimeout(closeOverlay, autoCloseSeconds * 1000);
+  }
+
+  // ==================== SCHEDULE IMAGE GENERATOR (PNG) ====================
+
+  private async generateAndCopyScheduleImage(weekKey: string, isUpdate: boolean): Promise<boolean> {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const weekNum = weekKey.split('KW')[1];
+    const year = weekKey.split('-KW')[0];
+    const weekDates = this.getWeekDateRange(parseInt(year), parseInt(weekNum));
+    const dateStr = new Date().toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const activeShifts = [1, 2, 3].filter(s => s <= this.scheduleShiftSystem);
+    const shiftNames = [`${i18n.t('schedule.shift')} 1`, `${i18n.t('schedule.shift')} 2`, `${i18n.t('schedule.shift')} 3`];
+    const shiftTimes = ['6:00 – 14:00', '14:00 – 22:00', '22:00 – 6:00'];
+    const shiftColors = ['#F59E0B', '#F97316', '#6366F1'];
+    const shiftBgs = ['#FFFBEB', '#FFF7ED', '#EEF2FF'];
+
+    // Build data by project
+    const byProject = new Map<string, { customer: string; type: string; customerColor: string; shifts: Map<number, Array<{firstName: string; lastName: string; scope: string; color: string}>> }>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (project && emp) {
+        const customer = this.state.customers.find(cu => cu.id === project.customer_id);
+        const ptype = this.state.types.find(t => t.id === project.type_id);
+        const groupKey = `${project.customer_id}-${project.type_id}`;
+        if (!byProject.has(groupKey)) {
+          byProject.set(groupKey, { customer: customer?.name || '?', type: ptype?.name || '?', customerColor: (customer as any)?.color || '#0097AC', shifts: new Map() });
+        }
+        const data = byProject.get(groupKey)!;
+        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
+        let scopeTag = '';
+        if (a.scope === 'audit') scopeTag = i18n.t('settings.qualAudit');
+        else if (a.scope === 'adhesion') scopeTag = i18n.t('settings.qualAdhesion');
+        else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
+        data.shifts.get(a.shift)!.push({ firstName: emp.firstName, lastName: emp.lastName, scope: scopeTag, color: emp.color });
+      }
+    });
+
+    // Build data by employee
+    const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (emp) {
+        if (!byEmployee.has(emp.id)) byEmployee.set(emp.id, { emp, assignments: [] });
+        byEmployee.get(emp.id)!.assignments.push(a);
+      }
+    });
+
+    const totalEmployees = new Set(weekAssignments.map(a => a.employeeId)).size;
+    const totalProjects = byProject.size;
+    const totalAssignments = weekAssignments.length;
+    const sortedProjects = Array.from(byProject.entries()).sort((a, b) => a[1].customer.localeCompare(b[1].customer));
+    const shiftCounts = activeShifts.map(s => weekAssignments.filter(a => a.shift === s).length);
+
+    // Create hidden render container
+    const container = document.createElement('div');
+    container.style.cssText = 'position: fixed; left: -9999px; top: 0; z-index: -1;';
+    document.body.appendChild(container);
+
+    const WIDTH = 540;
+    const colW = Math.floor((WIDTH - 170) / activeShifts.length);
+
+    // Build project rows HTML
+    const projectRowsHtml = sortedProjects.map(([_, data], idx) => {
+      const bg = idx % 2 === 0 ? '#FFFFFF' : '#F8FAFC';
+      const shiftCells = activeShifts.map(s => {
+        const emps = data.shifts.get(s) || [];
+        if (emps.length === 0) return `<td style="padding:10px 6px;text-align:center;vertical-align:middle;border-bottom:1px solid #F1F5F9;background:${bg};"><span style="color:#CBD5E1;font-size:14px;">—</span></td>`;
+        return `<td style="padding:8px 6px;vertical-align:top;border-bottom:1px solid #F1F5F9;background:${bg};">
+          ${emps.map(e => `
+            <div style="display:flex;align-items:center;gap:6px;padding:2px 0;">
+              <div style="width:22px;height:22px;border-radius:6px;background:${e.color || '#0097AC'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                <span style="color:#fff;font-size:8px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${e.firstName.charAt(0)}${e.lastName.charAt(0)}</span>
+              </div>
+              <div style="min-width:0;">
+                <div style="font-size:11px;font-weight:600;color:#1E293B;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;white-space:nowrap;">${e.firstName} ${e.lastName}</div>
+                ${e.scope ? `<div style="font-size:9px;color:#0097AC;font-weight:500;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${e.scope}</div>` : ''}
+              </div>
+            </div>
+          `).join('')}
+        </td>`;
+      }).join('');
+      return `<tr>
+        <td style="padding:8px 12px;vertical-align:top;border-bottom:1px solid #F1F5F9;background:${bg};width:170px;">
+          <div style="font-size:11px;font-weight:700;color:#0F172A;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${data.customer}</div>
+          <div style="font-size:9px;color:#94A3B8;font-weight:400;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;margin-top:1px;">${data.type}</div>
+        </td>
+        ${shiftCells}
+      </tr>`;
+    }).join('');
+
+    // Employee cards
+    const empCardsHtml = Array.from(byEmployee.entries()).sort((a, b) => a[1].emp.firstName.localeCompare(b[1].emp.firstName)).map(([_, data]) => {
+      const { emp, assignments } = data;
+      const tasks = assignments.map((a: ScheduleAssignment) => {
+        const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+        const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
+        const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+        let scopeTag = '';
+        if (a.scope === 'audit') scopeTag = i18n.t('settings.qualAudit');
+        else if (a.scope === 'adhesion') scopeTag = i18n.t('settings.qualAdhesion');
+        else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 10px;background:#F8FAFC;border-radius:6px;margin-top:4px;">
+          <div>
+            <span style="font-size:10px;font-weight:600;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${customer?.name || '?'} – ${ptype?.name || '?'}</span>
+            ${scopeTag ? `<span style="font-size:9px;color:#0097AC;margin-left:4px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${scopeTag}</span>` : ''}
+          </div>
+          <div style="display:inline-flex;align-items:center;gap:3px;background:${shiftBgs[a.shift-1]};border:1px solid ${shiftColors[a.shift-1]}20;padding:2px 8px;border-radius:5px;">
+            <span style="width:5px;height:5px;border-radius:50%;background:${shiftColors[a.shift-1]};display:inline-block;"></span>
+            <span style="font-size:9px;font-weight:700;color:${shiftColors[a.shift-1]};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${shiftNames[a.shift-1]}</span>
+          </div>
+        </div>`;
+      }).join('');
+      return `<div style="background:#fff;border:1px solid #F1F5F9;border-radius:10px;padding:10px 12px;margin-bottom:6px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div style="width:26px;height:26px;border-radius:7px;background:${emp.color || '#0097AC'};display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <span style="color:#fff;font-size:9px;font-weight:700;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</span>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:11px;font-weight:700;color:#0F172A;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${emp.firstName} ${emp.lastName}</div>
+          </div>
+          <div style="background:#E6F7F9;color:#0097AC;font-size:9px;font-weight:700;padding:2px 8px;border-radius:5px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${assignments.length} ${assignments.length === 1 ? i18n.t('schedule.imgTaskSingular') : assignments.length < 5 ? i18n.t('schedule.imgTaskPluralFew') : i18n.t('schedule.imgTaskPluralMany')}</div>
+        </div>
+        ${tasks}
+      </div>`;
+    }).join('');
+
+    // Assemble the full layout
+    container.innerHTML = `
+    <div id="scheduleImageRoot" style="width:${WIDTH}px;background:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">
+
+      <!-- Top accent bar -->
+      <div style="height:3px;background:linear-gradient(90deg,#0097AC,#007A8A,#005F6B);"></div>
+
+      <!-- Header: logo + week context in one compact bar -->
+      <div style="padding:16px 24px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:28px;height:28px;background:linear-gradient(135deg,#0097AC,#007A8A);border-radius:7px;display:flex;align-items:center;justify-content:center;">
+            <span style="color:#fff;font-size:9px;font-weight:800;letter-spacing:0.5px;">PA</span>
+          </div>
+          <div>
+            <div style="display:flex;align-items:baseline;gap:4px;">
+              <span style="font-size:12px;font-weight:800;color:#0F172A;letter-spacing:0.8px;">DRÄXLMAIER</span>
+              <span style="font-size:7px;color:#CBD5E1;letter-spacing:1.5px;">GROUP</span>
+            </div>
+            <div style="font-size:8px;color:#94A3B8;margin-top:1px;">Produkt Audyt · ${dateStr}</div>
+          </div>
+        </div>
+        <div style="text-align:right;">
+          ${isUpdate ? `<div style="display:inline-block;background:#FEF3C7;color:#D97706;font-size:8px;font-weight:700;padding:2px 8px;border-radius:4px;margin-bottom:3px;letter-spacing:0.5px;">🔄 ${i18n.t('schedule.imgUpdate')}</div><br>` : ''}
+          <span style="font-size:9px;color:#64748B;font-weight:500;">${i18n.t('schedule.weeklySchedule')}</span>
+        </div>
+      </div>
+
+      <!-- Context bar: KW + dates + KPIs in one line -->
+      <div style="margin:0 24px;background:linear-gradient(135deg,#006D7B 0%,#0097AC 50%,#00B4CC 100%);border-radius:10px;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-size:22px;font-weight:800;color:#fff;letter-spacing:-0.5px;line-height:1;">KW${weekNum}</span>
+          <div style="width:1px;height:24px;background:rgba(255,255,255,0.2);"></div>
+          <div>
+            <div style="font-size:11px;color:rgba(255,255,255,0.9);font-weight:600;">${weekDates.start.slice(0, 5)} – ${weekDates.end.slice(0, 5)}</div>
+            <div style="font-size:9px;color:rgba(255,255,255,0.45);margin-top:1px;">${year}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <div style="text-align:center;">
+            <div style="font-size:15px;font-weight:800;color:#fff;line-height:1;">${totalEmployees}</div>
+            <div style="font-size:7px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.8px;margin-top:2px;">${i18n.t('schedule.imgEmployeesShort')}</div>
+          </div>
+          <div style="width:1px;height:20px;background:rgba(255,255,255,0.15);"></div>
+          <div style="text-align:center;">
+            <div style="font-size:15px;font-weight:800;color:#fff;line-height:1;">${totalProjects}</div>
+            <div style="font-size:7px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.8px;margin-top:2px;">${i18n.t('schedule.imgProjectsShort')}</div>
+          </div>
+          <div style="width:1px;height:20px;background:rgba(255,255,255,0.15);"></div>
+          <div style="text-align:center;">
+            <div style="font-size:15px;font-weight:800;color:#fff;line-height:1;">${totalAssignments}</div>
+            <div style="font-size:7px;color:rgba(255,255,255,0.55);text-transform:uppercase;letter-spacing:0.8px;margin-top:2px;">${i18n.t('schedule.imgAssignmentsShort')}</div>
+          </div>
+        </div>
+      </div>
+
+      ${activeShifts.length > 1 ? `
+      <!-- Shift breakdown: inline pills -->
+      <div style="margin:8px 24px 0;display:flex;gap:6px;">
+        ${activeShifts.map((s, i) => {
+          const count = shiftCounts[i];
+          const pct = totalAssignments > 0 ? Math.round(count / totalAssignments * 100) : 0;
+          return `<div style="flex:1;background:#F8FAFC;border:1px solid #F1F5F9;border-radius:6px;padding:6px 4px;text-align:center;">
+            <span style="font-size:9px;font-weight:700;color:#334155;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${shiftNames[s-1]}</span>
+            <span style="font-size:8px;color:#94A3B8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"> ${shiftTimes[s-1]}</span>
+            <span style="font-size:12px;font-weight:800;color:#0097AC;margin-left:6px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">${count}</span>
+            <span style="font-size:8px;color:#CBD5E1;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">(${pct}%)</span>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+
+      <!-- Schedule table -->
+      <div style="margin:14px 24px 0;">
+        <div style="font-size:9px;font-weight:700;color:#0F172A;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px;">📋 ${i18n.t('schedule.scheduleOverview')}</div>
+        <div style="border-radius:10px;overflow:hidden;border:1px solid #F1F5F9;">
+          <table style="width:100%;border-collapse:collapse;">
+            <tr>
+              <th style="background:#0097AC;padding:8px 12px;text-align:left;font-size:9px;font-weight:700;color:#fff;text-transform:uppercase;letter-spacing:0.5px;width:170px;">${i18n.t('schedule.project')}</th>
+              ${activeShifts.map(s => `
+                <th style="background:#0097AC;padding:8px 6px;text-align:center;border-left:1px solid rgba(255,255,255,0.15);">
+                  <div style="font-size:10px;font-weight:700;color:#fff;">${shiftNames[s-1]}</div>
+                  <div style="font-size:8px;color:rgba(255,255,255,0.65);margin-top:1px;">${shiftTimes[s-1]}</div>
+                </th>
+              `).join('')}
+            </tr>
+            ${projectRowsHtml}
+          </table>
+        </div>
+      </div>
+
+      <!-- Employee details -->
+      <div style="margin:14px 24px 0;">
+        <div style="font-size:9px;font-weight:700;color:#0F172A;text-transform:uppercase;letter-spacing:1.5px;margin-bottom:6px;">👥 ${i18n.t('schedule.allEmployeeSchedules')}</div>
+        ${empCardsHtml}
+      </div>
+
+      <!-- Footer -->
+      <div style="margin:14px 24px 0;border-top:1px solid #F1F5F9;padding:12px 0 14px;text-align:center;">
+        <div style="display:flex;align-items:center;justify-content:center;gap:6px;">
+          <div style="width:18px;height:18px;background:linear-gradient(135deg,#0097AC,#007A8A);border-radius:5px;display:flex;align-items:center;justify-content:center;">
+            <span style="color:#fff;font-size:7px;font-weight:800;">PA</span>
+          </div>
+          <span style="font-size:10px;font-weight:700;color:#0F172A;">Produkt Audyt</span>
+          <span style="font-size:9px;color:#CBD5E1;">by DRÄXLMAIER</span>
+        </div>
+        <div style="font-size:8px;color:#CBD5E1;margin-top:4px;">© ${new Date().getFullYear()} DRÄXLMAIER Group · Produkt Audyt · ${dateStr}</div>
+      </div>
+
+      <!-- Bottom accent bar -->
+      <div style="height:3px;background:linear-gradient(90deg,#0097AC,#007A8A,#005F6B);"></div>
+    </div>`;
+
+    // Render to canvas
+    const root = container.querySelector('#scheduleImageRoot') as HTMLElement;
+    try {
+      const canvas = await html2canvas(root, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#FFFFFF',
+        width: WIDTH,
+        windowWidth: WIDTH,
+      });
+
+      // Convert to blob and copy to clipboard
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas toBlob failed')), 'image/png');
+      });
+
+      await navigator.clipboard.write([
+        new ClipboardItem({ 'image/png': blob })
+      ]);
+
+      document.body.removeChild(container);
+      return true;
+    } catch (e) {
+      document.body.removeChild(container);
+      throw e;
+    }
+  }
+  
+  // ==================== CORPORATE HTML EMAIL GENERATOR ====================
+  
+  private generateCorporateEmailHtml(weekKey: string, mode: 'general' | 'employee' | 'full', employeeId?: string, isUpdate: boolean = false): string {
+    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
+    const weekNum = weekKey.split('KW')[1];
+    const year = weekKey.split('-KW')[0];
+    const weekDates = this.getWeekDateRange(parseInt(year), parseInt(weekNum));
+    const dateStr = new Date().toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    const dayNames = ['Mo', 'Di', 'Mi', 'Do', 'Fr'];
+    
+    // Premium color palette
+    const c = {
+      black: '#1a1a2e',
+      teal: '#0097AC',
+      tealDark: '#007A8A',
+      tealLight: '#E6F7F9',
+      tealBg: '#f0fafb',
+      gray50: '#f8fafc',
+      gray100: '#f1f5f9',
+      gray200: '#e2e8f0',
+      gray300: '#cbd5e1',
+      gray500: '#64748b',
+      gray700: '#334155',
+      gray900: '#0f172a',
+      white: '#ffffff',
+      green: '#10b981',
+      greenBg: '#ecfdf5',
+      orange: '#f59e0b',
+      orangeBg: '#fffbeb',
+      orangeBorder: '#fde68a',
+      red: '#ef4444',
+      purple: '#8b5cf6',
+      purpleBg: '#f5f3ff',
+      purpleBorder: '#ddd6fe',
+      blue: '#3b82f6',
+      blueBg: '#eff6ff',
+    };
+    
+    const font = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
+    const shiftShortNames = [`${i18n.t('schedule.shift')} 1`, `${i18n.t('schedule.shift')} 2`, `${i18n.t('schedule.shift')} 3`];
+    const shiftSubNames = ['6:00–14:00', '14:00–22:00', '22:00–6:00'];
+    const shiftIcons = ['☀️', '🌤️', '🌙'];
+    
+    // Build general schedule data grouped by project
+    const byProject = new Map<string, { customer: string; type: string; customerColor: string; shifts: Map<number, Array<{name: string; scope: string; color: string; firstName: string; lastName: string}>> }>();
+    
+    weekAssignments.forEach((a: ScheduleAssignment) => {
+      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+      const emp = this.state.employees.find(e => e.id === a.employeeId);
+      if (project && emp) {
+        const customer = this.state.customers.find(cu => cu.id === project.customer_id);
+        const ptype = this.state.types.find(t => t.id === project.type_id);
+        const groupKey = `${project.customer_id}-${project.type_id}`;
+        
+        if (!byProject.has(groupKey)) {
+          byProject.set(groupKey, { 
+            customer: customer?.name || '?', 
+            type: ptype?.name || '?',
+            customerColor: (customer as any)?.color || c.teal,
+            shifts: new Map() 
+          });
+        }
+        const data = byProject.get(groupKey)!;
+        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
+        
+        let scopeTag = '';
+        if (a.scope === 'audit') scopeTag = 'Produkt Audit';
+        else if (a.scope === 'adhesion') scopeTag = 'Messlehre';
+        else if (a.scope === 'specific' && a.testId) {
+          const t = this.state.tests.find(t => t.id === a.testId);
+          scopeTag = t?.name || 'Test';
+        }
+        
+        data.shifts.get(a.shift)!.push({ name: `${emp.firstName} ${emp.lastName}`, firstName: emp.firstName, lastName: emp.lastName, scope: scopeTag, color: emp.color });
+      }
+    });
+    
+    // Build per-employee grouping
     const byEmployee = new Map<string, { emp: Employee; assignments: ScheduleAssignment[] }>();
     weekAssignments.forEach((a: ScheduleAssignment) => {
       const emp = this.state.employees.find(e => e.id === a.employeeId);
@@ -14280,273 +16980,467 @@ class KappaApp {
       }
     });
     
-    modalBody.innerHTML = `
-      <div class="send-email-modal">
-        <div class="info-box info-box-primary">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
-          </svg>
-          <span>${i18n.t('schedule.sendScheduleDesc')}</span>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">${i18n.t('schedule.emailAddressesLabel')}:</label>
-          <textarea id="emailAddresses" class="form-control" rows="2" placeholder="user1@company.com, user2@company.com">${savedEmails}</textarea>
-        </div>
-        
-        <div class="form-group">
-          <label class="form-label">${i18n.t('schedule.messageType')}:</label>
-          <div class="email-type-options">
-            <label class="radio-option">
-              <input type="radio" name="emailType" value="general" checked>
-              <span>📋 ${i18n.t('schedule.generalSchedule')}</span>
-            </label>
-            <label class="radio-option">
-              <input type="radio" name="emailType" value="individual">
-              <span>👤 ${i18n.t('schedule.individualEmails')}</span>
-            </label>
-          </div>
-        </div>
-        
-        <div class="email-preview-section">
-          <h4>📧 ${i18n.t('schedule.messagePreview')}</h4>
-          <div class="email-preview" id="emailPreviewContent">
-            ${this.generateScheduleEmailHtml(weekKey, 'general')}
-          </div>
-        </div>
-        
-        <div class="form-actions" style="margin-top: 16px; display: flex; gap: 12px;">
-          <button class="btn btn-primary" id="sendGeneralEmail">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13"/><path d="M22 2L15 22L11 13L2 9L22 2Z"/></svg>
-            ${i18n.t('schedule.openInOutlook')}
-          </button>
-          <button class="btn btn-secondary" id="sendIndividualEmails" style="display: none;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-            ${i18n.t('schedule.sendToAll')}
-          </button>
-        </div>
-      </div>
-    `;
+    const activeShifts = [1, 2, 3].filter(s => s <= this.scheduleShiftSystem);
+    const colWidth = Math.floor(68 / activeShifts.length);
     
-    // Obsługa zmiany typu
-    modalBody.querySelectorAll('input[name="emailType"]').forEach(radio => {
-      radio.addEventListener('change', (e) => {
-        const type = (e.target as HTMLInputElement).value as 'general' | 'individual';
-        document.getElementById('emailPreviewContent')!.innerHTML = this.generateScheduleEmailHtml(weekKey, type);
-        document.getElementById('sendGeneralEmail')!.style.display = type === 'general' ? '' : 'none';
-        document.getElementById('sendIndividualEmails')!.style.display = type === 'individual' ? '' : 'none';
-      });
-    });
+    // Stats
+    const totalAssignments = weekAssignments.length;
+    const totalEmployees = new Set(weekAssignments.map(a => a.employeeId)).size;
+    const totalProjects = byProject.size;
+    const shiftCounts = [
+      weekAssignments.filter(a => a.shift === 1).length,
+      weekAssignments.filter(a => a.shift === 2).length,
+      weekAssignments.filter(a => a.shift === 3).length,
+    ];
     
-    // Zapisz adresy email do bazy danych
-    document.getElementById('emailAddresses')?.addEventListener('blur', async (e) => {
-      await db.setPreference('kappa_email_addresses', (e.target as HTMLTextAreaElement).value);
-    });
+    // Employee personal section (for single employee mode)
+    const targetEmp = employeeId ? this.state.employees.find(e => e.id === employeeId) : null;
+    const empAssignments = employeeId ? weekAssignments.filter(a => a.employeeId === employeeId) : [];
     
-    // Wysyłanie ogólnego emaila
-    document.getElementById('sendGeneralEmail')?.addEventListener('click', async () => {
-      const emails = (document.getElementById('emailAddresses') as HTMLTextAreaElement).value
-        .split(/[,\n]/)
-        .map(e => e.trim())
-        .filter(e => e);
-      
-      if (emails.length === 0) {
-        this.showToast(i18n.t('schedule.enterEmailAddress'), 'warning');
-        return;
-      }
-      
-      await db.setPreference('kappa_email_addresses', emails.join(', '));
-      this.openOutlookEmail(emails.join('; '), i18n.t('schedule.weeklySchedule') + ' ' + weekKey, this.generateScheduleEmailBody(weekKey, 'general'));
-      this.hideModal();
-    });
-    
-    // Wysyłanie indywidualnych maili
-    document.getElementById('sendIndividualEmails')?.addEventListener('click', () => {
-      let count = 0;
-      byEmployee.forEach(({ emp }) => {
-        const email = this.getEmployeeEmail(emp);
-        if (email) {
-          this.openOutlookEmail(email, i18n.t('schedule.yourScheduleFor').replace('{0}', weekKey) + ` - ${emp.firstName} ${emp.lastName}`, 
-            this.generateEmployeeScheduleEmailBody(emp.id, weekKey));
-          count++;
-        }
-      });
-      
-      if (count > 0) {
-        this.showToast(i18n.t('schedule.outlookOpened').replace('{0}', String(count)), 'success');
-      } else {
-        this.showToast(i18n.t('schedule.noEmailAddresses'), 'warning');
-      }
-      this.hideModal();
-    });
-    
-    // Ukryj domyślny przycisk potwierdzenia
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    confirmBtn.style.display = 'none';
-    
-    modal.classList.add('active');
-  }
-  
-  private generateScheduleEmailHtml(weekKey: string, type: 'general' | 'individual'): string {
-    const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
-    
-    if (type === 'general') {
-      // Grupuj wg projektu
-      const byProject = new Map<string, { customer: string; type: string; shifts: Map<number, string[]> }>();
-      
-      weekAssignments.forEach((a: ScheduleAssignment) => {
-        const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-        const emp = this.state.employees.find(e => e.id === a.employeeId);
-        if (project && emp) {
-          const customer = this.state.customers.find(c => c.id === project.customer_id);
-          const ptype = this.state.types.find(t => t.id === project.type_id);
-          const key = `${customer?.name || '?'} - ${ptype?.name || '?'}`;
-          
-          if (!byProject.has(key)) {
-            byProject.set(key, { customer: customer?.name || '?', type: ptype?.name || '?', shifts: new Map() });
-          }
-          const data = byProject.get(key)!;
-          if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
-          data.shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
-        }
-      });
-      
-      const shiftNames = [i18n.t('schedule.shiftName1'), i18n.t('schedule.shiftName2'), i18n.t('schedule.shiftName3')];
-      
-      return `
-        <div style="font-family: Arial, sans-serif; max-width: 600px;">
-          <div style="background: #0097AC; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h2 style="margin: 0;">📅 ${i18n.t('schedule.weeklySchedule')} ${weekKey}</h2>
-            <p style="margin: 8px 0 0; opacity: 0.9;">DRÄXLMAIER Kappa Plannung</p>
-          </div>
-          <div style="padding: 20px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 8px 8px;">
-            ${Array.from(byProject.entries()).map(([name, data]) => `
-              <div style="background: white; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-                <h3 style="margin: 0 0 12px; color: #1e293b; border-bottom: 2px solid #0097AC; padding-bottom: 8px;">${name}</h3>
-                ${[1, 2, 3].filter(s => data.shifts.has(s)).map(s => `
-                  <div style="margin-bottom: 8px;">
-                    <strong style="color: #64748b; font-size: 12px;">${shiftNames[s-1]}:</strong>
-                    <div style="margin-top: 4px;">
-                      ${data.shifts.get(s)!.map(emp => `
-                        <span style="display: inline-block; background: #0097AC; color: white; padding: 4px 12px; border-radius: 16px; margin: 2px; font-size: 13px;">${emp}</span>
-                      `).join('')}
-                    </div>
-                  </div>
-                `).join('')}
-              </div>
-            `).join('')}
-            ${byProject.size === 0 ? '<p style="text-align: center; color: #64748b;">' + i18n.t('schedule.noAssignmentsThisWeek') + '</p>' : ''}
-          </div>
-        </div>
-      `;
-    } else {
-      // Podgląd indywidualny (przykład)
-      return `
-        <div style="font-family: Arial, sans-serif; max-width: 600px;">
-          <div style="background: #0097AC; color: white; padding: 20px; border-radius: 8px 8px 0 0;">
-            <h2 style="margin: 0;">👤 ${i18n.t('schedule.yourScheduleFor').replace('{0}', weekKey)}</h2>
-            <p style="margin: 8px 0 0; opacity: 0.9;">${i18n.t('schedule.individualMessage')}</p>
-          </div>
-          <div style="padding: 20px; background: #f8f9fa; border: 1px solid #e9ecef; border-top: none; border-radius: 0 0 8px 8px;">
-            <p style="color: #64748b;">${i18n.t('schedule.eachEmployeeReceives')}:</p>
-            <ul style="color: #1e293b;">
-              <li>${i18n.t('schedule.projectsToRealize')}</li>
-              <li>${i18n.t('schedule.shiftsAndHours')}</li>
-              <li>${i18n.t('schedule.taskDetails')}</li>
-            </ul>
-          </div>
-        </div>
-      `;
+    let personalSectionHtml = '';
+    if (mode === 'employee' && targetEmp && empAssignments.length > 0) {
+      personalSectionHtml = `
+        <tr><td style="padding: 0 40px 32px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+            <tr>
+              <td style="background: ${c.tealLight}; border-left: 4px solid ${c.teal}; padding: 20px 24px;">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0">
+                  <tr>
+                    <td width="52" valign="top">
+                      <div style="width: 44px; height: 44px; border-radius: 12px; background: ${targetEmp.color || c.teal}; color: white; font-size: 16px; font-weight: 700; text-align: center; line-height: 44px; font-family: ${font};">
+                        ${targetEmp.firstName.charAt(0)}${targetEmp.lastName.charAt(0)}
+                      </div>
+                    </td>
+                    <td style="padding-left: 14px;">
+                      <span style="font-size: 18px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; display: block;">${targetEmp.firstName} ${targetEmp.lastName}</span>
+                      <span style="font-size: 12px; color: ${c.gray500}; font-family: ${font}; display: block; margin-top: 2px;">${empAssignments.length} ${empAssignments.length === 1 ? 'zadanie' : empAssignments.length < 5 ? 'zadania' : 'zadań'}</span>
+                    </td>
+                  </tr>
+                </table>
+                ${empAssignments.map((a: ScheduleAssignment) => {
+                  const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+                  const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
+                  const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+                  let scopeTag = '';
+                  if (a.scope === 'audit') scopeTag = 'Produkt Audit';
+                  else if (a.scope === 'adhesion') scopeTag = 'Messlehre';
+                  else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
+                  return `
+                    <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 8px;">
+                      <tr>
+                        <td style="background: ${c.white}; padding: 12px 16px; border-radius: 8px;">
+                          <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                            <td>
+                              <span style="font-size: 13px; font-weight: 600; color: ${c.gray900}; font-family: ${font};">${customer?.name || '?'} – ${ptype?.name || '?'}</span>
+                              ${scopeTag ? `<span style="font-size: 11px; color: ${c.tealDark}; font-family: ${font}; display: block; margin-top: 2px;">${scopeTag}</span>` : ''}
+                            </td>
+                            <td style="text-align: right;">
+                              <span style="display: inline-block; font-size: 11px; font-weight: 700; color: ${c.white}; background: ${c.teal}; padding: 4px 14px; border-radius: 6px; font-family: ${font};">${shiftShortNames[a.shift - 1]} ${shiftSubNames[a.shift - 1]}</span>
+                            </td>
+                          </tr></table>
+                        </td>
+                      </tr>
+                    </table>`;
+                }).join('')}
+              </td>
+            </tr>
+          </table>
+        </td></tr>`;
     }
+    
+    // General schedule table
+    const sortedProjects = Array.from(byProject.entries()).sort((a, b) => a[1].customer.localeCompare(b[1].customer));
+    
+    let scheduleTableHtml = '';
+    if (sortedProjects.length > 0) {
+      scheduleTableHtml = `
+        <tr><td style="padding: 0 40px 12px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+            <tr><td style="padding-bottom: 12px;">
+              <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; text-transform: uppercase; letter-spacing: 2px;">📋 ${i18n.t('schedule.scheduleOverview')}</span>
+            </td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding: 0 40px 36px;">
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+            <tr>
+              <td style="background: ${c.teal}; padding: 14px 18px; font-size: 11px; font-weight: 700; color: ${c.white}; font-family: ${font}; text-transform: uppercase; letter-spacing: 1px; width: 32%;">${i18n.t('schedule.project')}</td>
+              ${activeShifts.map(s => `
+                <td style="background: ${c.teal}; padding: 14px 10px; text-align: center; font-family: ${font}; width: ${colWidth}%; border-left: 1px solid rgba(255,255,255,0.15);">
+                  <span style="font-size: 12px; font-weight: 700; color: ${c.white}; display: block;">${shiftIcons[s-1]} ${shiftShortNames[s-1]}</span>
+                  <span style="font-size: 10px; color: rgba(255,255,255,0.75);">${shiftSubNames[s-1]}</span>
+                </td>
+              `).join('')}
+            </tr>
+            ${sortedProjects.map(([_, data], idx) => {
+              const isEven = idx % 2 === 0;
+              const rowBg = isEven ? c.white : '#f7f9fb';
+              const isLast = idx === sortedProjects.length - 1;
+              return `
+                <tr>
+                  <td style="background: ${rowBg}; padding: 16px 18px; ${!isLast ? 'border-bottom: 1px solid ' + c.gray200 + ';' : ''} vertical-align: top;">
+                    <span style="font-size: 14px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; display: block; line-height: 1.3;">${data.customer}</span>
+                    <span style="font-size: 11px; color: ${c.gray500}; font-family: ${font}; display: block; margin-top: 2px;">${data.type}</span>
+                  </td>
+                  ${activeShifts.map(s => {
+                    const emps = data.shifts.get(s) || [];
+                    return `
+                      <td style="background: ${rowBg}; padding: 12px 10px; ${!isLast ? 'border-bottom: 1px solid ' + c.gray200 + ';' : ''} border-left: 1px solid ${c.gray200}; text-align: center; vertical-align: top;">
+                        ${emps.length > 0 ? emps.map(e => `
+                          <div style="margin: 4px 0;">
+                            <table cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin: 0 auto;"><tr>
+                              <td width="24" valign="middle">
+                                <div style="width: 22px; height: 22px; border-radius: 6px; background: ${e.color || c.teal}; color: white; font-size: 9px; font-weight: 700; text-align: center; line-height: 22px; font-family: ${font};">${e.firstName.charAt(0)}${e.lastName.charAt(0)}</div>
+                              </td>
+                              <td style="padding-left: 6px;">
+                                <span style="font-size: 13px; font-weight: 600; color: ${c.gray900}; font-family: ${font};">${e.firstName}</span>
+                                ${e.scope ? `<span style="font-size: 9px; color: ${c.tealDark}; display: block; font-family: ${font}; font-weight: 500; line-height: 1.2;">${e.scope}</span>` : ''}
+                              </td>
+                            </tr></table>
+                          </div>
+                        `).join('') : `<span style="color: ${c.gray300}; font-size: 16px;">—</span>`}
+                      </td>
+                    `;
+                  }).join('')}
+                </tr>
+              `;
+            }).join('')}
+          </table>
+        </td></tr>`;
+    }
+    
+    // Individual employee detail cards (for 'full' mode)
+    let employeeDetailHtml = '';
+    if ((mode === 'full' || mode === 'general') && byEmployee.size > 0) {
+      const empCards = Array.from(byEmployee.entries()).map(([_eId, data]: [string, { emp: Employee; assignments: ScheduleAssignment[] }]) => {
+        const { emp, assignments } = data;
+        return `
+          <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 10px; overflow: hidden;">
+            <tr>
+              <td style="background: ${c.white}; padding: 14px 18px; border-bottom: 1px solid ${c.gray100};">
+                <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                  <td width="36" valign="middle">
+                    <div style="width: 32px; height: 32px; border-radius: 8px; background: ${emp.color || c.teal}; color: white; font-size: 12px; font-weight: 700; text-align: center; line-height: 32px; font-family: ${font};">${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}</div>
+                  </td>
+                  <td style="padding-left: 12px;">
+                    <span style="font-size: 14px; font-weight: 700; color: ${c.gray900}; font-family: ${font};">${emp.firstName} ${emp.lastName}</span>
+                  </td>
+                  <td style="text-align: right;">
+                    <span style="display: inline-block; font-size: 11px; font-weight: 700; color: ${c.teal}; background: ${c.tealLight}; padding: 4px 12px; border-radius: 6px; font-family: ${font};">${assignments.length} ${assignments.length === 1 ? 'task' : 'tasks'}</span>
+                  </td>
+                </tr></table>
+              </td>
+            </tr>
+            ${assignments.map((a: ScheduleAssignment, aIdx: number) => {
+              const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+              const customer = project ? this.state.customers.find(cu => cu.id === project.customer_id) : null;
+              const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+              let scopeTag = '';
+              if (a.scope === 'audit') scopeTag = 'Produkt Audit';
+              else if (a.scope === 'adhesion') scopeTag = 'Messlehre';
+              else if (a.scope === 'specific' && a.testId) { const t = this.state.tests.find(t => t.id === a.testId); scopeTag = t?.name || 'Test'; }
+              const isLast = aIdx === assignments.length - 1;
+              return `
+                <tr>
+                  <td style="background: ${c.white}; padding: 11px 18px; ${!isLast ? 'border-bottom: 1px solid ' + c.gray100 + ';' : ''}">
+                    <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+                      <td style="border-left: 3px solid ${c.teal}; padding-left: 12px;">
+                        <span style="font-size: 13px; font-weight: 600; color: ${c.gray900}; font-family: ${font};">${customer?.name || '?'} – ${ptype?.name || '?'}</span>
+                        ${scopeTag ? `<span style="font-size: 10px; color: ${c.tealDark}; margin-left: 6px; font-family: ${font}; font-weight: 500;">(${scopeTag})</span>` : ''}
+                      </td>
+                      <td style="text-align: right; white-space: nowrap;">
+                        <span style="display: inline-block; font-size: 11px; font-weight: 700; color: ${c.white}; background: ${c.teal}; padding: 4px 12px; border-radius: 6px; font-family: ${font};">${shiftShortNames[a.shift - 1]} ${shiftSubNames[a.shift - 1]}</span>
+                      </td>
+                    </tr></table>
+                  </td>
+                </tr>`;
+            }).join('')}
+          </table>`;
+      });
+      
+      employeeDetailHtml = `
+        <tr><td style="padding: 0 40px 12px;">
+          <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; text-transform: uppercase; letter-spacing: 2px;">👥 ${i18n.t('schedule.allEmployeeSchedules')}</span>
+        </td></tr>
+        <tr><td style="padding: 0 40px 32px;">
+          ${empCards.join('')}
+        </td></tr>`;
+    }
+    
+    // ============ ASSEMBLE FULL EMAIL ============
+    return `<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>Grafik KW${weekNum} ${year}</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #eef2f7; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;">
+<!--[if mso]><table width="680" cellpadding="0" cellspacing="0" border="0" align="center" style="background:#ffffff;"><tr><td><![endif]-->
+
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; background: #eef2f7;">
+<tr><td align="center" style="padding: 24px 16px;">
+
+<!-- MAIN CONTAINER -->
+<table width="660" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; max-width: 660px; width: 100%; background: ${c.white}; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 24px rgba(0,0,0,0.08);">
+
+  <!-- ████ TOP GRADIENT BAR ████ -->
+  <tr>
+    <td style="background: linear-gradient(90deg, ${c.teal}, ${c.tealDark}, #005F6B); height: 6px; font-size: 0; line-height: 0;">&nbsp;</td>
+  </tr>
+
+  <!-- ████ LOGO HEADER ████ -->
+  <tr>
+    <td style="padding: 28px 40px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0">
+        <tr>
+          <td valign="middle">
+            <table cellpadding="0" cellspacing="0" border="0"><tr>
+              <td style="width: 36px; height: 36px; background: ${c.teal}; border-radius: 10px; text-align: center; vertical-align: middle;">
+                <span style="color: white; font-size: 16px; font-weight: 800; font-family: ${font}; line-height: 36px;">K</span>
+              </td>
+              <td style="padding-left: 12px;">
+                <span style="font-size: 18px; font-weight: 800; color: ${c.gray900}; letter-spacing: 1.5px; font-family: ${font};">DRÄXLMAIER</span>
+                <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-left: 4px; letter-spacing: 2px; font-weight: 400;">GROUP</span>
+              </td>
+            </tr></table>
+          </td>
+          <td style="text-align: right; vertical-align: middle;">
+            <span style="font-size: 10px; color: ${c.gray500}; font-family: ${font}; letter-spacing: 0.5px; text-transform: uppercase;">Kappa Planning</span>
+            <span style="display: block; font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-top: 2px;">${dateStr}</span>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- ████ HERO BANNER ████ -->
+  <tr>
+    <td style="padding: 28px 40px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; border-radius: 16px; overflow: hidden;">
+        <tr>
+          <td style="background: linear-gradient(135deg, #006d7b 0%, ${c.teal} 40%, #00b4cc 100%); padding: 36px 32px 32px;">
+            <table width="100%" cellpadding="0" cellspacing="0" border="0">
+              <tr>
+                <td>
+                  ${isUpdate ? `<span style="display: inline-block; background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); color: white; font-size: 10px; font-weight: 700; padding: 5px 14px; border-radius: 20px; margin-bottom: 14px; font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; border: 1px solid rgba(255,255,255,0.2);">🔄 AKTUALIZACJA</span><br><br>` : ''}
+                  <span style="font-size: 11px; color: rgba(255,255,255,0.6); font-family: ${font}; text-transform: uppercase; letter-spacing: 3px; font-weight: 600; display: block;">${mode === 'employee' ? i18n.t('schedule.yourAssignments') : i18n.t('schedule.scheduleOverview')}</span>
+                  <table cellpadding="0" cellspacing="0" border="0" style="margin-top: 8px;"><tr>
+                    <td>
+                      <span style="font-size: 52px; font-weight: 800; color: white; font-family: ${font}; letter-spacing: -2px; line-height: 1;">KW${weekNum}</span>
+                    </td>
+                    <td style="padding-left: 16px; vertical-align: bottom; padding-bottom: 8px;">
+                      <span style="display: block; font-size: 15px; color: rgba(255,255,255,0.9); font-family: ${font}; font-weight: 500;">${weekDates.start.slice(0, 5)} – ${weekDates.end.slice(0, 5)}</span>
+                      <span style="display: block; font-size: 13px; color: rgba(255,255,255,0.5); font-family: ${font}; margin-top: 2px;">${year}</span>
+                    </td>
+                  </tr></table>
+                </td>
+              </tr>
+            </table>
+            
+            <!-- KPI Pills inside hero -->
+            <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; margin-top: 24px;">
+              <tr>
+                <td width="33%" style="padding-right: 6px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                    <tr>
+                      <td style="background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); border-radius: 12px; padding: 14px 12px; text-align: center; border: 1px solid rgba(255,255,255,0.1);">
+                        <span style="font-size: 26px; font-weight: 800; color: white; font-family: ${font}; display: block; line-height: 1;">${totalEmployees}</span>
+                        <span style="font-size: 9px; color: rgba(255,255,255,0.7); font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; display: block; font-weight: 600;">${i18n.t('schedule.employees')}</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+                <td width="34%" style="padding: 0 3px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                    <tr>
+                      <td style="background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); border-radius: 12px; padding: 14px 12px; text-align: center; border: 1px solid rgba(255,255,255,0.1);">
+                        <span style="font-size: 26px; font-weight: 800; color: white; font-family: ${font}; display: block; line-height: 1;">${totalProjects}</span>
+                        <span style="font-size: 9px; color: rgba(255,255,255,0.7); font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; display: block; font-weight: 600;">${i18n.t('export.projects')}</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+                <td width="33%" style="padding-left: 6px;">
+                  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse;">
+                    <tr>
+                      <td style="background: rgba(255,255,255,0.15); backdrop-filter: blur(4px); border-radius: 12px; padding: 14px 12px; text-align: center; border: 1px solid rgba(255,255,255,0.1);">
+                        <span style="font-size: 26px; font-weight: 800; color: white; font-family: ${font}; display: block; line-height: 1;">${totalAssignments}</span>
+                        <span style="font-size: 9px; color: rgba(255,255,255,0.7); font-family: ${font}; text-transform: uppercase; letter-spacing: 1.5px; margin-top: 4px; display: block; font-weight: 600;">${i18n.t('export.assignments')}</span>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  ${activeShifts.length > 1 ? `
+  <!-- ████ SHIFT BREAKDOWN BAR ████ -->
+  <tr>
+    <td style="padding: 20px 40px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse: collapse; background: ${c.gray50}; border-radius: 12px; border: 1px solid ${c.gray200};">
+        <tr>
+          ${activeShifts.map((s, i) => {
+            const count = shiftCounts[s-1];
+            const pct = totalAssignments > 0 ? Math.round(count / totalAssignments * 100) : 0;
+            return `
+              <td width="${Math.floor(100/activeShifts.length)}%" style="text-align: center; padding: 16px 8px; ${i < activeShifts.length - 1 ? 'border-right: 1px solid ' + c.gray200 + ';' : ''}">
+                <span style="font-size: 18px; display: block; line-height: 1;">${shiftIcons[s-1]}</span>
+                <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font}; display: block; margin-top: 6px;">${shiftShortNames[s-1]}</span>
+                <span style="font-size: 10px; color: ${c.gray500}; font-family: ${font}; display: block; margin-top: 2px;">${shiftSubNames[s-1]}</span>
+                <span style="display: inline-block; margin-top: 8px; font-size: 18px; font-weight: 800; color: ${c.teal}; font-family: ${font};">${count}</span>
+                <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-left: 2px;">(${pct}%)</span>
+              </td>
+            `;
+          }).join('')}
+        </tr>
+      </table>
+    </td>
+  </tr>
+  ` : ''}
+
+  <!-- ████ SPACER ████ -->
+  <tr><td style="height: 28px; font-size: 0; line-height: 0;">&nbsp;</td></tr>
+
+  <!-- ████ PERSONAL / SCHEDULE / EMPLOYEE DETAILS ████ -->
+  ${personalSectionHtml}
+  ${scheduleTableHtml}
+  ${(mode === 'full' || mode === 'general') ? employeeDetailHtml : ''}
+
+  <!-- ████ FOOTER ████ -->
+  <tr>
+    <td style="padding: 0 40px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top: 1px solid ${c.gray200};"></td></tr></table>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding: 24px 40px 12px; text-align: center;">
+      <table cellpadding="0" cellspacing="0" border="0" style="margin: 0 auto;"><tr>
+        <td style="width: 28px; height: 28px; background: ${c.teal}; border-radius: 8px; text-align: center; vertical-align: middle;">
+          <span style="color: white; font-size: 13px; font-weight: 800; font-family: ${font}; line-height: 28px;">K</span>
+        </td>
+        <td style="padding-left: 10px;">
+          <span style="font-size: 12px; font-weight: 700; color: ${c.gray900}; font-family: ${font};">Kappa Planning</span>
+          <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font}; margin-left: 6px;">by DRÄXLMAIER</span>
+        </td>
+      </tr></table>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding: 0 40px 8px; text-align: center;">
+      <span style="font-size: 10px; color: ${c.gray500}; font-family: ${font}; line-height: 1.6;">${i18n.t('schedule.emailFooterNote')}</span>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding: 0 40px 24px; text-align: center;">
+      <span style="font-size: 10px; color: ${c.gray300}; font-family: ${font};">&copy; ${new Date().getFullYear()} DRÄXLMAIER Group &nbsp;·&nbsp; Kappa Planning &nbsp;·&nbsp; ${dateStr}</span>
+    </td>
+  </tr>
+  
+  <!-- ████ BOTTOM GRADIENT BAR ████ -->
+  <tr>
+    <td style="background: linear-gradient(90deg, ${c.teal}, ${c.tealDark}, #005F6B); height: 6px; font-size: 0; line-height: 0;">&nbsp;</td>
+  </tr>
+
+</table>
+<!-- END MAIN CONTAINER -->
+
+</td></tr>
+</table>
+
+<!--[if mso]></td></tr></table><![endif]-->
+</body>
+</html>`;
   }
   
-  private generateScheduleEmailBody(weekKey: string, type: 'general'): string {
+  // Plain text version for mailto: links
+  private generatePlainTextSchedule(weekKey: string, mode: 'general' | 'employee', employeeId?: string): string {
     const weekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const shiftNames = ['Z1 (6:00-14:00)', 'Z2 (14:00-22:00)', 'Z3 (22:00-6:00)'];
+    const line = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
     
-    // Grupuj wg projektu
-    const byProject = new Map<string, { customer: string; type: string; shifts: Map<number, string[]> }>();
+    let text = '';
+    text += `DRÄXLMAIER Group – Kappa Planning\n`;
+    text += `${line}\n\n`;
     
+    if (mode === 'employee' && employeeId) {
+      const emp = this.state.employees.find(e => e.id === employeeId);
+      if (!emp) return '';
+      
+      const empAssignments = weekAssignments.filter(a => a.employeeId === employeeId);
+      
+      text += `Cześć ${emp.firstName}!\n\n`;
+      text += `Twój grafik na tydzień ${weekKey}:\n`;
+      text += `${line}\n\n`;
+      
+      empAssignments.forEach((a: ScheduleAssignment) => {
+        const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
+        const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
+        const ptype = project ? this.state.types.find(t => t.id === project.type_id) : null;
+        
+        text += `▸ ${customer?.name || '?'} – ${ptype?.name || '?'}\n`;
+        text += `  ⏰ ${shiftNames[a.shift - 1]}\n`;
+        if (a.scope !== 'project') {
+          text += `  📋 Zakres: ${a.scope}\n`;
+        }
+        text += `\n`;
+      });
+      
+      text += `\n📋 GRAFIK OGÓLNY:\n`;
+      text += `${line}\n\n`;
+    } else {
+      text += `📅 GRAFIK TYGODNIOWY ${weekKey}\n`;
+      text += `${line}\n\n`;
+    }
+    
+    // General schedule in text
+    const byProject = new Map<string, Map<number, string[]>>();
     weekAssignments.forEach((a: ScheduleAssignment) => {
       const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
       const emp = this.state.employees.find(e => e.id === a.employeeId);
       if (project && emp) {
         const customer = this.state.customers.find(c => c.id === project.customer_id);
         const ptype = this.state.types.find(t => t.id === project.type_id);
-        const key = `${customer?.name || '?'} - ${ptype?.name || '?'}`;
-        
-        if (!byProject.has(key)) {
-          byProject.set(key, { customer: customer?.name || '?', type: ptype?.name || '?', shifts: new Map() });
-        }
-        const data = byProject.get(key)!;
-        if (!data.shifts.has(a.shift)) data.shifts.set(a.shift, []);
-        data.shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
+        const key = `${customer?.name || '?'} – ${ptype?.name || '?'}`;
+        if (!byProject.has(key)) byProject.set(key, new Map());
+        const shifts = byProject.get(key)!;
+        if (!shifts.has(a.shift)) shifts.set(a.shift, []);
+        shifts.get(a.shift)!.push(`${emp.firstName} ${emp.lastName}`);
       }
     });
     
-    let body = `GRAFIK TYGODNIOWY ${weekKey}\\n`;
-    body += `DRÄXLMAIER Kappa Plannung\\n`;
-    body += `================================\\n\\n`;
-    
-    byProject.forEach((data, name) => {
-      body += `📦 ${name}\\n`;
+    byProject.forEach((shifts, name) => {
+      text += `📦 ${name}\n`;
       [1, 2, 3].forEach(s => {
-        if (data.shifts.has(s)) {
-          body += `   ${shiftNames[s-1]}: ${data.shifts.get(s)!.join(', ')}\\n`;
+        if (shifts.has(s)) {
+          text += `   ${shiftNames[s-1]}: ${shifts.get(s)!.join(', ')}\n`;
         }
       });
-      body += `\\n`;
+      text += `\n`;
     });
     
-    return body;
-  }
-  
-  private generateEmployeeScheduleEmailBody(employeeId: string, weekKey: string): string {
-    const emp = this.state.employees.find(e => e.id === employeeId);
-    if (!emp) return '';
-    
-    const assignments = this.state.scheduleAssignments.filter(
-      (a: ScheduleAssignment) => a.employeeId === employeeId && a.week === weekKey
-    );
-    
-    const shiftNames = ['Z1 (6:00-14:00)', 'Z2 (14:00-22:00)', 'Z3 (22:00-6:00)'];
-    
-    let body = `${i18n.t('schedule.emailGreeting').replace('{0}', emp.firstName)}\\n\\n`;
-    body += `${i18n.t('schedule.emailYourSchedule').replace('{0}', weekKey)}\\n`;
-    body += `================================\\n\\n`;
-    
-    assignments.forEach((a: ScheduleAssignment) => {
-      const project = this.state.projects.find(p => p.id === a.projectId || `${p.customer_id}-${p.type_id}` === a.projectId);
-      if (project) {
-        const customer = this.state.customers.find(c => c.id === project.customer_id);
-        const ptype = this.state.types.find(t => t.id === project.type_id);
-        
-        body += `📦 ${customer?.name || '?'} - ${ptype?.name || '?'}\\n`;
-        body += `   ⏰ ${shiftNames[a.shift - 1]}\\n`;
-        
-        if (a.scope !== 'project') {
-          const scopeLabels: Record<string, string> = { audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
-          body += `   📋 ${i18n.t('schedule.scope')}: ${scopeLabels[a.scope] || a.scope}\\n`;
-        }
-        body += `\\n`;
-      }
-    });
-    
-    body += `\\n${i18n.t('schedule.goodLuck')}\\n${i18n.t('schedule.teamKappa')}`;
-    
-    return body;
+    text += `\nPozdrawiam,\nZespół Kappa Planning`;
+    return text;
   }
   
   private getEmployeeEmail(emp: Employee): string | null {
-    // Sprawdź czy pracownik ma email (możesz dodać pole email do Employee)
-    // Na razie zwracamy null - trzeba będzie rozszerzyć model Employee
     return (emp as any).email || null;
   }
   
   private openOutlookEmail(to: string, subject: string, body: string): void {
-    // Użyj protokołu mailto: który otworzy domyślny klient pocztowy (Outlook)
     const mailtoUrl = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body.replace(/\\n/g, '\n'))}`;
-    window.open(mailtoUrl, '_blank');
+    const a = document.createElement('a');
+    a.href = mailtoUrl;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   }
 
   // ==================== WIDOK GANTT OBCIĄŻENIA ====================
@@ -14702,7 +17596,7 @@ class KappaApp {
           await this.removeAssignment(a.id);
         }
         
-        this.showToast(i18n.t('schedule.removedAssignments').replace('{0}', String(toRemove.length)).replace('{1}', c.employee.firstName), 'success');
+        this.showToast(i18n.t('schedule.removedAssignments').replace('{0}', String(toRemove.length)).replace('{1}', c.employee.firstName), 'success', 'delete');
         this.renderVacationConflicts();
       });
       
@@ -14981,7 +17875,7 @@ class KappaApp {
       // Odśwież modal
       overlay.remove();
       this.showAssignmentNoteModal(assignmentId);
-      this.showToast(i18n.t('schedule.replyAdded'), 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success', 'assign');
     };
     
     overlay.querySelector('.note-reply-submit')?.addEventListener('click', submitReply);
@@ -15003,7 +17897,7 @@ class KappaApp {
         
         overlay.remove();
         this.showAssignmentNoteModal(assignmentId);
-        this.showToast(i18n.t('schedule.replyDeleted'), 'success');
+        this.showToast(i18n.t('schedule.replyDeleted'), 'success', 'delete');
       });
     });
     
@@ -15012,7 +17906,7 @@ class KappaApp {
       assignment.note = undefined;
       assignment.updatedAt = Date.now();
       await db.put('scheduleAssignments', assignment);
-      this.showToast(i18n.t('schedule.noteDeleted'), 'success');
+      this.showToast(i18n.t('schedule.noteDeleted'), 'success', 'delete');
       overlay.remove();
       this.renderScheduleContent();
     });
@@ -15024,7 +17918,7 @@ class KappaApp {
       assignment.note = fullNote || undefined;
       assignment.updatedAt = Date.now();
       await db.put('scheduleAssignments', assignment);
-      this.showToast(fullNote ? i18n.t('schedule.noteSaved') : i18n.t('schedule.noteDeleted'), 'success');
+      this.showToast(fullNote ? i18n.t('schedule.noteSaved') : i18n.t('schedule.noteDeleted'), 'success', fullNote ? 'click' : 'delete');
       overlay.remove();
       this.renderScheduleContent();
     });
@@ -15093,21 +17987,22 @@ class KappaApp {
     await db.put('scheduleAssignments', assignment);
     
     // Log zmiany - do głównej historii i historii grafiku
+    const weekLabel = assignment.week;
     if (projectChanged && shiftChanged) {
-      const details = `${oldProjectName} Z${oldShift} → ${newProjectName} Z${newShift}`;
+      const details = `${oldProjectName} ${i18n.t('schedule.shift')} ${oldShift} → ${newProjectName} ${i18n.t('schedule.shift')} ${newShift}, ${weekLabel}`;
       await this.addLog('updated', 'Assignment', empName, details);
       this.logScheduleChange('modified', empName, details);
-      this.showToast(`Przeniesiono na ${newProjectName}, zmiana ${newShift}`, 'success');
+      this.showToast(`Przeniesiono na ${newProjectName}, zmiana ${newShift}`, 'success', 'drop');
     } else if (projectChanged) {
-      const details = `${oldProjectName} → ${newProjectName}`;
+      const details = `${oldProjectName} → ${newProjectName}, ${i18n.t('schedule.shift')} ${assignment.shift}, ${weekLabel}`;
       await this.addLog('updated', 'Assignment', empName, details);
       this.logScheduleChange('modified', empName, details);
-      this.showToast(`Przeniesiono na ${newProjectName}`, 'success');
+      this.showToast(`Przeniesiono na ${newProjectName}`, 'success', 'drop');
     } else {
-      const details = `${oldProjectName}: Z${oldShift} → Z${newShift}`;
+      const details = `${oldProjectName}: ${i18n.t('schedule.shift')} ${oldShift} → ${i18n.t('schedule.shift')} ${newShift}, ${weekLabel}`;
       await this.addLog('updated', 'Assignment', empName, details);
       this.logScheduleChange('modified', empName, details);
-      this.showToast(i18n.t('schedule.movedToShift').replace('{0}', String(newShift)), 'success');
+      this.showToast(i18n.t('schedule.movedToShift').replace('{0}', String(newShift)), 'success', 'drop');
     }
     
     this.renderScheduleContent();
@@ -15245,9 +18140,11 @@ class KappaApp {
     projectsContainer.innerHTML = '';
     
     // Build employee multi-shift map for the current week
+    const validEmpIds = new Set(this.state.employees.map(e => e.id));
     const allWeekAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) => a.week === weekKey);
     const empShiftsInWeek = new Map<string, Set<number>>();
     allWeekAssignments.forEach((a: ScheduleAssignment) => {
+      if (!validEmpIds.has(a.employeeId)) return; // Ignoruj przypisania duchów
       if (!empShiftsInWeek.has(a.employeeId)) empShiftsInWeek.set(a.employeeId, new Set());
       empShiftsInWeek.get(a.employeeId)!.add(a.shift);
     });
@@ -15255,7 +18152,8 @@ class KappaApp {
     sortedGroups.forEach(([groupKey, group]) => {
       const groupAssignments = this.state.scheduleAssignments.filter((a: ScheduleAssignment) =>
         (a.projectId === groupKey || group.items.some(item => item.id === a.projectId)) &&
-        a.week === weekKey
+        a.week === weekKey &&
+        validEmpIds.has(a.employeeId) // Ignoruj przypisania duchów (nieistniejących pracowników)
       );
       
       // Wiersz projektu z nowymi klasami
@@ -15951,7 +18849,7 @@ class KappaApp {
           this.state.extraTasks.push(task as ExtraTask);
         }
         
-        this.showToast(existingTask ? i18n.t('schedule.extraTaskUpdated') : i18n.t('schedule.extraTaskAdded'), 'success');
+        this.showToast(existingTask ? i18n.t('schedule.extraTaskUpdated') : i18n.t('schedule.extraTaskAdded'), 'success', 'assign');
         this.renderScheduleContent();
         this.renderPlanningGrid();
       } catch (err) {
@@ -15972,7 +18870,7 @@ class KappaApp {
       this.state.scheduleAssignments = this.state.scheduleAssignments.filter(
         (a: ScheduleAssignment) => a.projectId !== `extra-${taskId}`
       );
-      this.showToast(i18n.t('schedule.extraTaskDeleted'), 'success');
+      this.showToast(i18n.t('schedule.extraTaskDeleted'), 'success', 'delete');
       this.renderScheduleContent();
     } catch (err) {
       this.showToast(i18n.t('schedule.extraTaskError'), 'error');
@@ -16025,7 +18923,7 @@ class KappaApp {
     await db.put('scheduleAssignments', assignment);
     
     const emp = this.state.employees.find(e => e.id === employeeId);
-    this.showToast(`${emp?.firstName || ''} ${i18n.t('schedule.employeeAssigned')}`, 'success');
+    this.showToast(`${emp?.firstName || ''} ${i18n.t('schedule.employeeAssigned')}`, 'success', 'assign');
     this.renderScheduleContent();
   }
   
@@ -16135,7 +19033,14 @@ class KappaApp {
     const emp = this.state.employees.find(e => e.id === employeeId);
     const project = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
     const customer = project ? this.state.customers.find(c => c.id === project.customer_id) : null;
-    this.logScheduleChange('added', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - ${i18n.t('schedule.shift')} ${shift}`);
+    const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+    const projectFullName = customer && type ? `${customer.name} ${type.name}` : (customer?.name || '?');
+    const scopeLabelsLog: Record<string, string> = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
+    const scopeLabelLog = scopeLabelsLog[scope] || scope;
+    const empFullName = `${emp?.firstName || '?'} ${emp?.lastName || ''}`;
+    const logDetails = `${projectFullName}, ${i18n.t('schedule.shift')} ${shift}, ${scopeLabelLog}, ${week}`;
+    await this.addLog('created', 'Assignment', empFullName, logDetails);
+    this.logScheduleChange('added', empFullName, logDetails);
     
     this.renderScheduleContent();
     this.renderScheduleAlerts();
@@ -16143,7 +19048,7 @@ class KappaApp {
     this.updateCoverageBar();
     
     const scopeText = scope === 'project' ? i18n.t('schedule.wholeProject') : (testId ? 'test' : i18n.t('schedule.scopePartText'));
-    this.showToast(`${i18n.t('schedule.assignedTo')} ${shift} (${scopeText})`, 'success');
+    this.showToast(`${i18n.t('schedule.assignedTo')} ${shift} (${scopeText})`, 'success', 'assign');
   }
   
   private async logScheduleChange(action: 'added' | 'removed' | 'modified', employee: string, details: string): Promise<void> {
@@ -16155,10 +19060,11 @@ class KappaApp {
       history = [];
     }
     
+    const actionLabel = action === 'added' ? i18n.t('schedule.logAdded') : action === 'removed' ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged');
     history.push({
       action,
       type: 'Assignment',
-      details: `${action === 'added' ? i18n.t('schedule.logAdded') : action === 'removed' ? i18n.t('schedule.logRemoved') : i18n.t('schedule.logChanged')} <strong>${employee}</strong> → ${details}`,
+      details: `<strong>${actionLabel}</strong> ${employee}: ${details}`,
       timestamp: Date.now()
     });
     
@@ -17225,10 +20131,16 @@ class KappaApp {
     await db.put('scheduleAssignments', assignment);
     
     const emp = this.state.employees.find(e => e.id === employeeId);
+    const projForLog = this.state.projects.find(p => p.id === projectId || `${p.customer_id}-${p.type_id}` === projectId);
+    const custForLog = projForLog ? this.state.customers.find(c => c.id === projForLog.customer_id) : null;
+    const typeForLog = projForLog ? this.state.types.find(t => t.id === projForLog.type_id) : null;
+    const projFullNameLog = custForLog && typeForLog ? `${custForLog.name} ${typeForLog.name}` : (custForLog?.name || projectId);
     const scopeLabels = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
-    await this.addLog('created', 'Assignment', `${emp?.firstName || ''} → ${week} Z${shift} [${scopeLabels[scope]}]`);
+    const empNameForLog = `${emp?.firstName || '?'} ${emp?.lastName || ''}`;
+    const detailsForLog = `${projFullNameLog}, ${i18n.t('schedule.shift')} ${shift}, ${scopeLabels[scope]}, ${week}`;
+    await this.addLog('created', 'Assignment', empNameForLog, detailsForLog);
     
-    this.showToast(i18n.t('schedule.employeeAssigned'), 'success');
+    this.showToast(i18n.t('schedule.employeeAssigned'), 'success', 'assign');
     this.renderScheduleContent();
   }
   
@@ -17304,17 +20216,20 @@ class KappaApp {
       
       // Czytelny log zamiast ID
       const empName = emp ? `${emp.firstName} ${emp.lastName}` : '?';
-      const projectName = customer?.name || '?';
+      const type = project ? this.state.types.find(t => t.id === project.type_id) : null;
+      const projectFullName = customer && type ? `${customer.name} ${type.name}` : (customer?.name || '?');
       const scopeLabels: Record<string, string> = { project: i18n.t('schedule.project'), audit: i18n.t('schedule.scopeAudit'), adhesion: i18n.t('schedule.scopeAdhesion'), specific: i18n.t('schedule.scopeSpecific') };
       const scopeLabel = scopeLabels[assignment.scope] || assignment.scope;
-      await this.addLog('deleted', 'Assignment', `${empName} ← ${projectName}`, `Z${assignment.shift}, ${scopeLabel}`);
+      const removeDetails = `${projectFullName}, ${i18n.t('schedule.shift')} ${assignment.shift}, ${scopeLabel}, ${assignment.week}`;
+      await this.addLog('deleted', 'Assignment', empName, removeDetails);
       
       // Loguj do historii
-      this.logScheduleChange('removed', `${emp?.firstName} ${emp?.lastName}`, `${customer?.name || '?'} - ` + i18n.t('schedule.shift') + ` ${assignment.shift}`);
+      this.logScheduleChange('removed', empName, removeDetails);
       
       this.renderScheduleContent();
       this.renderScheduleEmployeePanel();
       this.updateCoverageBar();
+      sounds.play('unassign');
     }
   }
   
@@ -17559,7 +20474,7 @@ class KappaApp {
       }
       
       popup.remove();
-      this.showToast(i18n.t('schedule.replyAdded'), 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success', 'assign');
       this.renderScheduleView();
     };
     
@@ -17763,7 +20678,7 @@ class KappaApp {
       
       popup.remove();
       this.projectCommentHoverPopup = null;
-      this.showToast(i18n.t('schedule.replyAdded'), 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success', 'assign');
       this.renderScheduleView();
     };
     
@@ -17887,7 +20802,7 @@ class KappaApp {
       }
       
       popup.remove();
-      this.showToast(i18n.t('schedule.noteAdded'), 'success');
+      this.showToast(i18n.t('schedule.noteAdded'), 'success', 'assign');
       this.renderScheduleContent();
     });
     
@@ -18060,7 +20975,7 @@ class KappaApp {
       // Odśwież modal
       overlay.remove();
       this.showProjectCommentModal(projectId, week, newCommentText);
-      this.showToast(i18n.t('schedule.replyAdded'), 'success');
+      this.showToast(i18n.t('schedule.replyAdded'), 'success', 'assign');
     };
     
     overlay.querySelector('.note-reply-submit')?.addEventListener('click', submitReply);
@@ -18099,7 +21014,7 @@ class KappaApp {
           this.showProjectCommentModal(projectId, week, newCommentText);
         }
         this.renderScheduleContent();
-        this.showToast(i18n.t('schedule.replyDeleted'), 'success');
+        this.showToast(i18n.t('schedule.replyDeleted'), 'success', 'delete');
       });
     });
     
@@ -18112,7 +21027,7 @@ class KappaApp {
         const idx = this.state.projectComments.indexOf(existing);
         this.state.projectComments.splice(idx, 1);
         await db.delete('projectComments', existing.id);
-        this.showToast(i18n.t('schedule.commentDeleted'), 'success');
+        this.showToast(i18n.t('schedule.commentDeleted'), 'success', 'delete');
       }
       overlay.remove();
       this.renderScheduleContent();
@@ -18144,7 +21059,7 @@ class KappaApp {
           this.state.projectComments.push(newComment);
           await db.put('projectComments', newComment);
         }
-        this.showToast(i18n.t('schedule.commentSaved'), 'success');
+        this.showToast(i18n.t('schedule.commentSaved'), 'success', 'click');
       } else if (existing) {
         const idx = this.state.projectComments.indexOf(existing);
         this.state.projectComments.splice(idx, 1);
@@ -18203,7 +21118,7 @@ class KappaApp {
       }
     }
     
-    this.showToast(i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', prevWeekKey), 'success');
+    this.showToast(i18n.t('schedule.copiedAssignments').replace('{0}', String(copied)).replace('{1}', prevWeekKey), 'success', 'assign');
     this.renderScheduleContent();
   }
 
@@ -18298,19 +21213,37 @@ class KappaApp {
       };
       this.state.scheduleEntries.push(newEntry);
       await db.put('scheduleEntries', newEntry);
+      sounds.play('drop');
       
       const employee = this.state.employees.find(e => e.id === id);
-      await this.addLog('created', 'ScheduleEntry', `${employee?.firstName || ''} → ${targetWeek}`);
+      const seProject = this.state.projects.find(p => p.id === targetProjectId || `${p.customer_id}-${p.type_id}` === targetProjectId);
+      const seCustomer = seProject ? this.state.customers.find(c => c.id === seProject.customer_id) : null;
+      const seType = seProject ? this.state.types.find(t => t.id === seProject.type_id) : null;
+      const seProjName = seCustomer && seType ? `${seCustomer.name} ${seType.name}` : (seCustomer?.name || targetProjectId);
+      const seEmpName = employee ? `${employee.firstName} ${employee.lastName}` : '?';
+      await this.addLog('created', 'ScheduleEntry', seEmpName, `${seProjName}, ${targetWeek}`);
       
     } else if (type === 'entry') {
       // Move existing entry to new cell
       const entry = this.state.scheduleEntries.find(en => en.id === id);
       if (entry) {
+        const oldProjectId = entry.projectId;
+        const oldWeek = entry.week;
         entry.projectId = targetProjectId;
         entry.week = targetWeek;
         entry.updatedAt = Date.now();
         await db.put('scheduleEntries', entry);
-        await this.addLog('updated', 'ScheduleEntry', id, `Moved to ${targetWeek}`);
+        const entryEmp = this.state.employees.find(e => e.id === entry.employeeId);
+        const entryEmpName = entryEmp ? `${entryEmp.firstName} ${entryEmp.lastName}` : id;
+        const oldProj = this.state.projects.find(p => p.id === oldProjectId || `${p.customer_id}-${p.type_id}` === oldProjectId);
+        const oldCust = oldProj ? this.state.customers.find(c => c.id === oldProj.customer_id) : null;
+        const oldType = oldProj ? this.state.types.find(t => t.id === oldProj.type_id) : null;
+        const oldProjName = oldCust && oldType ? `${oldCust.name} ${oldType.name}` : (oldCust?.name || oldProjectId);
+        const newProj = this.state.projects.find(p => p.id === targetProjectId || `${p.customer_id}-${p.type_id}` === targetProjectId);
+        const newCust = newProj ? this.state.customers.find(c => c.id === newProj.customer_id) : null;
+        const newType2 = newProj ? this.state.types.find(t => t.id === newProj.type_id) : null;
+        const newProjName = newCust && newType2 ? `${newCust.name} ${newType2.name}` : (newCust?.name || targetProjectId);
+        await this.addLog('updated', 'ScheduleEntry', entryEmpName, `${oldProjName} ${oldWeek} → ${newProjName} ${targetWeek}`);
       }
     }
     
@@ -18331,10 +21264,22 @@ class KappaApp {
             ${emp.firstName.charAt(0)}${emp.lastName.charAt(0)}
           </div>
           <span class="employee-name">${emp.firstName} ${emp.lastName}</span>
+          <span style="font-size: 11px; color: #64748b; margin-left: 8px;">
+            ${emp.email ? `📧 ${emp.email}` : ''}
+            ${emp.department ? `🏢 ${emp.department}` : ''}
+            ${emp.phone ? `📱 ${emp.phone}` : ''}
+          </span>
         </div>
         <div class="employee-actions">
-          <button class="btn-icon" onclick="window.kappaApp.editEmployee('${emp.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
-          <button class="btn-icon btn-del" onclick="window.kappaApp.deleteEmployee('${emp.id}')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+          <span style="
+            display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600;
+            background: ${emp.position === 'manager' ? '#EFF6FF' : emp.position === 'leader' ? '#fef3c7' : emp.position === 'trainee' ? '#f3e8ff' : '#dcfce7'};
+            color: ${emp.position === 'manager' ? '#2563EB' : emp.position === 'leader' ? '#d97706' : emp.position === 'trainee' ? '#7c3aed' : '#16a34a'};
+          ">${emp.position === 'manager' ? '📋' : emp.position === 'leader' ? '🎯' : emp.position === 'trainee' ? '🎓' : '👷'} ${i18n.t('settings.position' + ((emp.position || 'worker').charAt(0).toUpperCase() + (emp.position || 'worker').slice(1)))}</span>
+          ${emp.schedulable === false ? '<span style="display: inline-block; padding: 2px 6px; border-radius: 10px; font-size: 10px; background: #fee2e2; color: #dc2626;">📅 ✗</span>' : ''}
+          <button class="btn-icon" onclick="window.kappaApp.editEmployee('${emp.id}')" title="${i18n.t('common.edit')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
         </div>
       </div>
     `).join('') || `<div class="empty-hint">${i18n.t('schedule.noEmployees')}</div>`;
@@ -18348,7 +21293,7 @@ class KappaApp {
     
     document.getElementById('addEmployeeBtn')?.addEventListener('click', () => {
       this.hideModal();
-      this.showAddEmployeeModal();
+      setTimeout(() => this.showSettingsEmployeeModal(), 100);
     });
     
     // Hide confirm button
@@ -18373,6 +21318,7 @@ class KappaApp {
     const currentStatus = employee?.status || 'available';
     const currentShift = employee?.suggestedShift || '';
     const currentShiftSystem = employee?.shiftSystem || 2;
+    const currentRole = employee?.role || 'worker';
     
     modalBody.innerHTML = `
       <div class="form-group">
@@ -18392,6 +21338,15 @@ class KappaApp {
                  style="background: ${color}"></div>
           `).join('')}
         </div>
+      </div>
+      <div class="form-group">
+        <label>${i18n.t('settings.roleLabel')}:</label>
+        <select id="employeeRole" class="form-control">
+          <option value="worker" ${currentRole === 'worker' ? 'selected' : ''}>👷 ${i18n.t('settings.roleWorker')}</option>
+          <option value="leader" ${currentRole === 'leader' ? 'selected' : ''}>⭐ ${i18n.t('settings.roleLeader')}</option>
+          <option value="manager" ${currentRole === 'manager' ? 'selected' : ''}>👔 ${i18n.t('settings.roleManager')}</option>
+        </select>
+        <p class="form-hint" style="margin-top: 4px; font-size: 12px; color: #64748b;">${i18n.t('settings.roleHint')}</p>
       </div>
       <div class="form-group">
         <label>${i18n.t('schedule.status')}:</label>
@@ -18432,6 +21387,8 @@ class KappaApp {
       const suggestedShift = shiftValue ? parseInt(shiftValue) as 1 | 2 | 3 : undefined;
       const shiftSystemSelect = document.getElementById('employeeShiftSystem') as HTMLSelectElement | null;
       const shiftSystem = shiftSystemSelect ? parseInt(shiftSystemSelect.value) as 1 | 2 | 3 : 2;
+      const roleSelect = document.getElementById('employeeRole') as HTMLSelectElement | null;
+      const role = (roleSelect?.value || 'worker') as EmployeeRole;
       
       if (!firstName || !lastName) {
         this.showToast(i18n.t('messages.errorOccurred'), 'error');
@@ -18445,6 +21402,7 @@ class KappaApp {
         employee.status = status;
         employee.suggestedShift = suggestedShift;
         employee.shiftSystem = shiftSystem;
+        employee.role = role;
         await db.put('employees', employee);
         await this.addLog('updated', 'Employee', `${firstName} ${lastName}`);
       } else {
@@ -18456,6 +21414,7 @@ class KappaApp {
           status,
           suggestedShift,
           shiftSystem,
+          role,
           createdAt: Date.now(),
         };
         this.state.employees.push(newEmployee);
@@ -18464,7 +21423,7 @@ class KappaApp {
       }
       
       this.hideModal();
-      this.showToast(i18n.t('messages.savedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.savedSuccessfully'), 'success', 'click');
       this.renderScheduleView();
     };
     
@@ -18475,7 +21434,7 @@ class KappaApp {
     const employee = this.state.employees.find(e => e.id === id);
     if (employee) {
       this.hideModal();
-      setTimeout(() => this.showAddEmployeeModal(employee), 100);
+      setTimeout(() => this.showSettingsEmployeeModal(employee), 100);
     }
   }
 
@@ -18488,8 +21447,22 @@ class KappaApp {
       const emp = this.state.employees[idx];
       this.state.employees.splice(idx, 1);
       await db.delete('employees', id);
+      
+      // Usuń wszystkie przypisania grafiku tego pracownika (zapobiega duchom)
+      const orphanedAssignments = this.state.scheduleAssignments.filter(
+        (a: ScheduleAssignment) => a.employeeId === id
+      );
+      for (const a of orphanedAssignments) {
+        const aIdx = this.state.scheduleAssignments.indexOf(a);
+        if (aIdx !== -1) this.state.scheduleAssignments.splice(aIdx, 1);
+        await db.delete('scheduleAssignments', a.id);
+      }
+      if (orphanedAssignments.length > 0) {
+        console.log(`[Kappa] Cleaned up ${orphanedAssignments.length} assignment(s) for deleted employee ${emp.firstName} ${emp.lastName}`);
+      }
+      
       await this.addLog('deleted', 'Employee', `${emp.firstName} ${emp.lastName}`);
-      this.showToast(i18n.t('messages.deletedSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.deletedSuccessfully'), 'success', 'delete');
       this.showManageEmployeesModal();
     }
   }
@@ -18876,17 +21849,26 @@ class KappaApp {
       weeks.push(w);
     }
     
-    // Header
-    let html = `<div class="heatmap-header">`;
+    // Build two-column layout: labels (fixed) | scrollable cells
+    let labelsHtml = `<div class="heatmap-labels">`;
+    labelsHtml += `<div class="heatmap-label-spacer"></div>`; // spacer for header row
+    
+    let scrollHtml = `<div class="heatmap-scroll">`;
+    
+    // Header row (inside scroll area)
+    scrollHtml += `<div class="heatmap-header">`;
     weeks.forEach(w => {
-      html += `<div class="heatmap-header-cell">KW${w.toString().padStart(2, '0')}</div>`;
+      scrollHtml += `<div class="heatmap-header-cell">KW${w.toString().padStart(2, '0')}</div>`;
     });
-    html += `</div>`;
+    scrollHtml += `</div>`;
     
     // Rows by test type
     this.state.tests.forEach(test => {
-      html += `<div class="heatmap-row">`;
-      html += `<div class="heatmap-label">${test.name}</div>`;
+      // Label (fixed left column)
+      labelsHtml += `<div class="heatmap-label" title="${test.name}">${test.name}</div>`;
+      
+      // Cells (scrollable right column)
+      scrollHtml += `<div class="heatmap-row">`;
       
       weeks.forEach(week => {
         const weekKey = `KW${week.toString().padStart(2, '0')}`;
@@ -18908,13 +21890,16 @@ class KappaApp {
         const level = remaining === 0 ? 0 : remaining <= 2 ? 1 : remaining <= 5 ? 2 : remaining <= 10 ? 3 : 4;
         const cellClass = isComplete ? 'level-complete' : `level-${level}`;
         const tooltip = i18n.t('schedule.heatmapTooltip').replace('{0}', String(week)).replace('{1}', String(ist)).replace('{2}', String(soll)).replace('{3}', String(remaining));
-        html += `<div class="heatmap-cell ${cellClass}" title="${tooltip}">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</div>`;
+        scrollHtml += `<div class="heatmap-cell ${cellClass}" title="${tooltip}">${soll > 0 ? (isComplete ? '✓' : remaining) : ''}</div>`;
       });
       
-      html += `</div>`;
+      scrollHtml += `</div>`;
     });
     
-    container.innerHTML = html;
+    labelsHtml += `</div>`;
+    scrollHtml += `</div>`;
+    
+    container.innerHTML = `<div class="heatmap-wrapper">${labelsHtml}${scrollHtml}</div>`;
   }
 
   private renderTrendChart(): void {
@@ -19134,7 +22119,8 @@ class KappaApp {
       if (sidebar && layout) {
         sidebar.classList.add('open');
         layout.classList.add('sidebar-open');
-        localStorage.setItem('absenceEmployeesSidebarOpen', '1');
+        db.setPreference('absenceEmployeesSidebarOpen', true);
+        sounds.play('swoosh');
       }
     });
     
@@ -19145,23 +22131,26 @@ class KappaApp {
       if (sidebar && layout) {
         sidebar.classList.remove('open');
         layout.classList.remove('sidebar-open');
-        localStorage.setItem('absenceEmployeesSidebarOpen', '0');
+        db.setPreference('absenceEmployeesSidebarOpen', false);
+        sounds.play('swoosh');
       }
     });
     
-    // Przywróć stan sidebara z localStorage (domyślnie otwarty)
-    const absenceSidebarOpen = localStorage.getItem('absenceEmployeesSidebarOpen') !== '0';
-    const absenceSidebar = document.getElementById('absenceEmployeesSidebar');
-    const absenceLayout = absenceSidebar?.closest('.absence-layout');
-    if (absenceSidebar && absenceLayout) {
-      if (absenceSidebarOpen) {
-        absenceSidebar.classList.add('open');
-        absenceLayout.classList.add('sidebar-open');
-      } else {
-        absenceSidebar.classList.remove('open');
-        absenceLayout.classList.remove('sidebar-open');
+    // Restore sidebar state from database (default: open)
+    db.getPreference('absenceEmployeesSidebarOpen').then((val) => {
+      const absenceSidebarOpen = val !== false;
+      const absenceSidebar = document.getElementById('absenceEmployeesSidebar');
+      const absenceLayout = absenceSidebar?.closest('.absence-layout');
+      if (absenceSidebar && absenceLayout) {
+        if (absenceSidebarOpen) {
+          absenceSidebar.classList.add('open');
+          absenceLayout.classList.add('sidebar-open');
+        } else {
+          absenceSidebar.classList.remove('open');
+          absenceLayout.classList.remove('sidebar-open');
+        }
       }
-    }
+    });
   }
 
   private renderAbsenceFilters(): void {
@@ -19181,7 +22170,7 @@ class KappaApp {
     if (typeFilter) {
       typeFilter.innerHTML = `<option value="">${i18n.t('absence.allTypes')}</option>` +
         this.absenceTypes
-          .map(t => `<option value="${t.id}" ${t.id === this.absenceFilterType ? 'selected' : ''}>${t.icon} ${t.name}</option>`)
+          .map(t => `<option value="${t.id}" ${t.id === this.absenceFilterType ? 'selected' : ''}>${getAbsenceEmoji(t.id)} ${t.name}</option>`)
           .join('');
     }
   }
@@ -19242,7 +22231,7 @@ class KappaApp {
       
       return `
         <div class="absence-upcoming-item">
-          <span class="absence-upcoming-icon">${type?.icon || '📅'}</span>
+          <span class="absence-upcoming-icon">${type ? renderAbsenceIcon(type.id, type.color, 16) : renderAbsenceIcon('', '#64748b', 16)}</span>
           <div class="absence-upcoming-info">
             <div class="absence-upcoming-name">${emp?.firstName || ''} ${emp?.lastName || ''}</div>
             <div class="absence-upcoming-date">${startDate} - ${a.workDays} ${i18n.t('absence.days')}</div>
@@ -19397,7 +22386,7 @@ class KappaApp {
         const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
         return `
           <div class="absence-calendar-event" style="background: ${type?.color || '#64748b'}" title="${emp?.firstName} ${emp?.lastName} - ${type?.name}">
-            ${type?.icon || ''} ${emp?.firstName || ''}
+            ${type ? getAbsenceIcon(type.id, 12, '#fff') : ''} ${emp?.firstName || ''}
           </div>
         `;
       }).join('');
@@ -19535,7 +22524,7 @@ class KappaApp {
             <span class="absence-list-name">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
           </div>
           <div class="absence-list-type">
-            <span class="absence-list-type-icon">${type?.icon || '📅'}</span>
+            <span class="absence-list-type-icon">${type ? renderAbsenceIcon(type.id, type.color, 16) : renderAbsenceIcon('', '#64748b', 16)}</span>
             <span class="absence-list-type-name">${type?.name || i18n.t('schedule.absenceDefault')}</span>
           </div>
           <div class="absence-list-dates">${startDate} - ${endDate}</div>
@@ -19603,10 +22592,10 @@ class KappaApp {
     if (!container) return;
     
     const months = [
-      i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-      i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-      i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-      i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+      i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+      i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+      i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+      i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
     ];
     const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
     
@@ -19706,7 +22695,7 @@ class KappaApp {
         
         return `
           <div class="absence-employee-limit-row">
-            <span class="absence-employee-limit-icon">${type.icon}</span>
+            <span class="absence-employee-limit-icon">${renderAbsenceIcon(type.id, type.color, 16)}</span>
             <div class="absence-employee-limit-info">
               <div class="absence-employee-limit-name">${type.name}</div>
               <div class="absence-employee-limit-bar">
@@ -19777,8 +22766,8 @@ class KappaApp {
     const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
     const locale = i18n.getDateLocale();
 
-    // Get holidays set
-    const holidayDates = new Set(this.holidays.map((h: any) => h.date));
+    // Get holidays map (date -> name)
+    const holidayDates = new Map(this.holidays.map((h: any) => [h.date, h.name]));
 
     const isWeekend = (d: Date): boolean => {
       const day = d.getDay();
@@ -19840,7 +22829,7 @@ class KappaApp {
         return `<td class="atl-summary-cell${val > 0 ? ' has-value' : ''}">${val}</td>`;
       }).join('');
       return `<tr class="atl-summary-type-row atl-type-detail-row">
-        <td colspan="3" class="atl-summary-type-label"><span class="atl-type-badge" style="background: ${t.color}">${t.icon}</span> ${t.name} <span class="atl-type-total">(${totalForType}d)</span></td>
+        <td colspan="3" class="atl-summary-type-label"><span class="atl-type-badge" style="background: ${t.color}">${getAbsenceIcon(t.id, 14, '#fff')}</span> ${t.name} <span class="atl-type-total">(${totalForType}d)</span></td>
         ${cells}
         <td class="atl-summary-cell atl-summary-count-cell"></td>
       </tr>`;
@@ -19900,6 +22889,7 @@ class KappaApp {
       const dayOfWeek = d.getDay();
       const isWkend = isWeekend(d);
       const isHoliday = holidayDates.has(dateStr);
+      const holidayName = holidayDates.get(dateStr) || '';
       const isToday = dateStr === new Date().toISOString().split('T')[0];
 
       // ISO week number
@@ -19933,21 +22923,29 @@ class KappaApp {
       ].filter(Boolean).join(' ');
 
       // Employee cells for this day
-      const empCells = employees.map(emp => {
-        const empAbsMap = absenceMap.get(dateStr);
-        const absence = empAbsMap?.get(emp.id);
-        if (absence && !isWkend) {
-          const type = this.absenceTypes.find((t: any) => t.id === absence.absenceTypeId);
-          return `<td class="atl-day-cell has-absence" style="--abs-color: ${type?.color || '#64748b'}" 
-            data-absence-id="${absence.id}" data-employee-id="${emp.id}" data-date="${dateStr}" title="${type?.icon || ''} ${type?.name || ''} (${absence.workDays}d)">
-            <span class="atl-absence-marker">${type?.icon || '1'}</span>
-          </td>`;
-        }
-        if (isWkend || isHoliday) {
-          return `<td class="atl-day-cell off-day"></td>`;
-        }
-        return `<td class="atl-day-cell empty-cell" data-employee-id="${emp.id}" data-date="${dateStr}"></td>`;
-      }).join('');
+      let empCells: string;
+      if (isHoliday && !isWkend) {
+        // Holiday: show name spanning across all employee columns
+        empCells = `<td class="atl-day-cell off-day atl-holiday-banner" colspan="${employees.length}">
+          <span class="atl-holiday-name">${holidayName}</span>
+        </td>`;
+      } else {
+        empCells = employees.map(emp => {
+          const empAbsMap = absenceMap.get(dateStr);
+          const absence = empAbsMap?.get(emp.id);
+          if (absence && !isWkend) {
+            const type = this.absenceTypes.find((t: any) => t.id === absence.absenceTypeId);
+            return `<td class="atl-day-cell has-absence" style="--abs-color: ${type?.color || '#64748b'}" 
+              data-absence-id="${absence.id}" data-employee-id="${emp.id}" data-date="${dateStr}" title="${type?.name || ''} (${absence.workDays}d)">
+              <span class="atl-absence-marker">${type ? getAbsenceIcon(type.id, 15, '#fff') : ''}</span>
+            </td>`;
+          }
+          if (isWkend || isHoliday) {
+            return `<td class="atl-day-cell off-day"></td>`;
+          }
+          return `<td class="atl-day-cell empty-cell" data-employee-id="${emp.id}" data-date="${dateStr}"></td>`;
+        }).join('');
+      }
 
       // Count total absent on this day
       const absMap = absenceMap.get(dateStr);
@@ -20056,7 +23054,7 @@ class KappaApp {
           ${activeTypes.map((t: any) => `
             <div class="atl-legend-item">
               <div class="atl-legend-color" style="background: ${t.color}"></div>
-              <span>${t.icon} ${t.name}</span>
+              ${renderAbsenceIcon(t.id, t.color, 14)}<span>${t.name}</span>
             </div>
           `).join('')}
           <div class="atl-legend-divider"></div>
@@ -20144,7 +23142,7 @@ class KappaApp {
             <div class="atl-type-grid" id="tlTypeGrid">
               ${this.absenceTypes.filter((t: any) => t.isActive).map((t: any) => `
                 <button class="atl-type-btn" data-type-id="${t.id}" style="--type-color: ${t.color}">
-                  <span class="atl-type-icon">${t.icon}</span>
+                  <span class="atl-type-icon">${renderAbsenceIcon(t.id, t.color, 20)}</span>
                   <span class="atl-type-name">${t.name}</span>
                 </button>
               `).join('')}
@@ -20365,7 +23363,7 @@ class KappaApp {
             <label class="absence-form-label">${i18n.t('schedule.absenceTypeLabel')}</label>
             <select class="absence-form-select" id="wizardType">
               <option value="">${i18n.t('schedule.selectOption')}</option>
-              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === selectedType ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === selectedType ? 'selected' : ''}>${getAbsenceEmoji(t.id)} ${t.name}</option>`).join('')}
             </select>
           </div>
           <div class="absence-form-row">
@@ -20407,7 +23405,7 @@ class KappaApp {
         
         content!.innerHTML = `
           <div style="text-align: center; padding: 20px;">
-            <div style="font-size: 3rem; margin-bottom: 16px;">${type?.icon || '📅'}</div>
+            <div style="font-size: 3rem; margin-bottom: 16px;">${type ? renderAbsenceIcon(type.id, type.color, 48) : renderAbsenceIcon('', '#64748b', 48)}</div>
             <h3 style="margin: 0 0 8px 0;">${emp?.firstName} ${emp?.lastName}</h3>
             <p style="color: var(--color-text-secondary); margin: 0 0 20px 0;">${type?.name}</p>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; text-align: left; background: var(--color-bg-secondary); padding: 16px; border-radius: 8px;">
@@ -20520,7 +23518,7 @@ class KappaApp {
     const typesHtml = this.absenceTypes.map(type => `
       <div class="absence-type-row" data-type-id="${type.id}">
         <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
-          ${type.icon}
+          ${renderAbsenceIcon(type.id, type.color, 20)}
         </div>
         <input type="text" class="absence-type-name-input" value="${type.name}" data-field="name">
         <input type="number" class="absence-type-days-input" value="${type.defaultDays}" data-field="defaultDays" min="0" placeholder="Dni">
@@ -20532,7 +23530,7 @@ class KappaApp {
     `).join('');
     
     overlay.innerHTML = `
-      <div class="absence-modal" style="max-width: 700px;">
+      <div class="absence-modal" style="max-width: 760px;">
         <div class="absence-modal-header">
           <h2>⚙️ ${i18n.t('schedule.absenceSettingsTitle')}</h2>
           <button class="absence-modal-close">
@@ -20558,17 +23556,57 @@ class KappaApp {
           </div>
           
           <div class="absence-settings-section" style="margin-top: 24px;">
-            <h3>${i18n.t('schedule.holidaysTitle').replace('{0}', String(this.absenceYear))}</h3>
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
+              <h3>${i18n.t('schedule.holidaysTitle').replace('{0}', String(this.absenceYear))}</h3>
+              <span style="font-size: 0.75rem; color: var(--color-text-muted); background: var(--color-bg-tertiary); padding: 2px 8px; border-radius: 4px;" id="holidayCount">${this.holidays.length}</span>
+            </div>
             <p style="font-size: 0.8rem; color: var(--color-text-secondary); margin-bottom: 12px;">
               ${i18n.t('schedule.holidaysDesc').replace('{0}', String(this.holidays.length))}
             </p>
-            <div style="display: flex; flex-wrap: wrap; gap: 8px;">
-              ${this.holidays.slice(0, 8).map(h => `
-                <span style="padding: 4px 10px; background: var(--color-warning-bg); color: var(--color-warning); border-radius: 4px; font-size: 0.75rem;">
-                  🎉 ${new Date(h.date).toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit' })} - ${h.name}
-                </span>
-              `).join('')}
-              ${this.holidays.length > 8 ? `<span style="padding: 4px 10px; color: var(--color-text-muted); font-size: 0.75rem;">+${this.holidays.length - 8} ${i18n.t('schedule.more')}</span>` : ''}
+            
+            <!-- Add holiday form -->
+            <div style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center;" id="holidayAddForm">
+              <input type="date" id="holidayNewDate" class="absence-form-input" style="flex: 0 0 160px; padding: 6px 10px; font-size: 0.8rem;" value="${this.absenceYear}-01-01" min="${this.absenceYear}-01-01" max="${this.absenceYear}-12-31">
+              <input type="text" id="holidayNewName" class="absence-form-input" style="flex: 1; padding: 6px 10px; font-size: 0.8rem;" placeholder="${i18n.t('schedule.holidayNamePlaceholder')}">
+              <button id="holidayAddBtn" class="absence-modal-btn primary" style="padding: 6px 14px; font-size: 0.8rem; white-space: nowrap;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align: -2px;"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                ${i18n.t('schedule.holidayAddBtn')}
+              </button>
+            </div>
+            
+            <!-- Holiday list -->
+            <div id="holidayList" style="max-height: 280px; overflow-y: auto; border: 1px solid var(--color-border); border-radius: 8px;">
+              <table style="width: 100%; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: var(--color-bg-tertiary); position: sticky; top: 0; z-index: 1;">
+                    <th style="padding: 6px 12px; text-align: left; font-size: 0.7rem; color: var(--color-text-secondary); text-transform: uppercase; font-weight: 600;">${i18n.t('schedule.holidayDate')}</th>
+                    <th style="padding: 6px 12px; text-align: left; font-size: 0.7rem; color: var(--color-text-secondary); text-transform: uppercase; font-weight: 600;">${i18n.t('schedule.holidayName')}</th>
+                    <th style="padding: 6px 12px; width: 40px;"></th>
+                  </tr>
+                </thead>
+                <tbody id="holidayTableBody">
+                  ${this.holidays.map(h => {
+                    const d = new Date(h.date);
+                    const dayNames = ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'];
+                    const dayName = dayNames[d.getDay()];
+                    const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                    return `<tr class="holiday-row" data-date="${h.date}" style="border-bottom: 1px solid var(--color-border);">
+                      <td style="padding: 7px 12px; font-size: 0.8rem; white-space: nowrap;">
+                        <span style="color: var(--color-text-secondary);">${dayName}</span>
+                        <span style="font-weight: 500; margin-left: 4px;">${d.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+                        ${isWeekend ? '<span style="font-size: 0.65rem; background: var(--color-warning-bg); color: var(--color-warning); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">weekend</span>' : ''}
+                      </td>
+                      <td style="padding: 7px 12px; font-size: 0.8rem;">${h.name}</td>
+                      <td style="padding: 7px 6px; text-align: center;">
+                        <button class="holiday-delete-btn" data-date="${h.date}" title="${i18n.t('schedule.deleteBtn')}" style="background: none; border: none; cursor: pointer; color: var(--color-text-muted); padding: 4px; border-radius: 4px; transition: all 0.15s;">
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                      </td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>
+              ${this.holidays.length === 0 ? '<p style="padding: 20px; text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">—</p>' : ''}
             </div>
           </div>
         </div>
@@ -20580,6 +23618,128 @@ class KappaApp {
     `;
     
     document.body.appendChild(overlay);
+    
+    // === Holiday management ===
+    const holidayTableBody = overlay.querySelector('#holidayTableBody') as HTMLElement;
+    const holidayCountEl = overlay.querySelector('#holidayCount') as HTMLElement;
+    
+    const updateHolidayCount = () => {
+      const count = holidayTableBody?.querySelectorAll('.holiday-row').length || 0;
+      if (holidayCountEl) holidayCountEl.textContent = String(count);
+    };
+    
+    const addHolidayRow = (date: string, name: string) => {
+      const d = new Date(date + 'T00:00:00');
+      const dayNames = ['niedz.', 'pon.', 'wt.', 'śr.', 'czw.', 'pt.', 'sob.'];
+      const dayName = dayNames[d.getDay()];
+      const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+      const tr = document.createElement('tr');
+      tr.className = 'holiday-row';
+      tr.dataset.date = date;
+      tr.style.borderBottom = '1px solid var(--color-border)';
+      tr.innerHTML = `
+        <td style="padding: 7px 12px; font-size: 0.8rem; white-space: nowrap;">
+          <span style="color: var(--color-text-secondary);">${dayName}</span>
+          <span style="font-weight: 500; margin-left: 4px;">${d.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+          ${isWeekend ? '<span style="font-size: 0.65rem; background: var(--color-warning-bg); color: var(--color-warning); padding: 1px 5px; border-radius: 3px; margin-left: 6px;">weekend</span>' : ''}
+        </td>
+        <td style="padding: 7px 12px; font-size: 0.8rem;">${name}</td>
+        <td style="padding: 7px 6px; text-align: center;">
+          <button class="holiday-delete-btn" data-date="${date}" title="${i18n.t('schedule.deleteBtn')}" style="background: none; border: none; cursor: pointer; color: var(--color-text-muted); padding: 4px; border-radius: 4px; transition: all 0.15s;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </td>
+      `;
+      // Insert sorted by date
+      const rows = Array.from(holidayTableBody.querySelectorAll('.holiday-row'));
+      const insertBefore = rows.find(r => (r as HTMLElement).dataset.date! > date);
+      if (insertBefore) {
+        holidayTableBody.insertBefore(tr, insertBefore);
+      } else {
+        holidayTableBody.appendChild(tr);
+      }
+      // Remove empty message if present
+      const emptyMsg = overlay.querySelector('#holidayList p');
+      if (emptyMsg) emptyMsg.remove();
+    };
+    
+    // Add holiday button
+    overlay.querySelector('#holidayAddBtn')?.addEventListener('click', async () => {
+      const dateInput = overlay.querySelector('#holidayNewDate') as HTMLInputElement;
+      const nameInput = overlay.querySelector('#holidayNewName') as HTMLInputElement;
+      const date = dateInput.value;
+      const name = nameInput.value.trim();
+      
+      if (!date || !name) {
+        nameInput.style.border = '1px solid var(--color-danger)';
+        nameInput.focus();
+        setTimeout(() => nameInput.style.border = '', 2000);
+        return;
+      }
+      
+      // Check if already exists
+      const existing = holidayTableBody.querySelector(`.holiday-row[data-date="${date}"]`);
+      if (existing) {
+        dateInput.style.border = '1px solid var(--color-danger)';
+        setTimeout(() => dateInput.style.border = '', 2000);
+        return;
+      }
+      
+      try {
+        await api.addHoliday({ date, name, isMovable: false });
+        this.holidays.push({ id: date, date, name, isMovable: false } as any);
+        this.holidays.sort((a: any, b: any) => a.date.localeCompare(b.date));
+        addHolidayRow(date, name);
+        updateHolidayCount();
+        nameInput.value = '';
+        // Advance date by 1 day
+        const nextDate = new Date(date + 'T00:00:00');
+        nextDate.setDate(nextDate.getDate() + 1);
+        dateInput.value = nextDate.toISOString().split('T')[0];
+        nameInput.focus();
+      } catch (e) {
+        console.error('Failed to add holiday:', e);
+      }
+    });
+    
+    // Delete holiday buttons (event delegation)
+    overlay.querySelector('#holidayList')?.addEventListener('click', async (e) => {
+      const btn = (e.target as HTMLElement).closest('.holiday-delete-btn') as HTMLElement;
+      if (!btn) return;
+      
+      const date = btn.dataset.date;
+      if (!date) return;
+      
+      try {
+        await api.deleteHoliday(date);
+        this.holidays = this.holidays.filter((h: any) => h.date !== date);
+        const row = holidayTableBody.querySelector(`.holiday-row[data-date="${date}"]`);
+        if (row) {
+          (row as HTMLElement).style.transition = 'opacity 0.2s';
+          (row as HTMLElement).style.opacity = '0';
+          setTimeout(() => {
+            row.remove();
+            updateHolidayCount();
+            if (!holidayTableBody.querySelector('.holiday-row')) {
+              const holidayListDiv = overlay.querySelector('#holidayList') as HTMLElement;
+              if (holidayListDiv) {
+                const table = holidayListDiv.querySelector('table');
+                if (table) table.insertAdjacentHTML('afterend', '<p style="padding: 20px; text-align: center; color: var(--color-text-muted); font-size: 0.8rem;">—</p>');
+              }
+            }
+          }, 200);
+        }
+      } catch (e) {
+        console.error('Failed to delete holiday:', e);
+      }
+    });
+    
+    // Enter key in name field
+    overlay.querySelector('#holidayNewName')?.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') {
+        (overlay.querySelector('#holidayAddBtn') as HTMLElement)?.click();
+      }
+    });
     
     // Save handler
     overlay.querySelector('#settingsSave')?.addEventListener('click', async () => {
@@ -20647,6 +23807,13 @@ class KappaApp {
     }
     
     const empLimits = this.absenceLimits.filter(l => l.employeeId === employeeId);
+    const empAbsences = this.absences.filter(a => a.employeeId === employeeId);
+    
+    // Calculate usedDays from actual absences per type
+    const usedDaysByType = new Map<string, number>();
+    empAbsences.forEach(a => {
+      usedDaysByType.set(a.absenceTypeId, (usedDaysByType.get(a.absenceTypeId) || 0) + (a.workDays || 0));
+    });
     
     const overlay = document.createElement('div');
     overlay.className = 'absence-modal-overlay';
@@ -20654,12 +23821,12 @@ class KappaApp {
     const limitsHtml = this.absenceTypes.map(type => {
       const limit = empLimits.find(l => l.absenceTypeId === type.id);
       const totalDays = limit?.totalDays ?? type.defaultDays;
-      const usedDays = limit?.usedDays || 0;
+      const usedDays = usedDaysByType.get(type.id) || 0;
       
       return `
         <div class="absence-type-row" data-type-id="${type.id}">
           <div class="absence-type-icon-picker" style="background: ${type.color}20; color: ${type.color};">
-            ${type.icon}
+            ${renderAbsenceIcon(type.id, type.color, 20)}
           </div>
           <span style="flex: 1; font-size: 0.85rem;">${type.name}</span>
           <input type="number" class="absence-type-days-input" value="${totalDays}" data-field="totalDays" min="0" style="width: 70px;">
@@ -20719,6 +23886,9 @@ class KappaApp {
       if (this.absenceViewMode === 'employees') {
         this.renderAbsenceEmployeesGrid();
       }
+      
+      // Reopen profile modal with refreshed data
+      this.showEmployeeAbsenceModal(employeeId);
     });
     
     // Cancel/close handlers
@@ -20733,82 +23903,103 @@ class KappaApp {
     const emp = this.state.employees.find(e => e.id === employeeId);
     if (!emp) return;
     
+    // Reload limits fresh from backend to ensure we have latest data
+    try {
+      this.absenceLimits = await api.getAbsenceLimits({ year: this.absenceYear });
+    } catch (e) {
+      console.error('Failed to refresh absence limits:', e);
+    }
+    
     const empAbsences = this.absences.filter(a => a.employeeId === employeeId);
     const empLimits = this.absenceLimits.filter(l => l.employeeId === employeeId);
     
-    // Fetch employee details and qualifications
-    let empDetails: any = null;
-    let empQualifications: any[] = [];
-    try {
-      empDetails = await api.getEmployeeDetails(employeeId);
-      empQualifications = await api.getQualifications(employeeId);
-    } catch (e) {
-      console.log('No employee details found');
-    }
+    // Calculate usedDays from actual absences per type
+    const usedDaysByType = new Map<string, number>();
+    empAbsences.forEach(a => {
+      usedDaysByType.set(a.absenceTypeId, (usedDaysByType.get(a.absenceTypeId) || 0) + (a.workDays || 0));
+    });
+    
+    // Use employee data directly from IndexedDB (unified source of truth)
+    const positionLabel = emp.position === 'manager' ? i18n.t('settings.positionManager') :
+                          emp.position === 'leader' ? i18n.t('settings.positionLeader') :
+                          emp.position === 'trainee' ? i18n.t('settings.positionTrainee') :
+                          i18n.t('settings.positionWorker');
     
     const overlay = document.createElement('div');
     overlay.className = 'absence-modal-overlay';
     
-    // Contact info section
+    // Contact info section — read from Employee object directly
     const contactHtml = `
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; background: var(--color-bg-secondary); border-radius: 8px; margin-bottom: 16px;">
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1rem;">📧</span>
           <div>
             <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">Email</div>
-            <div style="font-size: 0.8rem;">${empDetails?.email || '-'}</div>
+            <div style="font-size: 0.8rem;">${emp.email || '-'}</div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1rem;">📱</span>
           <div>
             <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('schedule.phone')}</div>
-            <div style="font-size: 0.8rem;">${empDetails?.phone || '-'}</div>
+            <div style="font-size: 0.8rem;">${emp.phone || '-'}</div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 1rem;">📍</span>
+          <span style="font-size: 1rem;">👔</span>
           <div>
-            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('schedule.position')}</div>
-            <div style="font-size: 0.8rem;">${empDetails?.position || '-'}</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('settings.position')}</div>
+            <div style="font-size: 0.8rem;">${positionLabel}</div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <span style="font-size: 1rem;">🏢</span>
           <div>
-            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('schedule.department')}</div>
-            <div style="font-size: 0.8rem;">${empDetails?.department || '-'}</div>
+            <div style="font-size: 0.65rem; color: var(--color-text-muted); text-transform: uppercase;">${i18n.t('settings.department')}</div>
+            <div style="font-size: 0.8rem;">${emp.department || '-'}</div>
           </div>
         </div>
       </div>
     `;
     
-    // Qualifications section
-    const qualificationsHtml = empQualifications.length > 0 ? `
-      <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px;">
-        ${empQualifications.map(q => `
-          <span style="padding: 4px 10px; background: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'}20; 
-                       color: ${q.level === 'expert' ? '#10b981' : q.level === 'advanced' ? '#3b82f6' : '#64748b'}; 
-                       border-radius: 12px; font-size: 0.7rem; font-weight: 500;">
-            ${q.level === 'expert' ? '⭐' : q.level === 'advanced' ? '✓' : '○'} ${q.skillName}
-          </span>
-        `).join('')}
+    // Qualifications section — use dynamic definitions from settings
+    const qualDefs = this.getQualificationDefinitions();
+    const qualDefsMap = new Map(qualDefs.map(d => [d.id, d]));
+    const qualEntries = emp.qualifications ? Object.entries(emp.qualifications).filter(([_, v]) => v && v > 0) : [];
+    const qualificationsHtml = qualEntries.length > 0 ? `
+      <div style="display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px;">
+        ${qualEntries.map(([key, val]) => {
+          const def = qualDefsMap.get(key);
+          const name = def?.name || key;
+          const icon = def?.icon || '⭐';
+          const desc = def?.description || '';
+          const stars = '★'.repeat(val as number) + '☆'.repeat(5 - (val as number));
+          const color = (val as number) >= 4 ? '#10b981' : (val as number) >= 2 ? '#3b82f6' : '#94a3b8';
+          return '<div style="display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: ' + color + '10; border-radius: 10px;">' +
+            '<span style="font-size: 1rem;">' + icon + '</span>' +
+            '<div style="flex: 1; min-width: 0;">' +
+              '<div style="font-size: 0.78rem; font-weight: 500;">' + name + '</div>' +
+              (desc ? '<div style="font-size: 0.65rem; color: var(--color-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">' + desc + '</div>' : '') +
+            '</div>' +
+            '<span style="font-size: 0.75rem; color: ' + color + '; letter-spacing: 1px;">' + stars + '</span>' +
+          '</div>';
+        }).join('')}
       </div>
     ` : '';
     
-    // Limits summary
-    const limitsHtml = this.absenceTypes.slice(0, 5).map(type => {
+    // Limits summary — use calculated usedDays from actual absences
+    const limitsHtml = this.absenceTypes.map(type => {
       const limit = empLimits.find(l => l.absenceTypeId === type.id);
-      const total = limit?.totalDays || type.defaultDays || 0;
-      const used = limit?.usedDays || 0;
+      const total = limit?.totalDays ?? type.defaultDays ?? 0;
+      const used = usedDaysByType.get(type.id) || 0;
       const remaining = total - used;
       const percent = total > 0 ? (used / total) * 100 : 0;
       
-      if (total === 0) return '';
+      if (total === 0 && used === 0) return '';
       
       return `
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-          <span style="font-size: 1rem;">${type.icon}</span>
+          ${renderAbsenceIcon(type.id, type.color, 18)}
           <div style="flex: 1;">
             <div style="display: flex; justify-content: space-between; font-size: 0.75rem; margin-bottom: 2px;">
               <span>${type.name}</span>
@@ -20828,7 +24019,7 @@ class KappaApp {
       const type = this.absenceTypes.find(t => t.id === a.absenceTypeId);
       return `
         <div style="display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--color-border-light);">
-          <span style="font-size: 1.1rem;">${type?.icon || '📅'}</span>
+          ${type ? renderAbsenceIcon(type.id, type.color, 18) : renderAbsenceIcon('', '#64748b', 18)}
           <div style="flex: 1;">
             <div style="font-size: 0.8rem; font-weight: 500;">${type?.name || i18n.t('schedule.absenceDefault')}</div>
             <div style="font-size: 0.7rem; color: var(--color-text-muted);">
@@ -20849,7 +24040,7 @@ class KappaApp {
             </span>
             <div>
               <div>${emp.firstName} ${emp.lastName}</div>
-              <div style="font-size: 0.75rem; font-weight: 400; color: var(--color-text-secondary);">${empDetails?.position || i18n.t('schedule.employeeDefault')}</div>
+              <div style="font-size: 0.75rem; font-weight: 400; color: var(--color-text-secondary);">${positionLabel}</div>
             </div>
           </h2>
           <button class="absence-modal-close">
@@ -20860,14 +24051,13 @@ class KappaApp {
         </div>
         <div class="absence-modal-body">
           ${contactHtml}
-          ${empQualifications.length > 0 ? `<h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 8px 0;">🎓 ${i18n.t('schedule.qualifications')}</h4>` + qualificationsHtml : ''}
+          ${qualEntries.length > 0 ? `<h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 8px 0;">🎓 ${i18n.t('settings.qualifications')}</h4>` + qualificationsHtml : ''}
           <h4 style="font-size: 0.85rem; font-weight: 600; margin: 0 0 12px 0;">📊 ${i18n.t('schedule.limitsYear').replace('{0}', String(this.absenceYear))}</h4>
           ${limitsHtml || '<p style="color: var(--color-text-muted); font-size: 0.8rem;">' + i18n.t('schedule.noLimitsSet') + '</p>'}
           <h4 style="font-size: 0.85rem; font-weight: 600; margin: 20px 0 12px 0;">📅 ${i18n.t('schedule.absenceHistory')}</h4>
           ${absencesHtml}
         </div>
         <div class="absence-modal-footer">
-          <button class="absence-modal-btn secondary" id="empEditDetails">✏️ ${i18n.t('schedule.editProfile')}</button>
           <button class="absence-modal-btn secondary" id="empEditLimits">${i18n.t('schedule.editLimits')}</button>
           <button class="absence-modal-btn primary" id="empAddAbsence">${i18n.t('schedule.addAbsence')}</button>
         </div>
@@ -20877,11 +24067,6 @@ class KappaApp {
     document.body.appendChild(overlay);
     
     // Handlers
-    document.getElementById('empEditDetails')?.addEventListener('click', () => {
-      overlay.remove();
-      this.showEditEmployeeDetailsModal(employeeId, empDetails);
-    });
-    
     document.getElementById('empEditLimits')?.addEventListener('click', () => {
       overlay.remove();
       this.showEmployeeLimitsModal(employeeId);
@@ -21062,7 +24247,7 @@ class KappaApp {
           <div class="absence-form-group">
             <label class="absence-form-label">${i18n.t('schedule.absenceTypeLabel')}</label>
             <select class="absence-form-select" id="editType">
-              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === absence.absenceTypeId ? 'selected' : ''}>${t.icon} ${t.name}</option>`).join('')}
+              ${this.absenceTypes.map(t => `<option value="${t.id}" ${t.id === absence.absenceTypeId ? 'selected' : ''}>${getAbsenceEmoji(t.id)} ${t.name}</option>`).join('')}
             </select>
           </div>
           <div class="absence-form-row">
@@ -21138,56 +24323,62 @@ class KappaApp {
   }
   
   private exportAbsences(): void {
-    // Show export dropdown
-    const existing = document.querySelector('.absence-export-dropdown');
-    if (existing) { existing.remove(); return; }
-
-    const btn = document.getElementById('absenceExportBtn');
-    if (!btn) return;
-
-    const dropdown = document.createElement('div');
-    dropdown.className = 'absence-export-dropdown';
-    dropdown.innerHTML = `
-      <button class="absence-export-option" data-format="pdf">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        <div>
-          <span class="absence-export-option-title">PDF</span>
-          <span class="absence-export-option-desc">${i18n.t('schedule.exportPdfDesc')}</span>
+    const t = (key: string) => i18n.t(key);
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'employee-modal-overlay';
+    overlay.innerHTML = `
+      <div class="employee-modal" style="max-width: 450px;">
+        <div class="employee-modal-header">
+          <div class="employee-modal-info">
+            <h2>📥 ${t('export.exportAbsences')}</h2>
+            <div class="employee-modal-stats">
+              <span class="employee-modal-stat">${this.absenceYear}</span>
+            </div>
+          </div>
+          <button class="employee-modal-close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
-      </button>
-      <button class="absence-export-option" data-format="excel">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        <div>
-          <span class="absence-export-option-title">Excel</span>
-          <span class="absence-export-option-desc">${i18n.t('schedule.exportExcelDesc')}</span>
+        <div class="employee-modal-body">
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <button class="sched-export-btn" data-format="pdf">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15v-2h2v2z"/></svg>
+              <div>
+                <strong>PDF</strong>
+                <span>${t('export.pdfDescription')}</span>
+              </div>
+            </button>
+            <button class="sched-export-btn" data-format="excel">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+              <div>
+                <strong>Excel</strong>
+                <span>${t('export.excelDescription')}</span>
+              </div>
+            </button>
+          </div>
         </div>
-      </button>
+      </div>
     `;
-
-    const rect = btn.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.top = `${rect.bottom + 4}px`;
-    dropdown.style.right = `${window.innerWidth - rect.right}px`;
-    dropdown.style.zIndex = '1000';
-    document.body.appendChild(dropdown);
-
-    dropdown.querySelector('[data-format="pdf"]')?.addEventListener('click', () => {
-      dropdown.remove();
-      this.exportAbsencesToPdf();
+    
+    document.body.appendChild(overlay);
+    
+    overlay.querySelector('.employee-modal-close')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.remove();
     });
-    dropdown.querySelector('[data-format="excel"]')?.addEventListener('click', () => {
-      dropdown.remove();
-      this.exportAbsencesToExcel();
-    });
-
-    setTimeout(() => {
-      document.addEventListener('click', function handler(e) {
-        if (!dropdown.contains(e.target as Node)) {
-          dropdown.remove();
-          document.removeEventListener('click', handler);
+    
+    overlay.querySelectorAll('.sched-export-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const format = (btn as HTMLElement).dataset.format;
+        if (format === 'pdf') {
+          this.exportAbsencesToPdf();
+        } else if (format === 'excel') {
+          this.exportAbsencesToExcel();
         }
+        overlay.remove();
       });
-    }, 10);
+    });
   }
 
   // ==================== ABSENCE PDF EXPORT ====================
@@ -21199,13 +24390,13 @@ class KappaApp {
       const year = this.absenceYear;
       const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
       const months = [
-        i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-        i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-        i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-        i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+        i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+        i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+        i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+        i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
       ];
 
-      this.showToast(i18n.t('schedule.exportGenerating'), 'success');
+      this.showToast(i18n.t('schedule.exportGenerating'), 'success', 'notification');
 
       // A4 landscape: 297mm x 210mm at 96dpi ~ 1123 x 794
       const pageWidth = 1123;
@@ -21261,21 +24452,21 @@ class KappaApp {
         const typeEmps = new Set(typeAbs.map((a: any) => a.employeeId)).size;
         const avgDays = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
         return `<tr>
-          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+          <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">
             <div style="display: flex; align-items: center; gap: 6px;">
-              <div style="width: 10px; height: 10px; border-radius: 3px; background: ${t.color}; flex-shrink: 0;"></div>
-              ${t.icon} ${t.name}
+              <div style="width: 14px; height: 14px; border-radius: 3px; background: ${t.color}; flex-shrink: 0;"></div>
+              <span style="font-weight: 600;">${t.name}</span>
             </div>
           </td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${typeDays}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeAbs.length}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${typeEmps}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${avgDays}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${typeDays}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${typeAbs.length}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${typeEmps}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${avgDays}</td>
         </tr>`;
       }).join('');
 
       // Per-employee summary table with HR data
-      const empSummaryRows = employees.map((emp) => {
+      const empSummaryRows = employees.map((emp, empIdx) => {
         const details = empDetailsMap.get(emp.id);
         const empAbs = this.absences.filter((a: any) => a.employeeId === emp.id);
         const usedDays = empAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
@@ -21286,27 +24477,28 @@ class KappaApp {
         const remColor = remaining < 0 ? '#dc2626' : remaining === 0 ? '#d97706' : '#16a34a';
         const percent = limitTotal > 0 ? Math.round((usedDays / limitTotal) * 100) : 0;
         
-        return `<tr>
-          <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
-            <div style="display: flex; align-items: center; gap: 5px;">
-              <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp.firstName?.charAt(0) || ''}${emp.lastName?.charAt(0) || ''}</div>
-              <span style="font-weight: 500;">${emp.firstName} ${emp.lastName}</span>
+        const empBg = empIdx % 2 === 0 ? '#f0f4f8' : 'white';
+        return `<tr style="background: ${empBg};">
+          <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1;">
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <div style="width: 22px; height: 22px; border-radius: 50%; background: ${emp.color || '#475569'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; flex-shrink: 0;">${emp.firstName?.charAt(0) || ''}${emp.lastName?.charAt(0) || ''}</div>
+              <span style="font-weight: 600; color: #0f172a;">${emp.firstName} ${emp.lastName}</span>
             </div>
           </td>
-          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.department || '–'}</td>
-          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #64748b;">${details?.position || '–'}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: #3b82f6; font-weight: 600;">${limitTotal}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 600;">${usedDays}</td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; color: ${remColor}; font-weight: 700;">${remaining}</td>
-          <td style="padding: 5px 6px; font-size: 9px; text-align: center; border-bottom: 1px solid #f1f5f9;">
+          <td style="padding: 6px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${details?.department || '–'}</td>
+          <td style="padding: 6px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #334155; font-weight: 500;">${details?.position || '–'}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: #2563eb; font-weight: 700;">${limitTotal}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 700; color: #0f172a;">${usedDays}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; color: ${remColor}; font-weight: 700;">${remaining}</td>
+          <td style="padding: 6px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #cbd5e1;">
             <div style="display: flex; align-items: center; gap: 4px;">
-              <div style="flex: 1; height: 4px; background: #e2e8f0; border-radius: 2px; overflow: hidden;">
-                <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${percent > 90 ? '#dc2626' : percent > 70 ? '#d97706' : '#0097AC'}; border-radius: 2px;"></div>
+              <div style="flex: 1; height: 7px; background: #cbd5e1; border-radius: 3px; overflow: hidden;">
+                <div style="height: 100%; width: ${Math.min(percent, 100)}%; background: ${percent > 90 ? '#dc2626' : percent > 70 ? '#d97706' : '#0097AC'}; border-radius: 3px;"></div>
               </div>
-              <span style="font-size: 8px; color: #64748b; min-width: 24px;">${percent}%</span>
+              <span style="font-size: 9px; color: #334155; font-weight: 600; min-width: 28px;">${percent}%</span>
             </div>
           </td>
-          <td style="padding: 5px 6px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9;">${empAbs.length}</td>
+          <td style="padding: 6px 6px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 600; color: #0f172a;">${empAbs.length}</td>
         </tr>`;
       }).join('');
 
@@ -21317,21 +24509,21 @@ class KappaApp {
         <div style="padding: ${padding}px;">
           <h2 style="margin: 0 0 14px 0; font-size: 16px; color: #1e293b;">${i18n.t('schedule.absenceTimelineYearReport')} ${year}</h2>
           <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px;">
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #0097AC;">
-              <div style="font-size: 24px; font-weight: 700; color: #0097AC;">${totalAbsences}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #0097AC;">
+              <div style="font-size: 26px; font-weight: 800; color: #0097AC;">${totalAbsences}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceStatAbsences')}</div>
             </div>
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #3b82f6;">
-              <div style="font-size: 24px; font-weight: 700; color: #3b82f6;">${totalDays}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatTotalDays')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #3b82f6;">
+              <div style="font-size: 26px; font-weight: 800; color: #2563eb;">${totalDays}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceStatTotalDays')}</div>
             </div>
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #8b5cf6;">
-              <div style="font-size: 24px; font-weight: 700; color: #8b5cf6;">${affectedEmployees}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatEmployees')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #8b5cf6;">
+              <div style="font-size: 26px; font-weight: 800; color: #7c3aed;">${affectedEmployees}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceStatEmployees')}</div>
             </div>
-            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 3px solid #f59e0b;">
-              <div style="font-size: 24px; font-weight: 700; color: #f59e0b;">${avgPerEmp}</div>
-              <div style="font-size: 9px; color: #64748b; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px;">${i18n.t('schedule.absenceTimelineAvgPerEmp')}</div>
+            <div style="background: #f1f5f9; border-radius: 8px; padding: 12px; text-align: center; border-left: 4px solid #f59e0b;">
+              <div style="font-size: 26px; font-weight: 800; color: #d97706;">${avgPerEmp}</div>
+              <div style="font-size: 10px; color: #334155; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600;">${i18n.t('schedule.absenceTimelineAvgPerEmp')}</div>
             </div>
           </div>
 
@@ -21344,11 +24536,11 @@ class KappaApp {
               <table style="width: 100%; border-collapse: collapse;">
                 <thead>
                   <tr style="background: #f1f5f9;">
-                    <th style="padding: 5px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListType')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceListDays')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatAbsences')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">${i18n.t('schedule.absenceStatEmployees')}</th>
-                    <th style="padding: 5px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: #64748b; border-bottom: 1px solid #e2e8f0;">Ø ${i18n.t('schedule.absenceListDays')}</th>
+                    <th style="padding: 6px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceListType')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceListDays')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceStatAbsences')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">${i18n.t('schedule.absenceStatEmployees')}</th>
+                    <th style="padding: 6px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: #475569; border-bottom: 2px solid #cbd5e1; font-weight: 700;">Ø ${i18n.t('schedule.absenceListDays')}</th>
                   </tr>
                 </thead>
                 <tbody>${typeBreakdown}</tbody>
@@ -21377,11 +24569,11 @@ class KappaApp {
                   });
                   const barWidth = totalDays > 0 ? Math.round((monthDays / totalDays) * 100) : 0;
                   return `<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 3px;">
-                    <span style="font-size: 8px; color: #64748b; width: 24px; text-align: right;">${m.substring(0, 3)}</span>
-                    <div style="flex: 1; height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden;">
-                      <div style="height: 100%; width: ${barWidth}%; background: #0097AC; border-radius: 3px;"></div>
+                    <span style="font-size: 9px; color: #334155; width: 28px; text-align: right; font-weight: 600;">${m.substring(0, 3)}</span>
+                    <div style="flex: 1; height: 8px; background: #cbd5e1; border-radius: 4px; overflow: hidden;">
+                      <div style="height: 100%; width: ${barWidth}%; background: #0097AC; border-radius: 4px;"></div>
                     </div>
-                    <span style="font-size: 8px; color: #334155; font-weight: 600; min-width: 16px; text-align: right;">${monthDays}</span>
+                    <span style="font-size: 9px; color: #0f172a; font-weight: 700; min-width: 20px; text-align: right;">${monthDays}</span>
                   </div>`;
                 }).join('')}
               </div>
@@ -21402,20 +24594,20 @@ class KappaApp {
           <table style="width: 100%; border-collapse: collapse;">
             <thead>
               <tr style="background: #1e293b;">
-                <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.department') || 'Dział'}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.position') || 'Stanowisko'}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceEntitledDays')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceUsedDays')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceRemainingDays')}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.utilization') || 'Wykorzystanie'}</th>
-                <th style="padding: 6px 6px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceStatAbsences')}</th>
+                <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListEmployee')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.department') || 'Dział'}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.position') || 'Stanowisko'}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceEntitledDays')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceUsedDays')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceRemainingDays')}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.utilization') || 'Wykorzystanie'}</th>
+                <th style="padding: 7px 6px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceStatAbsences')}</th>
               </tr>
             </thead>
             <tbody>${empSummaryRows}</tbody>
           </table>
 
-          <div style="margin-top: 16px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; font-size: 9px; color: #92400e;">
+          <div style="margin-top: 16px; padding: 12px 14px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 6px; font-size: 10px; color: #78350f;">
             <strong>⚠️ ${i18n.t('schedule.vdaNotice') || 'Uwaga VDA/HR'}:</strong> 
             ${i18n.t('schedule.vdaNoticeText') || 'Dane dotyczące urlopów zgodne z wymogami VDA 6.3 (P6.3.2) – ewidencja czasu pracy. Urlop wypoczynkowy powinien być planowany równomiernie w ciągu roku. Pracownicy z pozostałym urlopem >5 dni powinni zaplanować wykorzystanie do końca Q4.'}
           </div>
@@ -21454,10 +24646,10 @@ class KappaApp {
 
       pages.forEach(p => p.remove());
       pdf.save(`Absences_${year}_${dateStr.replace(/\./g, '-')}.pdf`);
-      this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.exportSuccessfully'), 'success', 'notification');
     } catch (e) {
       console.error('PDF export error:', e);
-      this.showToast('Export failed', 'error');
+      this.showToast(i18n.t('messages.errorOccurred'), 'error');
     }
   }
 
@@ -21473,24 +24665,24 @@ class KappaApp {
       const start = startD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
       const end = endD.toLocaleDateString(i18n.getDateLocale(), { day: '2-digit', month: 'short', year: 'numeric' });
       const weekday = startD.toLocaleDateString(i18n.getDateLocale(), { weekday: 'short' });
-      const bg = idx % 2 === 0 ? '#f8fafc' : 'white';
+      const bg = idx % 2 === 0 ? '#f0f4f8' : 'white';
       return `<tr style="background: ${bg};">
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #0f172a;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <div style="width: 20px; height: 20px; border-radius: 50%; background: ${emp?.color || '#475569'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700; flex-shrink: 0;">${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}</div>
+            <span style="font-weight: 600;">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
+          </div>
+        </td>
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">
           <div style="display: flex; align-items: center; gap: 5px;">
-            <div style="width: 18px; height: 18px; border-radius: 50%; background: ${emp?.color || '#64748b'}; color: white; display: flex; align-items: center; justify-content: center; font-size: 7px; font-weight: 700; flex-shrink: 0;">${emp?.firstName?.charAt(0) || ''}${emp?.lastName?.charAt(0) || ''}</div>
-            <span style="font-weight: 500;">${emp?.firstName || ''} ${emp?.lastName || ''}</span>
+            <div style="width: 12px; height: 12px; border-radius: 3px; background: ${type?.color || '#475569'}; flex-shrink: 0;"></div>
+            <span style="font-weight: 500;">${type?.name || ''}</span>
           </div>
         </td>
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">
-          <div style="display: flex; align-items: center; gap: 4px;">
-            <div style="width: 8px; height: 8px; border-radius: 2px; background: ${type?.color || '#64748b'}; flex-shrink: 0;"></div>
-            ${type?.icon || ''} ${type?.name || ''}
-          </div>
-        </td>
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${weekday}, ${start}</td>
-        <td style="padding: 5px 8px; font-size: 10px; border-bottom: 1px solid #f1f5f9;">${end}</td>
-        <td style="padding: 5px 8px; font-size: 10px; text-align: center; border-bottom: 1px solid #f1f5f9; font-weight: 700; color: #0097AC;">${a.workDays}</td>
-        <td style="padding: 5px 8px; font-size: 9px; border-bottom: 1px solid #f1f5f9; color: #64748b; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${a.note || '–'}</td>
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">${weekday}, ${start}</td>
+        <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #cbd5e1; color: #1e293b;">${end}</td>
+        <td style="padding: 6px 8px; font-size: 11px; text-align: center; border-bottom: 1px solid #cbd5e1; font-weight: 700; color: #0097AC;">${a.workDays}</td>
+        <td style="padding: 6px 8px; font-size: 10px; border-bottom: 1px solid #cbd5e1; color: #475569; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${a.note || '–'}</td>
       </tr>`;
     }).join('');
 
@@ -21499,12 +24691,12 @@ class KappaApp {
       <table style="width: 100%; border-collapse: collapse;">
         <thead>
           <tr style="background: #1e293b;">
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListEmployee')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListType')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateFrom')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.dateTo')}</th>
-            <th style="padding: 6px 8px; text-align: center; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.absenceListDays')}</th>
-            <th style="padding: 6px 8px; text-align: left; font-size: 8px; text-transform: uppercase; color: white; letter-spacing: 0.5px;">${i18n.t('schedule.noteLabel')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListEmployee')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListType')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.dateFrom')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.dateTo')}</th>
+            <th style="padding: 7px 8px; text-align: center; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.absenceListDays')}</th>
+            <th style="padding: 7px 8px; text-align: left; font-size: 9px; text-transform: uppercase; color: white; letter-spacing: 0.5px; font-weight: 700;">${i18n.t('schedule.noteLabel')}</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -21518,148 +24710,263 @@ class KappaApp {
       const year = this.absenceYear;
       const employees = this.state.employees.filter(e => !e.status || e.status === 'available');
       const months = [
-        i18n.t('planning.monthJan'), i18n.t('planning.monthFeb'), i18n.t('planning.monthMar'),
-        i18n.t('planning.monthApr'), i18n.t('planning.monthMay'), i18n.t('planning.monthJun'),
-        i18n.t('planning.monthJul'), i18n.t('planning.monthAug'), i18n.t('planning.monthSep'),
-        i18n.t('planning.monthOct'), i18n.t('planning.monthNov'), i18n.t('planning.monthDec')
+        i18n.t('export.monthJan'), i18n.t('export.monthFeb'), i18n.t('export.monthMar'),
+        i18n.t('export.monthApr'), i18n.t('export.monthMay'), i18n.t('export.monthJun'),
+        i18n.t('export.monthJul'), i18n.t('export.monthAug'), i18n.t('export.monthSep'),
+        i18n.t('export.monthOct'), i18n.t('export.monthNov'), i18n.t('export.monthDec')
       ];
 
-      this.showToast(i18n.t('schedule.exportGenerating'), 'success');
+      this.showToast(i18n.t('schedule.exportGenerating'), 'success', 'notification');
 
       const workbook = new ExcelJS.Workbook();
-      workbook.creator = 'Kappa Planning';
+      workbook.creator = 'Kappa Planning – DRÄXLMAIER Group';
       workbook.created = new Date();
 
       const brandColor = 'FF0097AC';
       const black = 'FF000000';
       const white = 'FFFFFFFF';
-      const lightGray = 'FFF1F5F9';
-      const headerFont = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
-      const subFont = { name: 'Calibri', size: 10, color: { argb: 'FF334155' } };
+      const lightGray = 'FFF8FAFC';
+      const medGray = 'FFF1F5F9';
+      const darkSlate = 'FF1E293B';
+      const headerFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 11, bold: true, color: { argb: white } };
+      const subFont: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, color: { argb: 'FF334155' } };
       const thinBorder: Partial<ExcelJS.Borders> = {
         top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
         right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
       };
+      const dateLocale = i18n.getDateLocale();
+      const dateStr = new Date().toLocaleDateString(dateLocale);
+      const timeStr = new Date().toLocaleTimeString(dateLocale);
 
-      // ==================== SHEET 1: Overview ====================
-      const overviewSheet = workbook.addWorksheet(i18n.t('schedule.absences'), {
+      const addBrandHeader = (sheet: ExcelJS.Worksheet, colCount: number, subtitle: string) => {
+        const lastCol = String.fromCharCode(64 + Math.min(colCount, 26));
+        sheet.mergeCells(`A1:${lastCol}1`);
+        const titleCell = sheet.getCell('A1');
+        titleCell.value = 'DRÄXLMAIER Group';
+        titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: white } };
+        titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.getRow(1).height = 35;
+
+        sheet.mergeCells(`A2:${lastCol}2`);
+        const subCell = sheet.getCell('A2');
+        subCell.value = subtitle;
+        subCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: white } };
+        subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        subCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        sheet.getRow(2).height = 28;
+
+        sheet.mergeCells(`A3:${lastCol}3`);
+        const infoCell = sheet.getCell('A3');
+        infoCell.value = `${i18n.t('export.generatedAt')}: ${dateStr} ${timeStr} | ${i18n.t('export.user')}: ${this.state.settings.userName || 'System'}`;
+        infoCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
+        infoCell.alignment = { horizontal: 'center' };
+        sheet.getRow(3).height = 20;
+      };
+
+      // Compute KPIs (matching PDF)
+      const totalAbsences = this.absences.length;
+      const totalDays = this.absences.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+      const affectedEmployees = new Set(this.absences.map((a: any) => a.employeeId)).size;
+      const avgPerEmp = employees.length > 0 ? parseFloat((totalDays / employees.length).toFixed(1)) : 0;
+
+      // ==================== SHEET 1: Statistics Overview ====================
+      const statsSheet = workbook.addWorksheet(`📊 ${i18n.t('schedule.absences')}`, {
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 3 }]
+      });
+      statsSheet.columns = [
+        { width: 22 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }, { width: 16 }
+      ];
+
+      addBrandHeader(statsSheet, 8, `Kappa Planning – ${i18n.t('schedule.absenceTimelineYearReport')} ${year}`);
+
+      // KPI section
+      let row = 5;
+      statsSheet.mergeCells(`A${row}:H${row}`);
+      statsSheet.getCell(`A${row}`).value = `📊 ${i18n.t('schedule.absenceTimelineYearReport')} ${year}`;
+      statsSheet.getCell(`A${row}`).font = { name: 'Calibri', size: 13, bold: true, color: { argb: '001E293B' } };
+      statsSheet.getRow(row).height = 24;
+      row++;
+
+      const kpiLabels = [i18n.t('schedule.absenceStatAbsences'), i18n.t('schedule.absenceStatTotalDays'), i18n.t('schedule.absenceStatEmployees'), i18n.t('schedule.absenceTimelineAvgPerEmp')];
+      const kpiValues: (number | string)[] = [totalAbsences, totalDays, affectedEmployees, avgPerEmp];
+      const kpiColors = ['FF0097AC', 'FF2563EB', 'FF7C3AED', 'FFD97706'];
+
+      const kpiLabelRow = statsSheet.getRow(row);
+      const kpiValueRow = statsSheet.getRow(row + 1);
+      for (let k = 0; k < 4; k++) {
+        const col = k * 2 + 1;
+        statsSheet.mergeCells(row, col, row, col + 1);
+        statsSheet.mergeCells(row + 1, col, row + 1, col + 1);
+        const labelCell = kpiLabelRow.getCell(col);
+        labelCell.value = kpiLabels[k];
+        labelCell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: 'FF475569' } };
+        labelCell.alignment = { horizontal: 'center' };
+        labelCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
+        labelCell.border = thinBorder;
+
+        const valCell = kpiValueRow.getCell(col);
+        valCell.value = kpiValues[k];
+        valCell.font = { name: 'Calibri', size: 20, bold: true, color: { argb: kpiColors[k] } };
+        valCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        valCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: medGray } };
+        valCell.border = thinBorder;
+      }
+      kpiValueRow.height = 34;
+      row += 3;
+
+      // Monthly distribution section
+      statsSheet.mergeCells(`A${row}:H${row}`);
+      statsSheet.getCell(`A${row}`).value = `📅 ${i18n.t('schedule.monthlyDistribution') || 'Monthly Distribution'}`;
+      statsSheet.getCell(`A${row}`).font = { name: 'Calibri', size: 13, bold: true, color: { argb: '001E293B' } };
+      statsSheet.getRow(row).height = 24;
+      row++;
+
+      // Month headers
+      const monthHeaderRow = statsSheet.getRow(row);
+      const monthShortNames = months.map(m => m.substring(0, 3));
+      // Show months in pairs across 8 columns, but better: show 12 months in 2 rows of labels + values
+      // Use columns A-L for all 12 months
+      const monthLabelHeaders = [i18n.t('schedule.monthlyDistribution') || 'Month', i18n.t('schedule.absenceListDays')];
+      monthHeaderRow.getCell(1).value = monthLabelHeaders[0];
+      monthHeaderRow.getCell(1).font = headerFont;
+      monthHeaderRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
+      monthHeaderRow.getCell(1).border = thinBorder;
+      monthHeaderRow.getCell(2).value = monthLabelHeaders[1];
+      monthHeaderRow.getCell(2).font = headerFont;
+      monthHeaderRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
+      monthHeaderRow.getCell(2).alignment = { horizontal: 'center' };
+      monthHeaderRow.getCell(2).border = thinBorder;
+      monthHeaderRow.height = 22;
+      row++;
+
+      for (let m = 0; m < 12; m++) {
+        const monthStart = new Date(year, m, 1);
+        const monthEnd = new Date(year, m + 1, 0);
+        let monthDays = 0;
+        this.absences.forEach((a: any) => {
+          const s = new Date(a.startDate);
+          const e = new Date(a.endDate);
+          const os = s > monthStart ? s : monthStart;
+          const oe = e < monthEnd ? e : monthEnd;
+          if (os <= oe) {
+            const cur = new Date(os);
+            while (cur <= oe) { if (cur.getDay() !== 0 && cur.getDay() !== 6) monthDays++; cur.setDate(cur.getDate() + 1); }
+          }
+        });
+        const mRow = statsSheet.getRow(row);
+        mRow.getCell(1).value = months[m];
+        mRow.getCell(1).font = { name: 'Calibri', size: 10, bold: true, color: { argb: '00334155' } };
+        mRow.getCell(1).border = thinBorder;
+        mRow.getCell(2).value = monthDays;
+        mRow.getCell(2).font = { name: 'Calibri', size: 11, bold: true, color: { argb: monthDays > 0 ? '000097AC' : '0094A3B8' } };
+        mRow.getCell(2).alignment = { horizontal: 'center' };
+        mRow.getCell(2).border = thinBorder;
+        if (m % 2 === 0) {
+          mRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          mRow.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+        }
+        row++;
+      }
+
+      // ==================== SHEET 2: Absence List ====================
+      const overviewSheet = workbook.addWorksheet(`📋 ${i18n.t('schedule.absenceHistory')}`, {
         views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
       });
+      overviewSheet.columns = [
+        { width: 25 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 10 }, { width: 30 }
+      ];
 
-      // Header - DRÄXLMAIER branding
-      overviewSheet.mergeCells('A1:G1');
-      const titleCell = overviewSheet.getCell('A1');
-      titleCell.value = 'DRÄXLMAIER Group';
-      titleCell.font = { name: 'Calibri', size: 18, bold: true, color: { argb: white } };
-      titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
-      titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      overviewSheet.getRow(1).height = 35;
-
-      overviewSheet.mergeCells('A2:G2');
-      const subCell = overviewSheet.getCell('A2');
-      subCell.value = `Kappa Planning – ${i18n.t('schedule.absences')} ${year}`;
-      subCell.font = { name: 'Calibri', size: 13, bold: true, color: { argb: white } };
-      subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
-      subCell.alignment = { horizontal: 'center', vertical: 'middle' };
-      overviewSheet.getRow(2).height = 28;
-
-      overviewSheet.mergeCells('A3:G3');
-      const infoCell = overviewSheet.getCell('A3');
-      infoCell.value = `${i18n.t('export.generatedAt')}: ${new Date().toLocaleDateString(i18n.getDateLocale())} ${new Date().toLocaleTimeString(i18n.getDateLocale())} | ${i18n.t('export.user')}: ${this.state.settings.userName || 'System'}`;
-      infoCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF94A3B8' } };
-      infoCell.alignment = { horizontal: 'center' };
-      overviewSheet.getRow(3).height = 20;
+      addBrandHeader(overviewSheet, 6, `${i18n.t('schedule.absenceHistory')} – ${year}`);
 
       // Column headers
-      const headers = [
+      const listHeaders = [
         i18n.t('schedule.absenceListEmployee'),
         i18n.t('schedule.absenceListType'),
         i18n.t('schedule.dateFrom'),
         i18n.t('schedule.dateTo'),
         i18n.t('schedule.absenceListDays'),
-        i18n.t('schedule.noteLabel'),
-        i18n.t('schedule.absenceTypeLabel')
-      ];
-      overviewSheet.columns = [
-        { width: 25 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 10 }, { width: 30 }, { width: 15 }
+        i18n.t('schedule.noteLabel')
       ];
 
-      const headerRow = overviewSheet.getRow(4);
-      headers.forEach((h, i) => {
-        const cell = headerRow.getCell(i + 1);
+      const listHeaderRow = overviewSheet.getRow(4);
+      listHeaders.forEach((h, i) => {
+        const cell = listHeaderRow.getCell(i + 1);
         cell.value = h;
         cell.font = headerFont;
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = thinBorder;
       });
-      headerRow.height = 24;
+      listHeaderRow.height = 24;
 
       // Data rows
       const sorted = [...this.absences].sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime());
       sorted.forEach((a: any, idx: number) => {
         const emp = this.state.employees.find(e => e.id === a.employeeId);
         const type = this.absenceTypes.find((t: any) => t.id === a.absenceTypeId);
-        const row = overviewSheet.getRow(idx + 5);
-        row.getCell(1).value = `${emp?.firstName || ''} ${emp?.lastName || ''}`;
-        row.getCell(2).value = `${type?.icon || ''} ${type?.name || ''}`;
-        row.getCell(3).value = a.startDate;
-        row.getCell(4).value = a.endDate;
-        row.getCell(5).value = a.workDays;
-        row.getCell(6).value = a.note || '';
-        row.getCell(7).value = type?.name || '';
+        const r = overviewSheet.getRow(idx + 5);
+        r.getCell(1).value = `${emp?.firstName || ''} ${emp?.lastName || ''}`;
+        r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+        r.getCell(2).value = `${type ? getAbsenceEmoji(type.id) : ''} ${type?.name || ''}`;
+        r.getCell(2).font = subFont;
+        r.getCell(3).value = a.startDate;
+        r.getCell(3).font = subFont;
+        r.getCell(4).value = a.endDate;
+        r.getCell(4).font = subFont;
+        r.getCell(5).value = a.workDays;
+        r.getCell(5).font = { name: 'Calibri', size: 11, bold: true, color: { argb: '000097AC' } };
+        r.getCell(5).alignment = { horizontal: 'center' };
+        r.getCell(6).value = a.note || '';
+        r.getCell(6).font = { name: 'Calibri', size: 9, color: { argb: 'FF475569' } };
 
-        for (let c = 1; c <= 7; c++) {
-          const cell = row.getCell(c);
-          cell.font = subFont;
-          cell.border = thinBorder;
-          if (idx % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+        for (let c = 1; c <= 6; c++) {
+          r.getCell(c).border = thinBorder;
+          if (idx % 2 === 0) r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
         }
-        row.getCell(5).alignment = { horizontal: 'center' };
       });
 
-      // ==================== SHEET 2: Per Employee Summary ====================
-      const empSheet = workbook.addWorksheet(i18n.t('schedule.absenceListEmployee'), {
-        views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }]
+      // ==================== SHEET 3: Employee Summary (matching PDF page 2) ====================
+      const empSheet = workbook.addWorksheet(`👥 ${i18n.t('schedule.absenceListEmployee')}`, {
+        views: [{ state: 'frozen', xSplit: 1, ySplit: 4 }]
       });
-
-      empSheet.mergeCells('A1:N1');
-      empSheet.getCell('A1').value = 'DRÄXLMAIER Group';
-      empSheet.getCell('A1').font = { name: 'Calibri', size: 16, bold: true, color: { argb: white } };
-      empSheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
-      empSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
-      empSheet.getRow(1).height = 30;
-
-      empSheet.mergeCells('A2:N2');
-      empSheet.getCell('A2').value = `${i18n.t('schedule.absenceListEmployee')} – ${i18n.t('schedule.absences')} ${year}`;
-      empSheet.getCell('A2').font = { name: 'Calibri', size: 12, bold: true, color: { argb: white } };
-      empSheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
-      empSheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
-      empSheet.getRow(2).height = 26;
-
-      // Headers: Employee, Jan, Feb, ... Dec, Total
-      const empHeaders = [i18n.t('schedule.absenceListEmployee'), ...months, i18n.t('schedule.total')];
       empSheet.columns = [
-        { width: 25 }, ...months.map(() => ({ width: 10 })), { width: 12 }
+        { width: 25 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 },
+        { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 10 },
+        { width: 10 }, { width: 10 }, { width: 10 }, { width: 12 }, { width: 12 },
+        { width: 12 }, { width: 12 }, { width: 10 }
       ];
-      const empHeaderRow = empSheet.getRow(3);
+
+      addBrandHeader(empSheet, 18, `${i18n.t('schedule.absenceListEmployee')} – ${i18n.t('schedule.absences')} ${year}`);
+
+      // Headers: Employee, Jan..Dec, Total, Entitled, Used, Remaining, Count
+      const empHeaders = [
+        i18n.t('schedule.absenceListEmployee'),
+        ...months,
+        i18n.t('schedule.total'),
+        i18n.t('schedule.absenceEntitledDays'),
+        i18n.t('schedule.absenceUsedDays'),
+        i18n.t('schedule.absenceRemainingDays'),
+        i18n.t('schedule.absenceStatAbsences')
+      ];
+      const empHeaderRow = empSheet.getRow(4);
       empHeaders.forEach((h, i) => {
         const cell = empHeaderRow.getCell(i + 1);
         cell.value = h;
-        cell.font = headerFont;
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+        cell.font = { name: 'Calibri', size: 9, bold: true, color: { argb: white } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i >= 14 ? darkSlate : brandColor } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
         cell.border = thinBorder;
       });
-      empHeaderRow.height = 22;
+      empHeaderRow.height = 28;
 
       employees.forEach((emp, idx) => {
-        const row = empSheet.getRow(idx + 4);
-        row.getCell(1).value = `${emp.firstName} ${emp.lastName}`;
-        row.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
-        row.getCell(1).border = thinBorder;
+        const r = empSheet.getRow(idx + 5);
+        r.getCell(1).value = `${emp.firstName} ${emp.lastName}`;
+        r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+        r.getCell(1).border = thinBorder;
 
         let empTotal = 0;
         for (let m = 0; m < 12; m++) {
@@ -21680,13 +24987,13 @@ class KappaApp {
             }
           });
           
-          const cell = row.getCell(m + 2);
+          const cell = r.getCell(m + 2);
           cell.value = days || '';
           cell.font = subFont;
           cell.alignment = { horizontal: 'center' };
           cell.border = thinBorder;
           
-          // Color coding
+          // Color coding for days with absences
           if (days > 0) {
             const intensity = Math.min(days * 10, 80);
             cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${Math.round(255 - intensity * 0.6).toString(16).padStart(2, '0')}${Math.round(255 - intensity * 0.2).toString(16).padStart(2, '0')}${Math.round(255 - intensity * 0.6).toString(16).padStart(2, '0')}` } };
@@ -21696,66 +25003,95 @@ class KappaApp {
           empTotal += days;
         }
 
-        const totalCell = row.getCell(14);
+        // Total column
+        const totalCell = r.getCell(14);
         totalCell.value = empTotal;
-        totalCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0097AC' } };
+        totalCell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '000097AC' } };
         totalCell.alignment = { horizontal: 'center' };
         totalCell.border = thinBorder;
+
+        // Entitled days
+        const limitTotal = this.absenceLimits
+          .filter((l: any) => l.employeeId === emp.id && l.year === year)
+          .reduce((sum: number, l: any) => sum + (l.totalDays || 0), 0);
+        const usedDays = this.absences.filter((a: any) => a.employeeId === emp.id)
+          .reduce((s: number, a: any) => s + (a.workDays || 0), 0);
+        const remaining = limitTotal - usedDays;
+
+        r.getCell(15).value = limitTotal || '';
+        r.getCell(15).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF2563EB' } };
+        r.getCell(15).alignment = { horizontal: 'center' };
+        r.getCell(15).border = thinBorder;
+
+        r.getCell(16).value = usedDays;
+        r.getCell(16).font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FF0F172A' } };
+        r.getCell(16).alignment = { horizontal: 'center' };
+        r.getCell(16).border = thinBorder;
+
+        r.getCell(17).value = limitTotal > 0 ? remaining : '';
+        r.getCell(17).font = { name: 'Calibri', size: 10, bold: true, color: { argb: remaining < 0 ? 'FFDC2626' : remaining === 0 ? 'FFD97706' : 'FF16A34A' } };
+        r.getCell(17).alignment = { horizontal: 'center' };
+        r.getCell(17).border = thinBorder;
+
+        // Absence count
+        const empAbsCount = this.absences.filter((a: any) => a.employeeId === emp.id).length;
+        r.getCell(18).value = empAbsCount;
+        r.getCell(18).font = subFont;
+        r.getCell(18).alignment = { horizontal: 'center' };
+        r.getCell(18).border = thinBorder;
+
         if (idx % 2 === 0) {
-          row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          r.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          for (let c = 14; c <= 18; c++) {
+            if (!r.getCell(c).fill || (r.getCell(c).fill as any).fgColor?.argb !== medGray) {
+              r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+            }
+          }
         }
       });
 
-      // ==================== SHEET 3: Per Type Breakdown ====================
-      const typeSheet = workbook.addWorksheet(i18n.t('schedule.absenceTypeLabel'), {
-        views: [{ state: 'frozen', xSplit: 0, ySplit: 3 }]
+      // ==================== SHEET 4: Per Type Breakdown ====================
+      const typeSheet = workbook.addWorksheet(`📊 ${i18n.t('schedule.absenceTypeLabel')}`, {
+        views: [{ state: 'frozen', xSplit: 0, ySplit: 4 }]
       });
+      typeSheet.columns = [{ width: 25 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 14 }];
 
-      typeSheet.mergeCells('A1:E1');
-      typeSheet.getCell('A1').value = 'DRÄXLMAIER Group';
-      typeSheet.getCell('A1').font = { name: 'Calibri', size: 16, bold: true, color: { argb: white } };
-      typeSheet.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: black } };
-      typeSheet.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' };
-      typeSheet.getRow(1).height = 30;
-
-      typeSheet.mergeCells('A2:E2');
-      typeSheet.getCell('A2').value = `${i18n.t('schedule.absenceTypeLabel')} – ${year}`;
-      typeSheet.getCell('A2').font = { name: 'Calibri', size: 12, bold: true, color: { argb: white } };
-      typeSheet.getCell('A2').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
-      typeSheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
-      typeSheet.getRow(2).height = 26;
+      addBrandHeader(typeSheet, 5, `${i18n.t('schedule.absenceTimelineByType')} – ${year}`);
 
       const typeHeaders = [i18n.t('schedule.absenceTypeLabel'), i18n.t('schedule.absenceStatAbsences'), i18n.t('schedule.absenceListDays'), i18n.t('schedule.absenceStatEmployees'), `Ø ${i18n.t('schedule.absenceListDays')}`];
-      typeSheet.columns = [{ width: 25 }, { width: 14 }, { width: 14 }, { width: 16 }, { width: 14 }];
-      const typeHeaderRow = typeSheet.getRow(3);
+      const typeHeaderRow = typeSheet.getRow(4);
       typeHeaders.forEach((h, i) => {
         const cell = typeHeaderRow.getCell(i + 1);
         cell.value = h;
         cell.font = headerFont;
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: brandColor } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: darkSlate } };
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
         cell.border = thinBorder;
       });
+      typeHeaderRow.height = 24;
 
       this.absenceTypes.filter((t: any) => t.isActive).forEach((t: any, idx: number) => {
         const typeAbs = this.absences.filter((a: any) => a.absenceTypeId === t.id);
         const typeDays = typeAbs.reduce((s: number, a: any) => s + (a.workDays || 0), 0);
         const typeEmps = new Set(typeAbs.map((a: any) => a.employeeId)).size;
-        const avg = typeAbs.length > 0 ? (typeDays / typeAbs.length).toFixed(1) : '0';
+        const avg = typeAbs.length > 0 ? parseFloat((typeDays / typeAbs.length).toFixed(1)) : 0;
 
-        const row = typeSheet.getRow(idx + 4);
-        row.getCell(1).value = `${t.icon} ${t.name}`;
-        row.getCell(2).value = typeAbs.length;
-        row.getCell(3).value = typeDays;
-        row.getCell(4).value = typeEmps;
-        row.getCell(5).value = parseFloat(avg);
+        const r = typeSheet.getRow(idx + 5);
+        r.getCell(1).value = `${getAbsenceEmoji(t.id)} ${t.name}`;
+        r.getCell(1).font = { name: 'Calibri', size: 10, bold: true };
+        r.getCell(2).value = typeAbs.length;
+        r.getCell(2).font = { name: 'Calibri', size: 11, bold: true, color: { argb: '000097AC' } };
+        r.getCell(3).value = typeDays;
+        r.getCell(3).font = { name: 'Calibri', size: 11, bold: true, color: { argb: 'FF0F172A' } };
+        r.getCell(4).value = typeEmps;
+        r.getCell(4).font = subFont;
+        r.getCell(5).value = avg;
+        r.getCell(5).font = subFont;
 
         for (let c = 1; c <= 5; c++) {
-          const cell = row.getCell(c);
-          cell.font = subFont;
-          cell.alignment = { horizontal: c === 1 ? 'left' : 'center' };
-          cell.border = thinBorder;
-          if (idx % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
+          r.getCell(c).alignment = { horizontal: c === 1 ? 'left' : 'center' };
+          r.getCell(c).border = thinBorder;
+          if (idx % 2 === 0) r.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: lightGray } };
         }
       });
 
@@ -21763,10 +25099,10 @@ class KappaApp {
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       saveAs(blob, `Absences_${year}.xlsx`);
-      this.showToast(i18n.t('messages.exportSuccessfully'), 'success');
+      this.showToast(i18n.t('messages.exportSuccessfully'), 'success', 'notification');
     } catch (e) {
       console.error('Excel export error:', e);
-      this.showToast('Export failed', 'error');
+      this.showToast(i18n.t('messages.errorOccurred'), 'error');
     }
   }
 }
