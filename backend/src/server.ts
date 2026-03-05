@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { customersRouter, typesRouter, partsRouter, testsRouter, settingsRouter, dataRouter } from './routes/index.js';
 import { projectsRouter } from './routes/projects.js';
 import { 
@@ -20,6 +22,9 @@ import {
   recoveryRouter
 } from './routes/schedule.js';
 import { initDatabase } from './database/db.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -62,6 +67,18 @@ app.use('/api/extra-tasks', extraTasksRouter);
 app.use('/api/email', emailRouter);
 app.use('/api/recovery', recoveryRouter);
 
+// Serve static frontend files (production)
+const frontendPath = path.join(__dirname, '../../dist');
+app.use(express.static(frontendPath));
+
+// SPA fallback - serve index.html for non-API routes
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+  res.sendFile(path.join(frontendPath, 'index.html'));
+});
+
 // Error handling
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('Error:', err);
@@ -70,8 +87,8 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // Initialize database and start server
 initDatabase().then(() => {
-  app.listen(PORT, () => {
-    console.log(`🚀 Backend server running on http://localhost:${PORT}`);
+  app.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`🚀 Backend server running on http://0.0.0.0:${PORT}`);
     console.log(`📊 API endpoint: http://localhost:${PORT}/api`);
   });
 }).catch((err) => {
