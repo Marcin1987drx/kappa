@@ -17,16 +17,17 @@ echo.
 
 :: Sprawdz czy portable Node.js jest dostepny
 if not exist "%NODE_EXE%" (
-    echo  [BLAD] Nie znaleziono node.exe w folderze node\
+    echo  Node.js nie znaleziony - uruchamiam instalator...
     echo.
-    echo  Pobierz Node.js z: https://nodejs.org/dist/v20.11.1/node-v20.11.1-win-x64.zip
-    echo  Rozpakuj i skopiuj ZAWARTOSC folderu do:
-    echo  %APP_DIR%node\
-    echo.
-    echo  W folderze node\ powinny byc pliki: node.exe, npm, npm.cmd itd.
-    echo.
-    pause
-    exit /b 1
+    if exist "%APP_DIR%INSTALUJ.bat" (
+        call "%APP_DIR%INSTALUJ.bat"
+        if not exist "%NODE_EXE%" exit /b 1
+    ) else (
+        echo  [BLAD] Brak INSTALUJ.bat i node.exe.
+        echo  Uruchom INSTALUJ.bat aby skonfigurowac aplikacje.
+        pause
+        exit /b 1
+    )
 )
 
 :: ============================================

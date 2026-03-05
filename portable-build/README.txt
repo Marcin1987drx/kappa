@@ -13,38 +13,28 @@ Nie wymaga instalacji - wystarczy kliknac skrot.
 
 === PIERWSZE URUCHOMIENIE (ADMINISTRATOR) ===
 
-1. Pobierz Node.js portable:
-   https://nodejs.org/dist/v20.11.1/node-v20.11.1-win-x64.zip
+1. Skopiuj caly ten folder na dysk sieciowy
+   np. \\serwer\DzialQS\KappaPlannung\
 
-2. Rozpakuj archiwum ZIP.
+2. Kliknij dwukrotnie "INSTALUJ.bat"
+   -> Wszystko pobierze sie i skonfiguruje automatycznie!
+   -> Na koniec pojawi sie skrot na pulpicie.
 
-3. Skopiuj ZAWARTOSC rozpakowanego folderu (node.exe, npm.cmd, itp.)
-   do podfolderu "node\" w tym katalogu.
-
-   Struktura powinna wygladac tak:
-   KappaPlannung\
-   ├── node\
-   │   ├── node.exe         <-- TEN PLIK MUSI TU BYC
-   │   ├── npm.cmd
-   │   ├── node_modules\
-   │   └── ...
-   ├── backend\
-   ├── dist\
-   ├── start-kappa.bat
-   ├── zainstaluj-skrot.bat
-   └── README.txt
-
-4. Kliknij "zainstaluj-skrot.bat" aby utworzyc skrot na pulpicie.
-
-5. Kliknij skrot "Kappa Plannung" na pulpicie - gotowe!
+3. Gotowe! Uzyj skrotu "Kappa Plannung" na pulpicie.
 
 
 === DLA UZYTKOWNIKOW ===
 
-1. Kliknij dwukrotnie "zainstaluj-skrot.bat"
-   (wystarczy raz - tworzy skrot na pulpicie)
+1. Kliknij dwukrotnie "INSTALUJ.bat" w folderze aplikacji
+   (wystarczy raz - pobiera Node.js i tworzy skrot na pulpicie)
 
 2. Od teraz uzywaj skrotu "Kappa Plannung" na pulpicie.
+
+   UWAGA: Jesli INSTALUJ.bat nie moze pobrac Node.js
+   (brak internetu / blokada firmy), popros administratora
+   aby uruchomil INSTALUJ.bat na komputerze z dostepem do
+   internetu - Node.js pobierze sie do folderu wspolnego
+   i juz nie trzeba bedzie go pobierac ponownie.
 
 
 === JAK TO DZIALA? ===
