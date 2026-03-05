@@ -444,6 +444,15 @@ dataRouter.post('/import', (req, res) => {
       }
     }
 
+    // Import preferences
+    if (preferences?.length) {
+      runQuery('DELETE FROM user_preferences', []);
+      preferences.forEach((p: any) => {
+        runQuery(`INSERT INTO user_preferences (key, value) VALUES (?, ?)`,
+          [p.key, p.value]);
+      });
+    }
+
     res.json({ success: true });
   } catch (error) {
     console.error(error);
@@ -679,6 +688,7 @@ dataRouter.post('/backup', (req, res) => {
       comments: getAll('SELECT * FROM comments'),
       logs: getAll('SELECT * FROM logs'),
       templates: getAll('SELECT * FROM schedule_templates'),
+      preferences: getAll('SELECT * FROM user_preferences'),
       settings: null
     };
 
