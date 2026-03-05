@@ -2,13 +2,59 @@
   "name": "kappaplannung",
   "version": "1.0.0",
   "description": "DRÄXLMAIER Kappa Planning Application",
+  "main": "electron-main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "electron": "electron .",
-    "build:portable": "bash build-portable.sh"
+    "build:portable": "bash build-portable.sh",
+    "build:electron": "bash build-electron.sh"
+  },
+  "build": {
+    "appId": "com.draxlmaier.kappaplannung",
+    "productName": "Kappa Plannung",
+    "files": [
+      "electron-main.cjs",
+      "electron-preload.cjs"
+    ],
+    "extraResources": [
+      {
+        "from": "dist",
+        "to": "dist"
+      },
+      {
+        "from": "backend/dist",
+        "to": "backend/dist"
+      },
+      {
+        "from": "backend/package.json",
+        "to": "backend/package.json"
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "backend/data",
+        "to": "backend/data"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "directories": {
+      "output": "release"
+    },
+    "portable": {
+      "artifactName": "KappaPlanning.exe"
+    }
   },
   "dependencies": {
     "chart.js": "^4.4.1",
@@ -21,6 +67,8 @@
   "devDependencies": {
     "@types/file-saver": "^2.0.7",
     "@types/node": "^20.10.6",
+    "electron": "^40.7.0",
+    "electron-builder": "^26.8.1",
     "typescript": "^5.3.3",
     "vite": "^5.0.10"
   }
