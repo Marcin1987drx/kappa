@@ -179,6 +179,14 @@
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
                 </svg>
               </button>
+              <div class="toolbar-divider"></div>
+              <!-- Lock/Unlock toggle for planning -->
+              <button class="btn-toolbar-compact planning-lock-btn" id="toggleAdminUnlock" title="Unlock">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+              </button>
 
             </div>
           </div>
@@ -1988,6 +1996,45 @@
         <div class="modal-footer">
           <button class="btn-secondary modal-cancel" data-i18n="common.cancel">Cancel</button>
           <button class="btn-primary modal-confirm" data-i18n="common.save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Unlock Modal (Glassmorphism) -->
+    <div id="unlockModal" class="unlock-modal">
+      <div class="unlock-modal-backdrop"></div>
+      <div class="unlock-modal-card">
+        <div class="unlock-modal-glow"></div>
+        <div class="unlock-modal-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="40" height="40">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+        <h2 class="unlock-modal-title" data-i18n="settings.unlockApp">Unlock Application</h2>
+        <p class="unlock-modal-hint" data-i18n="settings.unlockAppHint">Enter password to unlock admin features</p>
+        <div class="unlock-modal-input-wrapper">
+          <svg class="unlock-modal-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <input type="password" id="unlockPasswordInput" class="unlock-modal-input" data-i18n-placeholder="settings.enterPasswordToUnlock" placeholder="Enter password..." autocomplete="off" />
+          <button class="unlock-modal-toggle-pw" id="unlockTogglePw" type="button" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+        <div class="unlock-modal-error" id="unlockError"></div>
+        <div class="unlock-modal-actions">
+          <button class="unlock-modal-btn-cancel" id="unlockCancel" data-i18n="common.cancel">Cancel</button>
+          <button class="unlock-modal-btn-confirm" id="unlockConfirm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+            </svg>
+            <span data-i18n="settings.unlock">Unlock</span>
+          </button>
         </div>
       </div>
     </div>
