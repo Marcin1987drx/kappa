@@ -40,13 +40,13 @@ function createSplashWindow() {
     width: 380,
     height: 400,
     frame: false,
-    transparent: true,
     resizable: false,
     alwaysOnTop: true,
     skipTaskbar: false,
     center: true,
     title: 'Kappa Plannung',
-    show: false,
+    backgroundColor: '#0a0a0a',
+    show: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true
@@ -58,9 +58,6 @@ function createSplashWindow() {
     : path.join(__dirname, 'splash.html');
 
   splashWindow.loadFile(splashPath);
-  splashWindow.once('ready-to-show', () => {
-    splashWindow.show();
-  });
 }
 
 // ──── Kill any leftover process on PORT (previous crash) ────
