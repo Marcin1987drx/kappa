@@ -92,7 +92,8 @@ function startServer() {
         ...process.env,
         PORT: String(PORT),
         NODE_ENV: 'production',
-        ELECTRON: '1'
+        ELECTRON: '1',
+        ELECTRON_RUN_AS_NODE: '1'
       },
       stdio: ['ignore', 'pipe', 'pipe']
     });
