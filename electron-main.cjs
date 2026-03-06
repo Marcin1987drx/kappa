@@ -1,7 +1,7 @@
-const { app, BrowserWindow, dialog, session, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, session, shell, ipcMain, utilityProcess } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn, execSync } = require('child_process');
+const { execSync } = require('child_process');
 const http = require('http');
 const net = require('net');
 
@@ -86,17 +86,23 @@ function startServer() {
 
     let serverStderr = '';
 
-    serverProcess = spawn(process.execPath, [serverPath], {
-      cwd: backendCwd,
-      env: {
-        ...process.env,
-        PORT: String(PORT),
-        NODE_ENV: 'production',
-        ELECTRON: '1',
-        ELECTRON_RUN_AS_NODE: '1'
-      },
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
+    // Use Electron's utilityProcess.fork() – runs a proper Node.js environment
+    // that supports ESM modules without needing ELECTRON_RUN_AS_NODE
+    try {
+      serverProcess = utilityProcess.fork(serverPath, [], {
+        cwd: backendCwd,
+        env: {
+          ...process.env,
+          PORT: String(PORT),
+          NODE_ENV: 'production',
+          ELECTRON: '1'
+        },
+        stdio: 'pipe'
+      });
+    } catch (err) {
+      reject(new Error(`Failed to fork server process: ${err.message}`));
+      return;
+    }
 
     serverProcess.stdout.on('data', (data) => {
       console.log('[server]', data.toString().trim());
@@ -106,10 +112,6 @@ function startServer() {
       const msg = data.toString().trim();
       console.error('[server]', msg);
       serverStderr += msg + '\n';
-    });
-
-    serverProcess.on('error', (err) => {
-      reject(new Error(`Failed to start server: ${err.message}`));
     });
 
     let earlyExit = false;
