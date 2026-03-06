@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 
 const __filename_routes = fileURLToPath(import.meta.url);
 const __dirname_routes = dirname(__filename_routes);
+const defaultBackupDir = process.env.BACKUP_DIR || join(__dirname_routes, '../../../backups');
 
 // Simple CRUD router generator with upsert support
 function createCrudRouter(table: string) {
@@ -706,7 +707,7 @@ dataRouter.post('/backup', (req, res) => {
     if (setting) data.settings = JSON.parse(setting.value);
 
     // Save to backup path
-    const targetDir = backupPath || join(__dirname_routes, '../../../backups');
+    const targetDir = backupPath || defaultBackupDir;
     
     if (!existsSync(targetDir)) {
       mkdirSync(targetDir, { recursive: true });
@@ -732,7 +733,7 @@ dataRouter.post('/backup', (req, res) => {
 // Get backup list
 dataRouter.get('/backups', (req, res) => {
   try {
-    const backupPath = (req.query.path as string) || join(__dirname_routes, '../../../backups');
+    const backupPath = (req.query.path as string) || defaultBackupDir;
     
     if (!existsSync(backupPath)) {
       return res.json({ backups: [], path: backupPath });
@@ -761,7 +762,7 @@ dataRouter.get('/backups', (req, res) => {
 dataRouter.post('/backup/restore', (req, res) => {
   try {
     const { filename, backupPath } = req.body;
-    const dir = backupPath || join(__dirname_routes, '../../../backups');
+    const dir = backupPath || defaultBackupDir;
     const fullPath = join(dir, filename);
 
     if (!existsSync(fullPath)) {

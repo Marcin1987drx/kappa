@@ -68,7 +68,7 @@ app.use('/api/email', emailRouter);
 app.use('/api/recovery', recoveryRouter);
 
 // Serve static frontend files (production)
-const frontendPath = path.join(__dirname, '../../dist');
+const frontendPath = process.env.FRONTEND_DIR || path.join(__dirname, '../../dist');
 app.use(express.static(frontendPath));
 
 // SPA fallback - serve index.html for non-API routes

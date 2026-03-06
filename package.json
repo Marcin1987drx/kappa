@@ -26,16 +26,16 @@
         "to": "dist"
       },
       {
-        "from": "backend/dist",
-        "to": "backend/dist"
+        "from": "backend/dist/server.bundle.cjs",
+        "to": "backend/dist/server.bundle.cjs"
       },
       {
         "from": "backend/package.json",
         "to": "backend/package.json"
       },
       {
-        "from": "backend/node_modules",
-        "to": "backend/node_modules"
+        "from": "backend/node_modules/sql.js",
+        "to": "backend/node_modules/sql.js"
       },
       {
         "from": "backend/data",

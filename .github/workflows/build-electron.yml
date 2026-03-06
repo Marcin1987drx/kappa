@@ -29,6 +29,10 @@ jobs:
         working-directory: backend
         run: npx tsc
 
+      - name: Bundle backend
+        working-directory: backend
+        run: node esbuild.config.js
+
       - name: Install backend production deps only
         working-directory: backend
         run: npm install --omit=dev

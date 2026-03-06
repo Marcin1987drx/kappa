@@ -104,7 +104,7 @@ function startServer() {
     // Free port if a leftover process from a previous crash is holding it
     await killProcessOnPort(PORT);
 
-    const serverPath = getResourcePath('backend', 'dist', 'server.js');
+    const serverPath = getResourcePath('backend', 'dist', 'server.bundle.cjs');
     const backendCwd = getResourcePath('backend');
 
     // Verify server file exists
@@ -115,8 +115,8 @@ function startServer() {
 
     let serverStderr = '';
 
-    // Use Electron's utilityProcess.fork() – runs a proper Node.js environment
-    // that supports ESM modules without needing ELECTRON_RUN_AS_NODE
+    // Use Electron's utilityProcess.fork() with the CJS bundle
+    // The bundle embeds Express/cors/nodemailer, eliminating module resolution issues
     try {
       serverProcess = utilityProcess.fork(serverPath, [], {
         cwd: backendCwd,
@@ -124,7 +124,10 @@ function startServer() {
           ...process.env,
           PORT: String(PORT),
           NODE_ENV: 'production',
-          ELECTRON: '1'
+          ELECTRON: '1',
+          DATA_DIR: path.join(backendCwd, 'data'),
+          BACKUP_DIR: path.join(backendCwd, '..', 'backups'),
+          FRONTEND_DIR: getResourcePath('dist')
         },
         stdio: 'pipe'
       });

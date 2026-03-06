@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // Create data directory if it doesn't exist
-const dataDir = join(__dirname, '../../data');
+const dataDir = process.env.DATA_DIR || join(__dirname, '../../data');
 if (!existsSync(dataDir)) {
   mkdirSync(dataDir, { recursive: true });
 }
