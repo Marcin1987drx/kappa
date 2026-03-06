@@ -15,6 +15,7 @@
   "build": {
     "appId": "com.draxlmaier.kappaplannung",
     "productName": "Kappa Plannung",
+    "icon": "build/icon.ico",
     "files": [
       "electron-main.cjs",
       "electron-preload.cjs"
@@ -39,6 +40,10 @@
       {
         "from": "backend/data",
         "to": "backend/data"
+      },
+      {
+        "from": "splash.html",
+        "to": "splash.html"
       }
     ],
     "win": {
