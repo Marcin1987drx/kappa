@@ -7,6 +7,7 @@ const net = require('net');
 
 const PORT = 3001;
 let mainWindow = null;
+let splashWindow = null;
 let serverProcess = null;
 
 // ──── Single Instance Lock ────
@@ -17,7 +18,9 @@ if (!gotTheLock) {
 } else {
   app.on('second-instance', () => {
     // Someone tried to open a second instance – focus the existing window
-    if (mainWindow) {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.focus();
+    } else if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
@@ -29,6 +32,35 @@ function getResourcePath(...segments) {
     return path.join(process.resourcesPath, ...segments);
   }
   return path.join(__dirname, ...segments);
+}
+
+// ──── Splash Screen ────
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 380,
+    height: 400,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: false,
+    center: true,
+    title: 'Kappa Plannung',
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+
+  const splashPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'splash.html')
+    : path.join(__dirname, 'splash.html');
+
+  splashWindow.loadFile(splashPath);
+  splashWindow.once('ready-to-show', () => {
+    splashWindow.show();
+  });
 }
 
 // ──── Kill any leftover process on PORT (previous crash) ────
@@ -158,6 +190,7 @@ function createWindow() {
     minHeight: 600,
     title: 'Kappa Plannung',
     autoHideMenuBar: true,
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -166,6 +199,15 @@ function createWindow() {
   });
 
   mainWindow.loadURL(`http://127.0.0.1:${PORT}`);
+
+  // When main window is ready, close splash and show main
+  mainWindow.once('ready-to-show', () => {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+      splashWindow = null;
+    }
+    mainWindow.show();
+  });
 
   // Handle standard file downloads triggered by the browser
   session.defaultSession.on('will-download', (event, item) => {
@@ -233,12 +275,19 @@ app.whenReady().then(async () => {
   // If we didn't get the lock, quit was already called
   if (!gotTheLock) return;
 
+  // Show splash immediately
+  createSplashWindow();
+
   try {
     console.log('Starting Kappa Plannung server...');
     await startServer();
     console.log('Server ready on port', PORT);
     createWindow();
   } catch (err) {
+    if (splashWindow && !splashWindow.isDestroyed()) {
+      splashWindow.close();
+      splashWindow = null;
+    }
     dialog.showErrorBox(
       'Kappa Plannung - Fehler',
       `Die Anwendung konnte nicht gestartet werden:\n\n${err.message}\n\nBitte versuchen Sie es erneut.`
