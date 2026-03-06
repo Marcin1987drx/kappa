@@ -4,8 +4,8 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSy
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-const __filename_routes = fileURLToPath(import.meta.url);
-const __dirname_routes = dirname(__filename_routes);
+let __dirname_routes: string;
+try { __dirname_routes = dirname(fileURLToPath(import.meta.url)); } catch { __dirname_routes = process.cwd(); }
 const defaultBackupDir = process.env.BACKUP_DIR || join(__dirname_routes, '../../../backups');
 
 // Simple CRUD router generator with upsert support
