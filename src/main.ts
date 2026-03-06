@@ -1184,7 +1184,7 @@ class KappaApp {
       <div class="settings-gate-backdrop">
         <div class="settings-gate-card">
           <div class="settings-gate-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" width="32" height="32">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="36" height="36">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
             </svg>
@@ -1201,7 +1201,7 @@ class KappaApp {
               placeholder="${i18n.t('settings.password')}" 
             />
             <button id="settingsGateTogglePwd" class="settings-gate-toggle-pwd">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
               </svg>
             </button>
@@ -1212,7 +1212,7 @@ class KappaApp {
           </div>
           
           <button id="settingsGateSubmit" class="settings-gate-submit">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16" style="display: inline; vertical-align: middle; margin-right: 6px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
               <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
             </svg>
@@ -1268,11 +1268,11 @@ class KappaApp {
           
           const input = document.getElementById('settingsGatePassword') as HTMLInputElement;
           if (input) {
-            input.style.borderColor = '#ef4444';
             input.value = '';
             input.focus();
-            input.style.animation = 'shake 0.4s ease';
-            setTimeout(() => { input.style.animation = ''; }, 400);
+            input.classList.remove('shake');
+            void input.offsetWidth;
+            input.classList.add('shake');
           }
         }
       });
@@ -1793,22 +1793,27 @@ class KappaApp {
     container.innerHTML = '';
     headerContainer.innerHTML = '';
 
-    // Calculate column count: 6 fixed + 104 week columns (52 weeks × 2)
+    // Calculate column count: fixed columns + 104 week columns (52 weeks × 2)
     const totalWeekCols = 52 * 2;
-    const gridColumns = `150px 100px 120px 150px 70px 80px repeat(${totalWeekCols}, minmax(45px, 1fr))`;
+    const showActions = this.adminUnlocked;
+    const gridColumns = showActions
+      ? `150px 100px 120px 150px 70px 80px repeat(${totalWeekCols}, minmax(45px, 1fr))`
+      : `150px 100px 120px 150px 70px repeat(${totalWeekCols}, minmax(45px, 1fr))`;
     container.style.gridTemplateColumns = gridColumns;
     headerContainer.style.gridTemplateColumns = gridColumns;
 
     // Fixed headers with data-col attribute for sticky positioning
     const sortableColumns = ['customer', 'type', 'part', 'test', 'time'];
-    const fixedHeaders = [
+    const fixedHeaders: { text: string; col: string; icon: string | null; sortable: boolean }[] = [
       { text: i18n.t('planning.kunde'), col: 'customer', icon: null, sortable: true },
       { text: i18n.t('planning.typ'), col: 'type', icon: null, sortable: true },
       { text: i18n.t('planning.teil'), col: 'part', icon: null, sortable: true },
       { text: i18n.t('planning.prufung'), col: 'test', icon: null, sortable: true },
       { text: '', col: 'time', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>', sortable: true },
-      { text: '', col: 'actions', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', sortable: false }
     ];
+    if (showActions) {
+      fixedHeaders.push({ text: '', col: 'actions', icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>', sortable: false });
+    }
     fixedHeaders.forEach((item) => {
       const header = document.createElement('div');
       header.className = `grid-header fixed-header col-${item.col}${item.sortable ? ' sortable' : ''}${this.sortColumn === item.col ? ' sorted' : ''}`;
@@ -1985,34 +1990,36 @@ class KappaApp {
       timeCell.addEventListener('click', () => this.showTimeEditPopup(project, timeCell));
       container.appendChild(timeCell);
 
-      // Actions cell with fill down button
-      const actionsCell = document.createElement('div');
-      actionsCell.className = 'grid-cell actions-cell col-actions';
-      actionsCell.innerHTML = `
-        <button class="btn-icon btn-fill-down" title="${i18n.t('planning.fillDown')}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <polyline points="19 12 12 19 5 12"/>
-          </svg>
-        </button>
-        <button class="btn-icon" title="Bulk Fill">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-            <line x1="3" y1="9" x2="21" y2="9"/>
-            <line x1="9" y1="21" x2="9" y2="9"/>
-          </svg>
-        </button>
-        <button class="btn-icon btn-del" title="${i18n.t('common.delete')}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-          </svg>
-        </button>
-      `;
-      actionsCell.querySelector('.btn-fill-down')?.addEventListener('click', () => this.showFillDownModal(project));
-      actionsCell.querySelector('.btn-icon:nth-child(2)')?.addEventListener('click', () => this.showBulkFillModal(project));
-      actionsCell.querySelector('.btn-del')?.addEventListener('click', () => this.deleteProject(project.id));
-      container.appendChild(actionsCell);
+      // Actions cell with fill down button (only when unlocked)
+      if (showActions) {
+        const actionsCell = document.createElement('div');
+        actionsCell.className = 'grid-cell actions-cell col-actions';
+        actionsCell.innerHTML = `
+          <button class="btn-icon btn-fill-down" title="${i18n.t('planning.fillDown')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <line x1="12" y1="5" x2="12" y2="19"/>
+              <polyline points="19 12 12 19 5 12"/>
+            </svg>
+          </button>
+          <button class="btn-icon" title="Bulk Fill">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="3" y1="9" x2="21" y2="9"/>
+              <line x1="9" y1="21" x2="9" y2="9"/>
+            </svg>
+          </button>
+          <button class="btn-icon btn-del" title="${i18n.t('common.delete')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+          </button>
+        `;
+        actionsCell.querySelector('.btn-fill-down')?.addEventListener('click', () => this.showFillDownModal(project));
+        actionsCell.querySelector('.btn-icon:nth-child(2)')?.addEventListener('click', () => this.showBulkFillModal(project));
+        actionsCell.querySelector('.btn-del')?.addEventListener('click', () => this.deleteProject(project.id));
+        container.appendChild(actionsCell);
+      }
 
       // Week cells - use year-specific week keys ONLY (no fallback to old format)
       for (let week = 1; week <= 52; week++) {
@@ -2167,25 +2174,27 @@ class KappaApp {
       tpuCell.innerHTML = `<span class="time-value">${firstTask.timePerUnit}</span><span class="time-unit">min</span>`;
       container.appendChild(tpuCell);
       
-      // Actions cell
-      const actionsCell = document.createElement('div');
-      actionsCell.className = 'grid-cell actions-cell col-actions planner-extra-row-cell';
-      actionsCell.innerHTML = `
-        <button class="btn-icon planner-extra-del" title="${i18n.t('common.delete')}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-            <polyline points="3 6 5 6 21 6"/>
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-          </svg>
-        </button>
-      `;
-      actionsCell.querySelector('.planner-extra-del')?.addEventListener('click', async () => {
-        // Usuń wszystkie zadania o tej nazwie
-        for (const t of tasks) {
-          await this.deleteExtraTask(t.id);
-        }
-        this.renderPlanningGrid();
-      });
-      container.appendChild(actionsCell);
+      // Actions cell (only when unlocked)
+      if (this.adminUnlocked) {
+        const actionsCell = document.createElement('div');
+        actionsCell.className = 'grid-cell actions-cell col-actions planner-extra-row-cell';
+        actionsCell.innerHTML = `
+          <button class="btn-icon planner-extra-del" title="${i18n.t('common.delete')}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>
+          </button>
+        `;
+        actionsCell.querySelector('.planner-extra-del')?.addEventListener('click', async () => {
+          // Usuń wszystkie zadania o tej nazwie
+          for (const t of tasks) {
+            await this.deleteExtraTask(t.id);
+          }
+          this.renderPlanningGrid();
+        });
+        container.appendChild(actionsCell);
+      }
       
       // Week cells - pokaż info o extra task per tydzień
       for (let week = 1; week <= 52; week++) {
@@ -2339,10 +2348,12 @@ class KappaApp {
     grandTimeIstCell.title = `${i18n.t('planning.summaryTotalTime')} IST: ${grandIst} ${i18n.t('planning.summaryPieces')} = ${fmtTime(grandTimeIst)}`;
     container.appendChild(grandTimeIstCell);
 
-    // Empty actions cell
-    const actionsEmpty1 = document.createElement('div');
-    actionsEmpty1.className = 'grid-cell actions-cell col-actions planner-total-row-cell';
-    container.appendChild(actionsEmpty1);
+    // Empty actions cell (only when unlocked)
+    if (this.adminUnlocked) {
+      const actionsEmpty1 = document.createElement('div');
+      actionsEmpty1.className = 'grid-cell actions-cell col-actions planner-total-row-cell';
+      container.appendChild(actionsEmpty1);
+    }
 
     // Week cells - IST totals
     for (let w = 1; w <= 52; w++) {
@@ -6149,6 +6160,8 @@ class KappaApp {
       // Close projects panel if open
       document.getElementById('projectsSlidePanel')?.classList.remove('open');
       this.showToast(i18n.t('settings.appLocked'), 'warning');
+      this.skipNextScroll = true;
+      this.renderPlanningGrid();
       return;
     }
 
@@ -6158,80 +6171,91 @@ class KappaApp {
       this.updateAdminUI();
       this.updateAdminUnlockButton();
       this.showToast(i18n.t('settings.appUnlocked'), 'success');
+      this.skipNextScroll = true;
+      this.renderPlanningGrid();
       return;
     }
 
-    // Prompt for password
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
+    // Prompt for password using custom unlock modal
+    const unlockModal = document.getElementById('unlockModal')!;
+    const passwordInput = document.getElementById('unlockPasswordInput') as HTMLInputElement;
+    const errorEl = document.getElementById('unlockError')!;
+    const confirmBtn = document.getElementById('unlockConfirm')!;
+    const cancelBtn = document.getElementById('unlockCancel')!;
+    const togglePwBtn = document.getElementById('unlockTogglePw')!;
 
-    modalTitle.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18" style="display:inline;vertical-align:middle;margin-right:8px"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> ${i18n.t('settings.unlockApp')}`;
-    modalBody.innerHTML = `
-      <div class="form-group">
-        <label>${i18n.t('settings.enterPasswordToUnlock')}</label>
-        <div class="password-input-group">
-          <input type="password" id="adminUnlockPassword" class="form-control" autofocus />
-        </div>
-      </div>
-    `;
+    // Reset state
+    passwordInput.value = '';
+    errorEl.textContent = '';
+    passwordInput.classList.remove('shake');
+    passwordInput.type = 'password';
 
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    const cancelBtn = modal.querySelector('.modal-cancel') as HTMLButtonElement;
+    unlockModal.classList.add('active');
+    setTimeout(() => passwordInput.focus(), 150);
 
     const cleanup = () => {
       confirmBtn.onclick = null;
       cancelBtn.onclick = null;
+      togglePwBtn.onclick = null;
+      passwordInput.onkeydown = null;
+      unlockModal.classList.remove('active');
     };
 
-    confirmBtn.onclick = () => {
-      const password = (document.getElementById('adminUnlockPassword') as HTMLInputElement).value;
+    const doUnlock = () => {
+      const password = passwordInput.value;
       if (password === this.state.settings.deletePassword) {
         cleanup();
-        this.hideModal();
         this.adminUnlocked = true;
         this.updateAdminUI();
         this.updateAdminUnlockButton();
         this.showToast(i18n.t('settings.appUnlocked'), 'success');
+        this.skipNextScroll = true;
+        this.renderPlanningGrid();
       } else {
-        this.showToast(i18n.t('settings.wrongPassword'), 'error');
+        errorEl.textContent = i18n.t('settings.wrongPassword');
+        passwordInput.classList.remove('shake');
+        void passwordInput.offsetWidth; // reflow
+        passwordInput.classList.add('shake');
+        passwordInput.select();
       }
     };
 
-    cancelBtn.onclick = () => {
-      cleanup();
-      this.hideModal();
+    confirmBtn.onclick = doUnlock;
+
+    passwordInput.onkeydown = (e: KeyboardEvent) => {
+      if (e.key === 'Enter') doUnlock();
+      if (e.key === 'Escape') cleanup();
     };
 
-    modal.classList.add('active');
-    setTimeout(() => (document.getElementById('adminUnlockPassword') as HTMLInputElement)?.focus(), 100);
+    cancelBtn.onclick = cleanup;
+
+    togglePwBtn.onclick = () => {
+      passwordInput.type = passwordInput.type === 'password' ? 'text' : 'password';
+      passwordInput.focus();
+    };
   }
 
   private updateAdminUnlockButton(): void {
     const btn = document.getElementById('toggleAdminUnlock');
-    const btnText = document.getElementById('adminUnlockBtnText');
-    if (btn && btnText) {
-      if (this.adminUnlocked) {
-        btnText.textContent = i18n.t('settings.lock');
-        btn.className = 'btn-danger';
-        btn.innerHTML = `
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-            <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
-          </svg>
-          <span id="adminUnlockBtnText">${i18n.t('settings.lock')}</span>
-        `;
-      } else {
-        btnText.textContent = i18n.t('settings.unlock');
-        btn.className = 'btn-primary';
-        btn.innerHTML = `
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
-            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-          </svg>
-          <span id="adminUnlockBtnText">${i18n.t('settings.unlock')}</span>
-        `;
-      }
+    if (!btn) return;
+    if (this.adminUnlocked) {
+      btn.className = 'btn-toolbar-compact planning-lock-btn unlocked';
+      btn.title = i18n.t('settings.lock');
+      btn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 9.9-1"/>
+        </svg>
+      `;
+    } else {
+      btn.className = 'btn-toolbar-compact planning-lock-btn';
+      btn.title = i18n.t('settings.unlock');
+      btn.innerHTML = `
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+      `;
     }
   }
 
@@ -6274,103 +6298,171 @@ class KappaApp {
   }
 
   private showPasswordModal(): void {
-    const modal = document.getElementById('modal')!;
-    const modalTitle = document.getElementById('modalTitle')!;
-    const modalBody = document.getElementById('modalBody')!;
-    
     const hasPassword = !!this.state.settings.deletePassword;
     
-    modalTitle.textContent = `🔐 ${hasPassword ? i18n.t('settings.changePassword') : i18n.t('settings.setPassword')}`;
+    // Remove existing overlay if present
+    document.getElementById('pwdModalOverlay')?.remove();
     
-    modalBody.innerHTML = `
-      ${hasPassword ? `
-        <div class="form-group">
-          <label>${i18n.t('settings.currentPassword')}</label>
-          <div class="password-input-group">
-            <input type="password" id="currentPassword" class="form-control" />
+    const overlay = document.createElement('div');
+    overlay.id = 'pwdModalOverlay';
+    overlay.className = 'unlock-modal active';
+    overlay.innerHTML = `
+      <div class="unlock-modal-backdrop"></div>
+      <div class="unlock-modal-card" style="max-width: 420px;">
+        <div class="unlock-modal-glow"></div>
+        <div class="unlock-modal-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="36" height="36">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+            <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+        </div>
+        <h2 class="unlock-modal-title">${hasPassword ? i18n.t('settings.changePassword') : i18n.t('settings.setPassword')}</h2>
+        <p class="unlock-modal-hint">${i18n.t('settings.passwordHint')}</p>
+        
+        ${hasPassword ? `
+          <div class="glass-form-group">
+            <label class="glass-label">${i18n.t('settings.currentPassword')}</label>
+            <div class="unlock-modal-input-wrapper">
+              <svg class="unlock-modal-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+              </svg>
+              <input type="password" id="currentPassword" class="unlock-modal-input" autocomplete="off" />
+            </div>
+          </div>
+        ` : ''}
+        
+        <div class="glass-form-group">
+          <label class="glass-label">${i18n.t('settings.newPassword')}</label>
+          <div class="unlock-modal-input-wrapper">
+            <svg class="unlock-modal-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <path d="M12 17a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"/><path d="M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2z"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+            </svg>
+            <input type="password" id="newPassword" class="unlock-modal-input" autocomplete="new-password" />
+          </div>
+          <div class="glass-pwd-strength"><div class="glass-pwd-strength-bar" id="pwdStrength"></div></div>
+        </div>
+        
+        <div class="glass-form-group">
+          <label class="glass-label">${i18n.t('settings.confirmPassword')}</label>
+          <div class="unlock-modal-input-wrapper">
+            <svg class="unlock-modal-input-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <input type="password" id="confirmNewPassword" class="unlock-modal-input" autocomplete="new-password" />
           </div>
         </div>
-      ` : ''}
-      <div class="form-group">
-        <label>${i18n.t('settings.newPassword')}</label>
-        <div class="password-input-group">
-          <input type="password" id="newPassword" class="form-control" />
+        
+        <div class="unlock-modal-error" id="pwdModalError"></div>
+        
+        <div class="unlock-modal-actions">
+          <button class="unlock-modal-btn-cancel" id="pwdModalCancel">${i18n.t('common.cancel')}</button>
+          <button class="unlock-modal-btn-confirm" id="pwdModalConfirm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+            <span>${i18n.t('common.save')}</span>
+          </button>
         </div>
-        <div class="password-strength"><div class="password-strength-bar" id="pwdStrength"></div></div>
+        
+        ${hasPassword ? `
+          <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1);">
+            <button class="unlock-modal-btn-cancel" id="removePasswordBtn" style="width: 100%; color: #f87171; border-color: rgba(248,113,113,0.25);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="display:inline;vertical-align:middle;margin-right:4px">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              </svg>
+              ${i18n.t('common.delete')} ${i18n.t('settings.deletePassword')}
+            </button>
+          </div>
+        ` : ''}
       </div>
-      <div class="form-group">
-        <label>${i18n.t('settings.confirmPassword')}</label>
-        <div class="password-input-group">
-          <input type="password" id="confirmNewPassword" class="form-control" />
-        </div>
-      </div>
-      ${hasPassword ? `
-        <button type="button" class="btn-danger" id="removePasswordBtn" style="margin-top: 12px">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14" style="display:inline;vertical-align:middle;margin-right:4px"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> ${i18n.t('common.delete')} ${i18n.t('settings.deletePassword')}
-        </button>
-      ` : ''}
     `;
     
+    document.body.appendChild(overlay);
+    
+    const closeOverlay = () => overlay.remove();
+    
     // Password strength indicator
-    document.getElementById('newPassword')?.addEventListener('input', (e) => {
+    overlay.querySelector('#newPassword')?.addEventListener('input', (e) => {
       const pwd = (e.target as HTMLInputElement).value;
-      const bar = document.getElementById('pwdStrength');
+      const bar = overlay.querySelector('#pwdStrength') as HTMLElement;
       if (bar) {
         if (pwd.length < 4) {
-          bar.className = 'password-strength-bar weak';
+          bar.className = 'glass-pwd-strength-bar weak';
         } else if (pwd.length < 8) {
-          bar.className = 'password-strength-bar medium';
+          bar.className = 'glass-pwd-strength-bar medium';
         } else {
-          bar.className = 'password-strength-bar strong';
+          bar.className = 'glass-pwd-strength-bar strong';
         }
       }
     });
     
     // Remove password button
-    document.getElementById('removePasswordBtn')?.addEventListener('click', async () => {
-      const current = (document.getElementById('currentPassword') as HTMLInputElement)?.value;
+    overlay.querySelector('#removePasswordBtn')?.addEventListener('click', async () => {
+      const current = (overlay.querySelector('#currentPassword') as HTMLInputElement)?.value;
       if (current !== this.state.settings.deletePassword) {
-        this.showToast(i18n.t('settings.wrongPassword'), 'error');
+        const err = overlay.querySelector('#pwdModalError') as HTMLElement;
+        if (err) err.textContent = i18n.t('settings.wrongPassword');
         return;
       }
       this.state.settings.deletePassword = '';
       await this.saveSettings();
-      this.hideModal();
+      closeOverlay();
       this.renderSettingsView();
       this.showToast(i18n.t('settings.passwordRemoved'), 'success');
     });
     
-    const confirmBtn = modal.querySelector('.modal-confirm') as HTMLButtonElement;
-    confirmBtn.onclick = async () => {
+    // Confirm button
+    overlay.querySelector('#pwdModalConfirm')?.addEventListener('click', async () => {
+      const errorEl = overlay.querySelector('#pwdModalError') as HTMLElement;
+      
       if (hasPassword) {
-        const current = (document.getElementById('currentPassword') as HTMLInputElement).value;
+        const current = (overlay.querySelector('#currentPassword') as HTMLInputElement).value;
         if (current !== this.state.settings.deletePassword) {
-          this.showToast(i18n.t('settings.wrongPassword'), 'error');
+          if (errorEl) errorEl.textContent = i18n.t('settings.wrongPassword');
           return;
         }
       }
       
-      const newPwd = (document.getElementById('newPassword') as HTMLInputElement).value;
-      const confirmPwd = (document.getElementById('confirmNewPassword') as HTMLInputElement).value;
+      const newPwd = (overlay.querySelector('#newPassword') as HTMLInputElement).value;
+      const confirmPwd = (overlay.querySelector('#confirmNewPassword') as HTMLInputElement).value;
       
-      if (newPwd !== confirmPwd) {
-        this.showToast(i18n.t('settings.passwordMismatch'), 'error');
+      if (!newPwd) {
+        if (errorEl) errorEl.textContent = i18n.t('messages.errorOccurred');
         return;
       }
       
-      if (!newPwd) {
-        this.showToast(i18n.t('messages.errorOccurred'), 'error');
+      if (newPwd !== confirmPwd) {
+        if (errorEl) errorEl.textContent = i18n.t('settings.passwordMismatch');
         return;
       }
       
       this.state.settings.deletePassword = newPwd;
       await this.saveSettings();
-      this.hideModal();
+      closeOverlay();
       this.renderSettingsView();
       this.showToast(i18n.t('settings.passwordSet'), 'success');
-    };
+    });
     
-    modal.classList.add('active');
+    // Cancel button
+    overlay.querySelector('#pwdModalCancel')?.addEventListener('click', closeOverlay);
+    
+    // Keyboard: Enter on last field, Escape to close
+    overlay.querySelectorAll('.unlock-modal-input').forEach(input => {
+      input.addEventListener('keydown', (e: Event) => {
+        if ((e as KeyboardEvent).key === 'Escape') closeOverlay();
+      });
+    });
+    overlay.querySelector('#confirmNewPassword')?.addEventListener('keydown', (e: Event) => {
+      if ((e as KeyboardEvent).key === 'Enter') {
+        (overlay.querySelector('#pwdModalConfirm') as HTMLElement)?.click();
+      }
+    });
+    
+    // Focus first input
+    setTimeout(() => {
+      const firstInput = overlay.querySelector(hasPassword ? '#currentPassword' : '#newPassword') as HTMLInputElement;
+      firstInput?.focus();
+    }, 150);
   }
 
   private async exportLogs(): Promise<void> {
