@@ -23,8 +23,8 @@ import {
 } from './routes/schedule.js';
 import { initDatabase } from './database/db.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+let __dirname: string;
+try { __dirname = path.dirname(fileURLToPath(import.meta.url)); } catch { __dirname = process.cwd(); }
 
 const app = express();
 const PORT = process.env.PORT || 3001;
